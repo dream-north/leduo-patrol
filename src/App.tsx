@@ -58,6 +58,10 @@ type EventMessage =
       type: "session_created";
       payload: { clientSessionId: string; sessionId: string; modes: string[]; configOptions: unknown[] };
     }
+  | {
+      type: "session_restored";
+      payload: { clientSessionId: string; sessionId: string; modes: string[]; configOptions: unknown[] };
+    }
   | { type: "prompt_started"; payload: { clientSessionId: string; promptId: string; text: string } }
   | { type: "prompt_finished"; payload: { clientSessionId: string; promptId: string; stopReason: string } }
   | { type: "session_update"; payload: SessionUpdate & { clientSessionId: string } }
@@ -81,15 +85,20 @@ export default function App() {
   const [workspacePath, setWorkspacePath] = useState("");
   const [newSessionTitle, setNewSessionTitle] = useState("");
   const [newSessionModeId, setNewSessionModeId] = useState("default");
+  const [sidebarTab, setSidebarTab] = useState<"sessions" | "create">("sessions");
   const [promptModeId, setPromptModeId] = useState("inherit");
   const [connectionState, setConnectionState] = useState("connecting");
   const [promptText, setPromptText] = useState("");
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");
   const [globalTimeline, setGlobalTimeline] = useState<TimelineItem[]>([]);
+  const [selectedItem, setSelectedItem] = useState<{ sessionTitle: string; item: TimelineItem } | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const timelineViewportRef = useRef<HTMLDivElement | null>(null);
+  const shouldStickToBottomRef = useRef(true);
 
   const activeSession = sessions.find((session) => session.clientSessionId === activeSessionId) ?? null;
+  const visibleTimeline = activeSession?.timeline ?? EMPTY_TIMELINE;
 
   useEffect(() => {
     if (sessions.length === 0) {
@@ -100,6 +109,12 @@ export default function App() {
       setActiveSessionId(sessions[0].clientSessionId);
     }
   }, [activeSessionId, sessions]);
+
+  useEffect(() => {
+    if (sessions.length === 0) {
+      setSidebarTab("create");
+    }
+  }, [sessions.length]);
 
   useEffect(() => {
     Promise.all([fetch("/api/config"), fetch("/api/state")])
@@ -119,6 +134,14 @@ export default function App() {
         });
       });
   }, []);
+
+  useEffect(() => {
+    const viewport = timelineViewportRef.current;
+    if (!viewport || !shouldStickToBottomRef.current) {
+      return;
+    }
+    viewport.scrollTop = viewport.scrollHeight;
+  }, [activeSessionId, visibleTimeline.length]);
 
   useEffect(() => {
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
@@ -293,7 +316,20 @@ export default function App() {
           kind: "system",
           title: "会话已创建",
           body: message.payload.sessionId,
-          meta: message.payload.modes.join(", ") || "默认模式",
+        });
+        break;
+      case "session_restored":
+        updateSession(message.payload.clientSessionId, (session) => ({
+          ...session,
+          sessionId: message.payload.sessionId,
+          modes: message.payload.modes,
+          connectionState: "connected",
+        }));
+        appendSessionTimeline(message.payload.clientSessionId, {
+          id: crypto.randomUUID(),
+          kind: "system",
+          title: "会话已恢复",
+          body: message.payload.sessionId,
         });
         break;
       case "prompt_started":
@@ -325,8 +361,17 @@ export default function App() {
         appendSessionTimeline(message.payload.clientSessionId, {
           id: message.payload.requestId,
           kind: "tool",
-          title: message.payload.toolCall.title ?? "等待权限确认",
-          body: stringifyMaybe(message.payload.toolCall.rawInput ?? {}),
+          title: summarizeToolTitle(
+            message.payload.toolCall.title,
+            message.payload.toolCall.rawInput,
+            message.payload.toolCall.toolCallId,
+          ),
+          body: formatToolDetails({
+            toolCallId: message.payload.toolCall.toolCallId,
+            title: message.payload.toolCall.title,
+            status: message.payload.toolCall.status,
+            rawInput: message.payload.toolCall.rawInput,
+          }),
           meta: message.payload.toolCall.status ?? "pending",
         });
         break;
@@ -373,6 +418,13 @@ export default function App() {
         }
         break;
       }
+      case "user_message_chunk": {
+        const content = update.content as { type?: string; text?: string } | undefined;
+        if (content?.type === "text" && content.text) {
+          appendSessionTextChunk(clientSessionId, "user", "你", content.text);
+        }
+        break;
+      }
       case "agent_thought_chunk": {
         const content = update.content as { type?: string; text?: string } | undefined;
         if (content?.type === "text" && content.text) {
@@ -382,13 +434,7 @@ export default function App() {
       }
       case "tool_call":
       case "tool_call_update":
-        appendSessionTimeline(clientSessionId, {
-          id: crypto.randomUUID(),
-          kind: "tool",
-          title: String(update.title ?? `工具 ${String(update.toolCallId ?? "")}`),
-          body: stringifyMaybe(update.rawInput ?? update.rawOutput ?? ""),
-          meta: String(update.status ?? update.sessionUpdate),
-        });
+        appendSessionTimeline(clientSessionId, buildToolTimelineItem(update));
         break;
       case "plan":
         appendSessionTimeline(clientSessionId, {
@@ -420,7 +466,7 @@ export default function App() {
     if (!nextWorkspacePath) {
       return;
     }
-    sendCommand({
+    const didSend = sendCommand({
       type: "create_session",
       payload: {
         workspacePath: nextWorkspacePath,
@@ -428,6 +474,9 @@ export default function App() {
         modeId: newSessionModeId,
       },
     });
+    if (didSend) {
+      setSidebarTab("sessions");
+    }
   }
 
   function submitPrompt() {
@@ -499,6 +548,15 @@ export default function App() {
     return true;
   }
 
+  function handleTimelineScroll() {
+    const viewport = timelineViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+    const distanceToBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+    shouldStickToBottomRef.current = distanceToBottom < 40;
+  }
+
   return (
     <div className="shell multi-session">
       <aside className="panel masthead">
@@ -514,54 +572,80 @@ export default function App() {
           <StatusCard label="当前会话" value={activeSession?.title ?? "未选择"} />
         </div>
 
-        <div className="details">
-          <p>新建目录</p>
-          <input value={workspacePath} onChange={(event) => setWorkspacePath(event.target.value)} />
-          <p>会话名</p>
-          <input
-            value={newSessionTitle}
-            placeholder="可选，例如 leduo-api"
-            onChange={(event) => setNewSessionTitle(event.target.value)}
-          />
-          <p>默认模式</p>
-          <select value={newSessionModeId} onChange={(event) => setNewSessionModeId(event.target.value)}>
-            {MODE_OPTIONS.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <p>允许根目录</p>
-          <code>{config?.allowedRoots.join("\n") ?? "加载中..."}</code>
-        </div>
-
-        <div className="actions">
-          <button className="primary" onClick={createSession} disabled={!workspacePath.trim()}>
-            新建目录会话
+        <div className="sidebar-tabs" role="tablist" aria-label="会话面板">
+          <button
+            className={`sidebar-tab ${sidebarTab === "sessions" ? "active" : ""}`}
+            onClick={() => setSidebarTab("sessions")}
+            type="button"
+          >
+            当前会话
           </button>
-          <button className="secondary" onClick={openVscodeRemote} disabled={!config?.vscodeRemoteUri}>
-            打开 VS Code Remote SSH
+          <button
+            className={`sidebar-tab ${sidebarTab === "create" ? "active" : ""}`}
+            onClick={() => setSidebarTab("create")}
+            type="button"
+          >
+            新建会话
           </button>
         </div>
 
-        <div className="session-list">
-          {sessions.length === 0 ? (
-            <div className="empty">还没有会话。先输入目录并创建一个。</div>
+        <div className="sidebar-body">
+          {sidebarTab === "create" ? (
+            <div className="tab-panel">
+              <div className="details">
+                <p>新建目录</p>
+                <input value={workspacePath} onChange={(event) => setWorkspacePath(event.target.value)} />
+                <p>会话名</p>
+                <input
+                  value={newSessionTitle}
+                  placeholder="可选，例如 leduo-api"
+                  onChange={(event) => setNewSessionTitle(event.target.value)}
+                />
+                <p>默认模式</p>
+                <select value={newSessionModeId} onChange={(event) => setNewSessionModeId(event.target.value)}>
+                  {MODE_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <p>允许根目录</p>
+                <code>{config?.allowedRoots.join("\n") ?? "加载中..."}</code>
+              </div>
+              <div className="actions">
+                <button className="primary" onClick={createSession} disabled={!workspacePath.trim()}>
+                  新建目录会话
+                </button>
+              </div>
+            </div>
           ) : (
-            sessions.map((session) => (
-              <button
-                key={session.clientSessionId}
-                className={`session-chip ${session.clientSessionId === activeSessionId ? "active" : ""}`}
-                onClick={() => setActiveSessionId(session.clientSessionId)}
-              >
-                <strong>{session.title}</strong>
-                <span>{session.workspacePath}</span>
-                <span>
-                  {session.permissions.length > 0 ? `${session.permissions.length} 待确认` : session.connectionState}
-                </span>
-                <span>模式: {labelForMode(session.currentModeId || session.defaultModeId)}</span>
-              </button>
-            ))
+            <div className="tab-panel fill">
+              <div className="actions compact">
+                <button className="secondary" onClick={openVscodeRemote} disabled={!config?.vscodeRemoteUri}>
+                  打开 VS Code Remote SSH
+                </button>
+              </div>
+              <div className="session-list">
+                {sessions.length === 0 ? (
+                  <div className="empty">还没有会话。切到“新建会话”创建一个。</div>
+                ) : (
+                  sessions.map((session) => (
+                    <button
+                      key={session.clientSessionId}
+                      className={`session-chip ${session.clientSessionId === activeSessionId ? "active" : ""}`}
+                      onClick={() => setActiveSessionId(session.clientSessionId)}
+                    >
+                      <strong>{session.title}</strong>
+                      <span>{session.workspacePath}</span>
+                      <span>
+                        {session.permissions.length > 0 ? `${session.permissions.length} 待确认` : session.connectionState}
+                      </span>
+                      <span>模式: {labelForMode(session.currentModeId || session.defaultModeId)}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
           )}
         </div>
       </aside>
@@ -571,21 +655,31 @@ export default function App() {
           <h2>{activeSession?.title ?? "任务流"}</h2>
           <p>{activeSession?.workspacePath ?? "选择左侧会话后，这里展示该目录的完整执行流。"}</p>
         </div>
-        <div className="timeline">
-          {(activeSession?.timeline ?? EMPTY_TIMELINE).length === 0 ? (
+        <div className="timeline" ref={timelineViewportRef} onScroll={handleTimelineScroll}>
+          {visibleTimeline.length === 0 ? (
             <div className="empty">
               {activeSession
                 ? "这个会话还没有执行记录。发送第一条指令后开始滚动展示。"
                 : "先在左侧创建一个目录会话。"}
             </div>
           ) : (
-            (activeSession?.timeline ?? EMPTY_TIMELINE).map((item) => <TimelineCard key={item.id} item={item} />)
+            visibleTimeline.map((item) => (
+              <TimelineRow
+                key={item.id}
+                item={item}
+                onOpen={() => setSelectedItem({ sessionTitle: activeSession?.title ?? "当前会话", item })}
+              />
+            ))
           )}
           {globalTimeline.length > 0 ? (
             <section className="global-feed">
               <h3>全局消息</h3>
               {globalTimeline.map((item) => (
-                <TimelineCard key={item.id} item={item} />
+                <TimelineRow
+                  key={item.id}
+                  item={item}
+                  onOpen={() => setSelectedItem({ sessionTitle: "全局消息", item })}
+                />
               ))}
             </section>
           ) : null}
@@ -645,7 +739,13 @@ export default function App() {
             ) : (
               activeSession.permissions.map((permission) => (
                 <section className="approval-card" key={permission.requestId}>
-                  <h3>{permission.toolCall.title ?? "工具调用"}</h3>
+                  <h3>
+                    {summarizeToolTitle(
+                      permission.toolCall.title,
+                      permission.toolCall.rawInput,
+                      permission.toolCall.toolCallId,
+                    )}
+                  </h3>
                   <pre>{stringifyMaybe(permission.toolCall.rawInput ?? {})}</pre>
                   <div className="approval-actions">
                     {permission.options.map((option) => (
@@ -666,6 +766,14 @@ export default function App() {
           <div className="empty">选择一个会话后再处理确认或关闭会话。</div>
         )}
       </aside>
+
+      {selectedItem ? (
+        <MessageModal
+          sessionTitle={selectedItem.sessionTitle}
+          item={selectedItem.item}
+          onClose={() => setSelectedItem(null)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -679,26 +787,112 @@ function StatusCard(props: { label: string; value: string }) {
   );
 }
 
-function TimelineCard(props: { item: TimelineItem }) {
-  const lineCount = props.item.body.split("\n").length;
-  const shouldCollapseByDefault =
-    props.item.kind === "thought" || props.item.kind === "tool" || props.item.body.length > 260 || lineCount > 6;
-  const [collapsed, setCollapsed] = useState(shouldCollapseByDefault);
-
+function TimelineRow(props: { item: TimelineItem; onOpen: () => void }) {
+  const kindLabel = labelForKind(props.item.kind, props.item.title);
+  const summary = summarizeTimelineItem(props.item);
   return (
-    <article className={`bubble ${props.item.kind}`}>
-      <header>
-        <strong>{props.item.title}</strong>
-        {props.item.meta ? <span>{props.item.meta}</span> : null}
-      </header>
-      <pre className={collapsed ? "collapsed" : ""}>{props.item.body}</pre>
-      {shouldCollapseByDefault ? (
-        <button className="toggle-link" onClick={() => setCollapsed((current) => !current)}>
-          {collapsed ? "展开" : "收起"}
-        </button>
-      ) : null}
-    </article>
+    <button className={`timeline-row ${props.item.kind}`} onClick={props.onOpen}>
+      <span className="timeline-kind">{kindLabel}</span>
+      <span className="timeline-body">{summary}</span>
+      <span className="timeline-meta">{props.item.meta ?? "查看"}</span>
+    </button>
   );
+}
+
+function buildToolTimelineItem(update: SessionUpdate): TimelineItem {
+  return {
+    id: crypto.randomUUID(),
+    kind: "tool",
+    title: summarizeToolTitle(update.title, update.rawInput, update.toolCallId),
+    body: formatToolDetails({
+      toolCallId: update.toolCallId,
+      title: update.title,
+      status: update.status,
+      rawInput: update.rawInput,
+      rawOutput: update.rawOutput,
+    }),
+    meta: String(update.status ?? update.sessionUpdate),
+  };
+}
+
+function labelForKind(kind: TimelineItem["kind"], fallbackTitle: string) {
+  switch (kind) {
+    case "user":
+      return "你";
+    case "agent":
+      return "Claude";
+    case "thought":
+      return "思路";
+    case "tool":
+      return "工具";
+    case "error":
+      return "错误";
+    case "system":
+      return fallbackTitle;
+    default:
+      return fallbackTitle;
+  }
+}
+
+function summarizeTimelineItem(item: TimelineItem) {
+  if (item.kind === "tool") {
+    return toSingleLine(item.title);
+  }
+  return toSingleLine(item.body);
+}
+
+function summarizeToolTitle(rawTitle: unknown, rawInput: unknown, rawToolCallId: unknown) {
+  const title = typeof rawTitle === "string" ? rawTitle.trim() : "";
+  if (title && !/^工具\s+tool_/.test(title) && !/^tool_/.test(title)) {
+    return title;
+  }
+
+  const record = asRecord(rawInput);
+  const command =
+    typeof record?.command === "string"
+      ? record.command
+      : Array.isArray(record?.cmd)
+        ? record.cmd.filter((part): part is string => typeof part === "string").join(" ")
+        : null;
+  const pathValue =
+    typeof record?.path === "string"
+      ? record.path
+      : typeof record?.filePath === "string"
+        ? record.filePath
+        : typeof record?.cwd === "string"
+          ? record.cwd
+          : null;
+  const description = typeof record?.description === "string" ? record.description : null;
+  const args = Array.isArray(record?.args) ? record.args.filter((part): part is string => typeof part === "string").join(" ") : null;
+  const summary = [command, pathValue, description, args].filter(Boolean).join(" · ");
+
+  if (summary) {
+    return summary;
+  }
+  if (title) {
+    return title;
+  }
+  return typeof rawToolCallId === "string" ? `工具 ${rawToolCallId}` : "工具调用";
+}
+
+function formatToolDetails(details: {
+  toolCallId?: unknown;
+  title?: unknown;
+  status?: unknown;
+  rawInput?: unknown;
+  rawOutput?: unknown;
+}) {
+  return stringifyMaybe({
+    toolCallId: details.toolCallId,
+    title: details.title,
+    status: details.status,
+    rawInput: details.rawInput,
+    rawOutput: details.rawOutput,
+  });
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 function stringifyMaybe(value: unknown) {
@@ -710,4 +904,32 @@ function stringifyMaybe(value: unknown) {
 
 function labelForMode(modeId: string) {
   return MODE_OPTIONS.find((option) => option.id === modeId)?.label ?? modeId;
+}
+
+function toSingleLine(value: string) {
+  return value.replace(/\s+/g, " ").trim() || "(空)";
+}
+
+function MessageModal(props: {
+  sessionTitle: string;
+  item: TimelineItem;
+  onClose: () => void;
+}) {
+  return (
+    <div className="modal-backdrop" onClick={props.onClose}>
+      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">{props.sessionTitle}</p>
+            <h3>{props.item.title}</h3>
+          </div>
+          <button className="secondary" onClick={props.onClose}>
+            关闭
+          </button>
+        </div>
+        <p className="modal-meta">{props.item.meta ?? "详细内容"}</p>
+        <pre className="modal-body">{props.item.body}</pre>
+      </div>
+    </div>
+  );
 }

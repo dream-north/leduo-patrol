@@ -34,6 +34,11 @@ export type SessionSnapshot = {
   updatedAt: string;
 };
 
+type PersistedSession = Pick<
+  SessionSnapshot,
+  "clientSessionId" | "title" | "workspacePath" | "sessionId" | "defaultModeId" | "currentModeId" | "updatedAt"
+>;
+
 export type SocketEvent =
   | ServerEvent
   | {
@@ -59,7 +64,7 @@ export type SocketEvent =
     };
 
 type PersistedState = {
-  sessions: SessionSnapshot[];
+  sessions: PersistedSession[];
 };
 
 type ManagedSession = {
@@ -95,7 +100,9 @@ export class SessionManager {
         defaultModeId: snapshot.defaultModeId ?? "default",
         currentModeId: snapshot.currentModeId ?? snapshot.defaultModeId ?? "default",
         connectionState: "connecting",
+        modes: [],
         busy: false,
+        timeline: [],
         permissions: [],
       };
       this.sessions.set(restoredSnapshot.clientSessionId, {
@@ -235,8 +242,19 @@ export class SessionManager {
       });
       entry.acpSession = acpSession;
       await acpSession.connect();
-      await acpSession.ensureSession();
-      if (entry.snapshot.defaultModeId) {
+      if (entry.snapshot.sessionId) {
+        entry.snapshot.timeline = [];
+        const restorableSessionId = await acpSession.findRestorableSession(entry.snapshot.sessionId);
+        if (restorableSessionId) {
+          entry.snapshot.sessionId = restorableSessionId;
+          await acpSession.loadSession(restorableSessionId);
+        } else {
+          throw new Error(`No Claude session found for ${entry.snapshot.workspacePath}`);
+        }
+      } else {
+        await acpSession.ensureSession();
+      }
+      if (entry.snapshot.defaultModeId && entry.snapshot.currentModeId !== entry.snapshot.defaultModeId) {
         await acpSession.setMode(entry.snapshot.defaultModeId);
         entry.snapshot.currentModeId = entry.snapshot.defaultModeId;
       }
@@ -280,7 +298,19 @@ export class SessionManager {
           kind: "system",
           title: "会话已创建",
           body: event.payload.sessionId,
-          meta: event.payload.modes.join(", ") || "默认模式",
+          meta: labelForMode(entry.snapshot.currentModeId || entry.snapshot.defaultModeId),
+        });
+        break;
+      case "session_restored":
+        entry.snapshot.sessionId = event.payload.sessionId;
+        entry.snapshot.modes = event.payload.modes;
+        entry.snapshot.connectionState = "connected";
+        this.appendTimeline(entry.snapshot, {
+          id: randomUUID(),
+          kind: "system",
+          title: "会话已恢复",
+          body: event.payload.sessionId,
+          meta: labelForMode(entry.snapshot.currentModeId || entry.snapshot.defaultModeId),
         });
         break;
       case "prompt_started":
@@ -324,8 +354,17 @@ export class SessionManager {
         this.appendTimeline(entry.snapshot, {
           id: event.payload.requestId,
           kind: "tool",
-          title: event.payload.toolCall.title ?? "等待权限确认",
-          body: stringifyMaybe(event.payload.toolCall.rawInput ?? {}),
+          title: summarizeToolTitle(
+            event.payload.toolCall.title,
+            event.payload.toolCall.rawInput,
+            event.payload.toolCall.toolCallId,
+          ),
+          body: formatToolDetails({
+            toolCallId: event.payload.toolCall.toolCallId,
+            title: event.payload.toolCall.title,
+            status: event.payload.toolCall.status,
+            rawInput: event.payload.toolCall.rawInput,
+          }),
           meta: event.payload.toolCall.status ?? "pending",
         });
         break;
@@ -382,8 +421,14 @@ export class SessionManager {
         this.appendTimeline(snapshot, {
           id: randomUUID(),
           kind: "tool",
-          title: String(update.title ?? `工具 ${String(update.toolCallId ?? "")}`),
-          body: stringifyMaybe(update.rawInput ?? update.rawOutput ?? ""),
+          title: summarizeToolTitle(update.title, update.rawInput, update.toolCallId),
+          body: formatToolDetails({
+            toolCallId: update.toolCallId,
+            title: update.title,
+            status: update.status,
+            rawInput: update.rawInput,
+            rawOutput: update.rawOutput,
+          }),
           meta: String(update.status ?? update.sessionUpdate),
         });
         break;
@@ -455,8 +500,17 @@ export class SessionManager {
     const payload: PersistedState = {
       sessions: this.getStateSnapshot().sessions,
     };
+    const persistedSessions: PersistedSession[] = payload.sessions.map((session) => ({
+      clientSessionId: session.clientSessionId,
+      title: session.title,
+      workspacePath: session.workspacePath,
+      sessionId: session.sessionId,
+      defaultModeId: session.defaultModeId,
+      currentModeId: session.currentModeId,
+      updatedAt: session.updatedAt,
+    }));
     await mkdir(path.dirname(this.stateFilePath), { recursive: true });
-    await writeFile(this.stateFilePath, JSON.stringify(payload, null, 2), "utf8");
+    await writeFile(this.stateFilePath, JSON.stringify({ sessions: persistedSessions }, null, 2), "utf8");
   }
 
   private async readPersistedState(): Promise<PersistedState> {
@@ -530,6 +584,77 @@ function stringifyMaybe(value: unknown) {
     return value;
   }
   return JSON.stringify(value, null, 2);
+}
+
+function formatToolDetails(details: {
+  toolCallId?: unknown;
+  title?: unknown;
+  status?: unknown;
+  rawInput?: unknown;
+  rawOutput?: unknown;
+}) {
+  return stringifyMaybe({
+    toolCallId: details.toolCallId,
+    title: details.title,
+    status: details.status,
+    rawInput: details.rawInput,
+    rawOutput: details.rawOutput,
+  });
+}
+
+function summarizeToolTitle(rawTitle: unknown, rawInput: unknown, rawToolCallId: unknown) {
+  const title = typeof rawTitle === "string" ? rawTitle.trim() : "";
+  if (title && !/^工具\s+tool_/.test(title) && !/^tool_/.test(title)) {
+    return title;
+  }
+
+  const record = asRecord(rawInput);
+  const command =
+    typeof record?.command === "string"
+      ? record.command
+      : Array.isArray(record?.cmd)
+        ? record.cmd.filter((part): part is string => typeof part === "string").join(" ")
+        : null;
+  const pathValue =
+    typeof record?.path === "string"
+      ? record.path
+      : typeof record?.filePath === "string"
+        ? record.filePath
+        : typeof record?.cwd === "string"
+          ? record.cwd
+          : null;
+  const description = typeof record?.description === "string" ? record.description : null;
+  const args = Array.isArray(record?.args) ? record.args.filter((part): part is string => typeof part === "string").join(" ") : null;
+  const summary = [command, pathValue, description, args].filter(Boolean).join(" · ");
+
+  if (summary) {
+    return summary;
+  }
+  if (title) {
+    return title;
+  }
+  return typeof rawToolCallId === "string" ? `工具 ${rawToolCallId}` : "工具调用";
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function labelForMode(modeId?: string) {
+  switch (modeId) {
+    case "default":
+      return "Default";
+    case "acceptEdits":
+      return "Accept Edits";
+    case "plan":
+      return "Plan";
+    case "dontAsk":
+      return "Don't Ask";
+    case "bypassPermissions":
+      return "Bypass Permissions";
+    default:
+      return modeId || "默认模式";
+  }
 }
 
 function formatError(error: unknown) {

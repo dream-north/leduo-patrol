@@ -12,6 +12,10 @@ export type ServerEvent =
       type: "session_created";
       payload: { sessionId: string; modes: string[]; configOptions: schema.SessionConfigOption[] };
     }
+  | {
+      type: "session_restored";
+      payload: { sessionId: string; modes: string[]; configOptions: schema.SessionConfigOption[] };
+    }
   | { type: "prompt_started"; payload: { promptId: string; text: string } }
   | { type: "prompt_finished"; payload: { promptId: string; stopReason: string } }
   | { type: "session_update"; payload: schema.SessionNotification["update"] }
@@ -178,6 +182,58 @@ export class ClaudeAcpSession {
       this.sessionPromise = null;
       throw error;
     }
+  }
+
+  async loadSession(existingSessionId: string) {
+    if (!this.connection) {
+      await this.connect();
+    }
+    if (!this.connection) {
+      throw new Error("ACP connection is not available.");
+    }
+
+    this.sessionId = existingSessionId;
+    this.sessionPromise = Promise.resolve(existingSessionId);
+
+    const response = await this.connection.loadSession({
+      sessionId: existingSessionId,
+      cwd: this.workspacePath,
+      mcpServers: [],
+    });
+
+    this.currentModeId = response.modes?.currentModeId ?? null;
+    this.onEvent({
+      type: "session_restored",
+      payload: {
+        sessionId: existingSessionId,
+        modes: response.modes?.availableModes.map((mode: schema.SessionMode) => mode.id) ?? [],
+        configOptions: response.configOptions ?? [],
+      },
+    });
+
+    return existingSessionId;
+  }
+
+  async findRestorableSession(preferredSessionId?: string) {
+    if (!this.connection) {
+      await this.connect();
+    }
+    if (!this.connection) {
+      throw new Error("ACP connection is not available.");
+    }
+
+    const response = await this.connection.unstable_listSessions({
+      cwd: this.workspacePath,
+    });
+
+    if (preferredSessionId) {
+      const exactMatch = response.sessions.find((session: schema.SessionInfo) => session.sessionId === preferredSessionId);
+      if (exactMatch) {
+        return exactMatch.sessionId;
+      }
+    }
+
+    return response.sessions[0]?.sessionId ?? null;
   }
 
   async prompt(text: string) {
