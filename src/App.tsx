@@ -40,6 +40,8 @@ type SessionRecord = {
   currentModeId: string;
   busy: boolean;
   timeline: TimelineItem[];
+  historyTotal: number;
+  historyStart: number;
   permissions: PermissionPayload[];
   updatedAt: string;
 };
@@ -51,6 +53,12 @@ type StateResponse = {
 type DirectoryResponse = {
   rootPath: string;
   directories: Array<{ name: string; path: string }>;
+};
+
+type SessionHistoryResponse = {
+  items: TimelineItem[];
+  start: number;
+  total: number;
 };
 
 type EventMessage =
@@ -103,6 +111,8 @@ export default function App() {
   const [directoryError, setDirectoryError] = useState("");
   const [globalTimeline, setGlobalTimeline] = useState<TimelineItem[]>([]);
   const [selectedItem, setSelectedItem] = useState<{ sessionTitle: string; item: TimelineItem } | null>(null);
+  const [showSystemFeed, setShowSystemFeed] = useState(false);
+  const [historyLoadingSessionId, setHistoryLoadingSessionId] = useState("");
   const socketRef = useRef<WebSocket | null>(null);
   const timelineViewportRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -150,7 +160,7 @@ export default function App() {
       })
       .catch((error) => {
         appendGlobalTimeline({
-          id: crypto.randomUUID(),
+          id: makeId(),
           kind: "error",
           title: "初始化失败",
           body: error instanceof Error ? error.message : String(error),
@@ -257,6 +267,7 @@ export default function App() {
           ? {
               ...session,
               timeline: [...session.timeline, normalizeTimelineItem(item)],
+              historyTotal: session.historyTotal + 1,
               updatedAt: new Date().toISOString(),
             }
           : session,
@@ -289,14 +300,15 @@ export default function App() {
           timeline: [
             ...session.timeline,
             {
-              id: crypto.randomUUID(),
+              id: makeId(),
               kind,
               title,
               body: text,
-            },
-          ],
-          updatedAt: new Date().toISOString(),
-        };
+              },
+            ],
+            historyTotal: session.historyTotal + 1,
+            updatedAt: new Date().toISOString(),
+          };
       }),
     );
   }
@@ -320,7 +332,7 @@ export default function App() {
       case "ready":
         if (!message.payload.clientSessionId) {
           appendGlobalTimeline({
-            id: crypto.randomUUID(),
+            id: makeId(),
             kind: "system",
             title: "WebSocket 已连接",
             body: message.payload.workspacePath,
@@ -333,7 +345,7 @@ export default function App() {
           connectionState: "connected",
         }));
         appendSessionTimeline(message.payload.clientSessionId, {
-          id: crypto.randomUUID(),
+          id: makeId(),
           kind: "system",
           title: "Claude ACP 已连接",
           body: message.payload.workspacePath,
@@ -366,6 +378,8 @@ export default function App() {
               currentModeId: newSessionModeId,
               busy: false,
               timeline: [],
+              historyTotal: 0,
+              historyStart: 0,
               permissions: [],
               updatedAt: new Date().toISOString(),
             }),
@@ -381,7 +395,7 @@ export default function App() {
           connectionState: "connected",
         }));
         appendSessionTimeline(message.payload.clientSessionId, {
-          id: crypto.randomUUID(),
+          id: makeId(),
           kind: "system",
           title: "会话已创建",
           body: message.payload.sessionId,
@@ -395,7 +409,7 @@ export default function App() {
           connectionState: "connected",
         }));
         appendSessionTimeline(message.payload.clientSessionId, {
-          id: crypto.randomUUID(),
+          id: makeId(),
           kind: "system",
           title: "会话已恢复",
           body: message.payload.sessionId,
@@ -413,7 +427,7 @@ export default function App() {
       case "prompt_finished":
         updateSession(message.payload.clientSessionId, (session) => ({ ...session, busy: false }));
         appendSessionTimeline(message.payload.clientSessionId, {
-          id: crypto.randomUUID(),
+          id: makeId(),
           kind: "system",
           title: "本轮完成",
           body: message.payload.stopReason,
@@ -456,7 +470,7 @@ export default function App() {
       case "error":
         if (!message.payload.clientSessionId) {
           appendGlobalTimeline({
-            id: crypto.randomUUID(),
+            id: makeId(),
             kind: "error",
             title: "错误",
             body: message.payload.message,
@@ -469,7 +483,7 @@ export default function App() {
           connectionState: "error",
         }));
         appendSessionTimeline(message.payload.clientSessionId, {
-          id: crypto.randomUUID(),
+          id: makeId(),
           kind: "error",
           title: "错误",
           body: message.payload.message,
@@ -507,7 +521,7 @@ export default function App() {
         break;
       case "plan":
         appendSessionTimeline(clientSessionId, {
-          id: crypto.randomUUID(),
+          id: makeId(),
           kind: "system",
           title: "执行计划",
           body: stringifyMaybe(update.entries ?? update),
@@ -519,7 +533,7 @@ export default function App() {
           currentModeId: String(update.currentModeId ?? session.currentModeId ?? "default"),
         }));
         appendSessionTimeline(clientSessionId, {
-          id: crypto.randomUUID(),
+          id: makeId(),
           kind: "system",
           title: "模式切换",
           body: String(update.currentModeId ?? "unknown"),
@@ -606,7 +620,7 @@ export default function App() {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       appendGlobalTimeline({
-        id: crypto.randomUUID(),
+        id: makeId(),
         kind: "error",
         title: "连接不可用",
         body: "WebSocket 尚未连接，命令没有发出。",
@@ -626,6 +640,47 @@ export default function App() {
     shouldStickToBottomRef.current = distanceToBottom < 40;
   }
 
+  function loadMoreHistory() {
+    if (!activeSession || activeSession.historyStart <= 0 || historyLoadingSessionId === activeSession.clientSessionId) {
+      return;
+    }
+
+    setHistoryLoadingSessionId(activeSession.clientSessionId);
+    fetch(
+      `/api/session-history?clientSessionId=${encodeURIComponent(activeSession.clientSessionId)}&before=${activeSession.historyStart}&limit=120`,
+    )
+      .then(async (response) => {
+        const payload = (await response.json()) as SessionHistoryResponse | { message?: string };
+        if (!response.ok) {
+          throw new Error("message" in payload ? payload.message || "历史加载失败" : "历史加载失败");
+        }
+        const history = payload as SessionHistoryResponse;
+        setSessions((current) =>
+          current.map((session) =>
+            session.clientSessionId === activeSession.clientSessionId
+              ? {
+                  ...session,
+                  timeline: [...history.items.map(normalizeTimelineItem), ...session.timeline],
+                  historyStart: history.start,
+                  historyTotal: history.total,
+                }
+              : session,
+          ),
+        );
+      })
+      .catch((error) => {
+        appendGlobalTimeline({
+          id: makeId(),
+          kind: "error",
+          title: "历史加载失败",
+          body: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => {
+        setHistoryLoadingSessionId("");
+      });
+  }
+
   return (
     <div className="shell multi-session">
       <aside className="panel masthead">
@@ -639,6 +694,12 @@ export default function App() {
           <StatusCard label="连接" value={connectionState} tone={toneForConnectionState(connectionState)} />
           <StatusCard label="会话数" value={String(sessions.length)} />
         </div>
+
+        {globalTimeline.length > 0 ? (
+          <button className="system-trigger secondary" type="button" onClick={() => setShowSystemFeed(true)}>
+            系统消息 {globalTimeline.length}
+          </button>
+        ) : null}
 
         <div className="sidebar-tabs" role="tablist" aria-label="会话面板">
           <button
@@ -659,7 +720,7 @@ export default function App() {
 
         <div className="sidebar-body">
           {sidebarTab === "create" ? (
-            <div className="tab-panel">
+            <div className="tab-panel create-panel">
               <div className="details">
                 <p>会话目录</p>
                 <input value={workspacePath} onChange={(event) => setWorkspacePath(event.target.value)} />
@@ -761,6 +822,7 @@ export default function App() {
             </div>
           )}
         </div>
+
       </aside>
 
       <main className="panel transcript">
@@ -769,6 +831,18 @@ export default function App() {
           <p>{activeSession?.workspacePath ?? "选择左侧会话后，这里展示该目录的完整执行流。"}</p>
         </div>
         <div className="timeline" ref={timelineViewportRef} onScroll={handleTimelineScroll}>
+          {activeSession && activeSession.historyStart > 0 ? (
+            <button
+              className="history-loader secondary"
+              type="button"
+              onClick={loadMoreHistory}
+              disabled={historyLoadingSessionId === activeSession.clientSessionId}
+            >
+              {historyLoadingSessionId === activeSession.clientSessionId
+                ? "正在加载更早历史..."
+                : `加载更多历史 (${activeSession.historyStart} 条更早记录)`}
+            </button>
+          ) : null}
           {visibleTimeline.length === 0 ? (
             <div className="empty">
               {activeSession
@@ -784,18 +858,6 @@ export default function App() {
               />
             ))
           )}
-          {globalTimeline.length > 0 ? (
-            <section className="global-feed">
-              <h3>全局消息</h3>
-              {globalTimeline.map((item) => (
-                <TimelineRow
-                  key={item.id}
-                  item={item}
-                  onOpen={() => setSelectedItem({ sessionTitle: "全局消息", item })}
-                />
-              ))}
-            </section>
-          ) : null}
         </div>
         <div className="composer">
           <select value={promptModeId} onChange={(event) => setPromptModeId(event.target.value)}>
@@ -908,6 +970,17 @@ export default function App() {
           onClose={() => setSelectedItem(null)}
         />
       ) : null}
+
+      {showSystemFeed ? (
+        <SystemFeedModal
+          items={globalTimeline}
+          onClose={() => setShowSystemFeed(false)}
+          onOpenItem={(item) => {
+            setShowSystemFeed(false);
+            setSelectedItem({ sessionTitle: "系统消息", item });
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -936,7 +1009,7 @@ function TimelineRow(props: { item: TimelineItem; onOpen: () => void }) {
 
 function buildToolTimelineItem(update: SessionUpdate): TimelineItem {
   return {
-    id: crypto.randomUUID(),
+    id: makeId(),
     kind: "tool",
     title: summarizeToolTitle(update.title, update.rawInput, update.toolCallId),
     body: formatToolDetails({
@@ -1115,9 +1188,14 @@ function toPreviewText(value: string) {
 }
 
 function normalizeSessionRecord(session: SessionRecord): SessionRecord {
+  const total = session.historyTotal ?? session.timeline.length;
+  const start = session.historyStart ?? Math.max(0, total - session.timeline.length);
+
   return {
     ...session,
     timeline: session.timeline.map(normalizeTimelineItem),
+    historyTotal: total,
+    historyStart: start,
   };
 }
 
@@ -1216,6 +1294,14 @@ function tryParseJson(value: unknown) {
   }
 }
 
+function makeId() {
+  const cryptoObject = globalThis.crypto as { randomUUID?: () => string } | undefined;
+  if (typeof cryptoObject?.randomUUID === "function") {
+    return cryptoObject.randomUUID();
+  }
+  return `lp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function MessageModal(props: {
   sessionTitle: string;
   item: TimelineItem;
@@ -1235,6 +1321,33 @@ function MessageModal(props: {
         </div>
         <p className="modal-meta">{props.item.meta ?? "详细内容"}</p>
         <pre className="modal-body">{props.item.body}</pre>
+      </div>
+    </div>
+  );
+}
+
+function SystemFeedModal(props: {
+  items: TimelineItem[];
+  onClose: () => void;
+  onOpenItem: (item: TimelineItem) => void;
+}) {
+  return (
+    <div className="modal-backdrop" onClick={props.onClose}>
+      <div className="modal-card system-modal-card" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">系统消息</p>
+            <h3>应用级状态与错误</h3>
+          </div>
+          <button className="secondary" onClick={props.onClose}>
+            关闭
+          </button>
+        </div>
+        <div className="system-modal-list">
+          {props.items.map((item) => (
+            <TimelineRow key={item.id} item={item} onOpen={() => props.onOpenItem(item)} />
+          ))}
+        </div>
       </div>
     </div>
   );

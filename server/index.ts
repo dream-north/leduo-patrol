@@ -56,6 +56,23 @@ app.get("/api/state", (_req, res) => {
   res.json(sessionManager.getStateSnapshot());
 });
 
+app.get("/api/session-history", (req, res) => {
+  try {
+    const clientSessionId = typeof req.query.clientSessionId === "string" ? req.query.clientSessionId : "";
+    const before = Number(req.query.before ?? 0);
+    const limit = Number(req.query.limit ?? 120);
+    if (!clientSessionId) {
+      throw new Error("clientSessionId is required");
+    }
+
+    res.json(sessionManager.getSessionHistory(clientSessionId, before, limit));
+  } catch (error) {
+    res.status(400).json({
+      message: formatError(error),
+    });
+  }
+});
+
 app.get("/api/directories", async (req, res) => {
   try {
     const requestedRoot = typeof req.query.root === "string" ? req.query.root : defaultWorkspacePath;

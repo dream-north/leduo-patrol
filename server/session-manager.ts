@@ -30,6 +30,8 @@ export type SessionSnapshot = {
   currentModeId: string;
   busy: boolean;
   timeline: TimelineItem[];
+  historyTotal: number;
+  historyStart: number;
   permissions: PermissionSnapshot[];
   updatedAt: string;
 };
@@ -71,6 +73,7 @@ type ManagedSession = {
   snapshot: SessionSnapshot;
   acpSession: ClaudeAcpSession | null;
   connectPromise: Promise<void> | null;
+  fullTimeline: TimelineItem[];
 };
 
 type SessionManagerOptions = {
@@ -79,6 +82,8 @@ type SessionManagerOptions = {
 };
 
 export class SessionManager {
+  private static readonly INITIAL_TIMELINE_WINDOW = 120;
+  private static readonly HISTORY_PAGE_SIZE = 120;
   private readonly allowedRoots: string[];
   private readonly agentBinPath: string;
   private readonly stateFilePath: string;
@@ -103,12 +108,15 @@ export class SessionManager {
         modes: [],
         busy: false,
         timeline: [],
+        historyTotal: 0,
+        historyStart: 0,
         permissions: [],
       };
       this.sessions.set(restoredSnapshot.clientSessionId, {
         snapshot: restoredSnapshot,
         acpSession: null,
         connectPromise: null,
+        fullTimeline: [],
       });
     }
 
@@ -131,6 +139,22 @@ export class SessionManager {
       sessions: [...this.sessions.values()]
         .map((entry) => entry.snapshot)
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    };
+  }
+
+  getSessionHistory(clientSessionId: string, before: number, limit = SessionManager.HISTORY_PAGE_SIZE) {
+    const entry = this.getEntry(clientSessionId);
+    const fullTimeline = this.ensureFullTimeline(entry);
+    const normalizedLimit = Number.isFinite(limit) ? limit : SessionManager.HISTORY_PAGE_SIZE;
+    const normalizedBefore = Number.isFinite(before) ? before : fullTimeline.length;
+    const safeLimit = Math.max(1, Math.min(normalizedLimit, SessionManager.HISTORY_PAGE_SIZE));
+    const safeBefore = Math.max(0, Math.min(normalizedBefore, fullTimeline.length));
+    const start = Math.max(0, safeBefore - safeLimit);
+
+    return {
+      items: fullTimeline.slice(start, safeBefore),
+      start,
+      total: fullTimeline.length,
     };
   }
 
@@ -162,6 +186,8 @@ export class SessionManager {
       currentModeId: modeId ?? "default",
       busy: false,
       timeline: [],
+      historyTotal: 0,
+      historyStart: 0,
       permissions: [],
       updatedAt: new Date().toISOString(),
     };
@@ -170,6 +196,7 @@ export class SessionManager {
       snapshot,
       acpSession: null,
       connectPromise: null,
+      fullTimeline: [],
     };
     this.sessions.set(snapshot.clientSessionId, entry);
     this.schedulePersist();
@@ -243,7 +270,8 @@ export class SessionManager {
       entry.acpSession = acpSession;
       await acpSession.connect();
       if (entry.snapshot.sessionId) {
-        entry.snapshot.timeline = [];
+        entry.fullTimeline = [];
+        this.syncVisibleTimeline(entry);
         const restorableSessionId = await acpSession.findRestorableSession(entry.snapshot.sessionId);
         if (restorableSessionId) {
           entry.snapshot.sessionId = restorableSessionId;
@@ -281,7 +309,7 @@ export class SessionManager {
       case "ready":
         entry.snapshot.connectionState = "connected";
         entry.snapshot.workspacePath = event.payload.workspacePath;
-        this.appendTimeline(entry.snapshot, {
+        this.appendTimeline(entry, {
           id: randomUUID(),
           kind: "system",
           title: "Claude ACP 已连接",
@@ -293,7 +321,7 @@ export class SessionManager {
         entry.snapshot.modes = event.payload.modes;
         entry.snapshot.currentModeId = entry.snapshot.currentModeId || entry.snapshot.defaultModeId || "default";
         entry.snapshot.connectionState = "connected";
-        this.appendTimeline(entry.snapshot, {
+        this.appendTimeline(entry, {
           id: randomUUID(),
           kind: "system",
           title: "会话已创建",
@@ -305,7 +333,7 @@ export class SessionManager {
         entry.snapshot.sessionId = event.payload.sessionId;
         entry.snapshot.modes = event.payload.modes;
         entry.snapshot.connectionState = "connected";
-        this.appendTimeline(entry.snapshot, {
+        this.appendTimeline(entry, {
           id: randomUUID(),
           kind: "system",
           title: "会话已恢复",
@@ -315,7 +343,7 @@ export class SessionManager {
         break;
       case "prompt_started":
         entry.snapshot.busy = true;
-        this.appendTimeline(entry.snapshot, {
+        this.appendTimeline(entry, {
           id: event.payload.promptId,
           kind: "user",
           title: "你",
@@ -324,7 +352,7 @@ export class SessionManager {
         break;
       case "prompt_finished":
         entry.snapshot.busy = false;
-        this.appendTimeline(entry.snapshot, {
+        this.appendTimeline(entry, {
           id: randomUUID(),
           kind: "system",
           title: "本轮完成",
@@ -332,7 +360,7 @@ export class SessionManager {
         });
         break;
       case "session_update":
-        this.consumeSessionUpdate(entry.snapshot, event.payload);
+        this.consumeSessionUpdate(entry, event.payload);
         break;
       case "permission_requested": {
         const permission: PermissionSnapshot = {
@@ -351,7 +379,7 @@ export class SessionManager {
           })),
         };
         entry.snapshot.permissions.push(permission);
-        this.appendTimeline(entry.snapshot, {
+        this.appendTimeline(entry, {
           id: event.payload.requestId,
           kind: "tool",
           title: summarizeToolTitle(
@@ -377,7 +405,7 @@ export class SessionManager {
       case "error":
         entry.snapshot.busy = false;
         entry.snapshot.connectionState = "error";
-        this.appendTimeline(entry.snapshot, {
+        this.appendTimeline(entry, {
           id: randomUUID(),
           kind: "error",
           title: "错误",
@@ -398,27 +426,28 @@ export class SessionManager {
   }
 
   private consumeSessionUpdate(
-    snapshot: SessionSnapshot,
+    entry: ManagedSession,
     update: Extract<ServerEvent, { type: "session_update" }>["payload"],
   ) {
+    const snapshot = entry.snapshot;
     switch (update.sessionUpdate) {
       case "agent_message_chunk": {
         const content = update.content as { type?: string; text?: string } | undefined;
         if (content?.type === "text" && content.text) {
-          this.appendTextChunk(snapshot, "agent", "Claude", content.text);
+          this.appendTextChunk(entry, "agent", "Claude", content.text);
         }
         break;
       }
       case "agent_thought_chunk": {
         const content = update.content as { type?: string; text?: string } | undefined;
         if (content?.type === "text" && content.text) {
-          this.appendTextChunk(snapshot, "thought", "思路", content.text);
+          this.appendTextChunk(entry, "thought", "思路", content.text);
         }
         break;
       }
       case "tool_call":
       case "tool_call_update":
-        this.appendTimeline(snapshot, {
+        this.appendTimeline(entry, {
           id: randomUUID(),
           kind: "tool",
           title: summarizeToolTitle(update.title, update.rawInput, update.toolCallId),
@@ -433,7 +462,7 @@ export class SessionManager {
         });
         break;
       case "plan":
-        this.appendTimeline(snapshot, {
+        this.appendTimeline(entry, {
           id: randomUUID(),
           kind: "system",
           title: "执行计划",
@@ -442,7 +471,7 @@ export class SessionManager {
         break;
       case "current_mode_update":
         snapshot.currentModeId = String(update.currentModeId ?? snapshot.currentModeId ?? "default");
-        this.appendTimeline(snapshot, {
+        this.appendTimeline(entry, {
           id: randomUUID(),
           kind: "system",
           title: "模式切换",
@@ -455,17 +484,19 @@ export class SessionManager {
   }
 
   private appendTextChunk(
-    snapshot: SessionSnapshot,
+    entry: ManagedSession,
     kind: TimelineItem["kind"],
     title: string,
     text: string,
   ) {
-    const lastItem = snapshot.timeline.at(-1);
+    const fullTimeline = this.ensureFullTimeline(entry);
+    const lastItem = fullTimeline.at(-1);
     if (lastItem && lastItem.kind === kind && lastItem.title === title && !lastItem.meta) {
       lastItem.body += text;
+      this.syncVisibleTimeline(entry);
       return;
     }
-    this.appendTimeline(snapshot, {
+    this.appendTimeline(entry, {
       id: randomUUID(),
       kind,
       title,
@@ -473,11 +504,25 @@ export class SessionManager {
     });
   }
 
-  private appendTimeline(snapshot: SessionSnapshot, item: TimelineItem) {
-    snapshot.timeline.push(item);
-    if (snapshot.timeline.length > 240) {
-      snapshot.timeline = snapshot.timeline.slice(-240);
+  private appendTimeline(entry: ManagedSession, item: TimelineItem) {
+    this.ensureFullTimeline(entry).push(item);
+    this.syncVisibleTimeline(entry);
+  }
+
+  private syncVisibleTimeline(entry: ManagedSession) {
+    const fullTimeline = this.ensureFullTimeline(entry);
+    const total = fullTimeline.length;
+    const start = Math.max(0, total - SessionManager.INITIAL_TIMELINE_WINDOW);
+    entry.snapshot.timeline = fullTimeline.slice(start);
+    entry.snapshot.historyTotal = total;
+    entry.snapshot.historyStart = start;
+  }
+
+  private ensureFullTimeline(entry: ManagedSession) {
+    if (!Array.isArray(entry.fullTimeline)) {
+      entry.fullTimeline = [];
     }
+    return entry.fullTimeline;
   }
 
   private emit(event: SocketEvent) {
@@ -561,7 +606,7 @@ export class SessionManager {
     }
     entry.snapshot.busy = false;
     entry.snapshot.connectionState = "error";
-    this.appendTimeline(entry.snapshot, {
+    this.appendTimeline(entry, {
       id: randomUUID(),
       kind: "error",
       title: "错误",

@@ -109,6 +109,13 @@ h1 {
   margin-top: 14px;
 }
 
+.system-trigger {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+}
+
 .status-card,
 .details,
 .approval-card,
@@ -232,6 +239,43 @@ h1 {
   min-height: 0;
 }
 
+.create-panel {
+  gap: 6px;
+}
+
+.create-panel .details {
+  padding: 10px;
+}
+
+.create-panel .details p {
+  margin-bottom: 4px;
+  font-size: 10px;
+}
+
+.create-panel .details code {
+  margin-bottom: 8px;
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.create-panel .details input,
+.create-panel .details select {
+  margin-bottom: 8px;
+  padding: 7px 9px;
+  font-size: 11px;
+}
+
+.create-panel .inline-actions {
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
+.create-panel .primary,
+.create-panel .secondary {
+  padding: 9px 10px;
+  font-size: 11px;
+}
+
 .tab-panel.fill .session-list {
   margin-top: 0;
 }
@@ -287,6 +331,13 @@ h1 {
   flex-direction: column;
   gap: 6px;
   min-height: 0;
+}
+
+.history-loader {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 11px;
+  text-align: center;
 }
 
 .bubble,
@@ -384,18 +435,6 @@ h1 {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.4;
-}
-
-.global-feed {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.global-feed h3 {
-  margin: 12px 0 0;
-  color: var(--muted);
-  font-size: 14px;
 }
 
 .session-meta {
@@ -585,6 +624,10 @@ h1 {
   box-shadow: var(--shadow);
 }
 
+.system-modal-card {
+  width: min(760px, 100%);
+}
+
 .modal-header {
   display: flex;
   align-items: flex-start;
@@ -608,6 +651,14 @@ h1 {
   word-break: break-word;
   font-size: 11px;
   line-height: 1.5;
+}
+
+.system-modal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+  min-height: 0;
 }
 
 @media (max-width: 1100px) {
