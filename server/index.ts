@@ -1,0 +1,139 @@
+import express from "express";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { createServer } from "node:http";
+import { WebSocket, WebSocketServer } from "ws";
+import { SessionManager, type SocketEvent } from "./session-manager.js";
+
+type ClientCommand =
+  | { type: "hello" }
+  | { type: "create_session"; payload: { workspacePath: string; title?: string; modeId?: string } }
+  | { type: "prompt"; payload: { clientSessionId: string; text: string; modeId?: string } }
+  | { type: "cancel"; payload: { clientSessionId: string } }
+  | { type: "permission"; payload: { clientSessionId: string; requestId: string; optionId: string } }
+  | { type: "close_session"; payload: { clientSessionId: string } };
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const defaultWorkspacePath = process.env.LEDUO_PATROL_WORKSPACE_PATH ?? process.cwd();
+const allowedRoots = (
+  process.env.LEDUO_PATROL_ALLOWED_ROOTS
+    ?.split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean) ?? [defaultWorkspacePath]
+).map((entry) => path.resolve(entry));
+const appName = process.env.LEDUO_PATROL_APP_NAME ?? "乐汪队";
+const sshHost = process.env.LEDUO_PATROL_SSH_HOST ?? "";
+const sshPath = process.env.LEDUO_PATROL_SSH_PATH ?? defaultWorkspacePath;
+const vscodeRemoteUri =
+  process.env.LEDUO_PATROL_VSCODE_URI ??
+  (sshHost ? `vscode://vscode-remote/ssh-remote+${encodeURIComponent(sshHost)}${sshPath}` : "");
+const port = Number(process.env.PORT ?? 3001);
+const agentBinPath = path.resolve(process.cwd(), "node_modules/.bin/claude-code-acp");
+
+const app = express();
+const server = createServer(app);
+const wss = new WebSocketServer({ server, path: "/ws" });
+const sessionManager = new SessionManager({
+  allowedRoots,
+  agentBinPath,
+});
+
+await sessionManager.initialize();
+
+app.get("/api/config", (_req, res) => {
+  res.json({
+    appName,
+    workspacePath: defaultWorkspacePath,
+    allowedRoots,
+    sshHost,
+    sshPath,
+    vscodeRemoteUri,
+  });
+});
+
+app.get("/api/state", (_req, res) => {
+  res.json(sessionManager.getStateSnapshot());
+});
+
+const webDistPath = path.resolve(__dirname, "../web");
+app.use(express.static(webDistPath));
+
+app.get("/{*rest}", (_req, res) => {
+  res.sendFile(path.resolve(webDistPath, "index.html"));
+});
+
+wss.on("connection", (socket) => {
+  const unsubscribe = sessionManager.subscribe((event) => sendEvent(socket, event));
+
+  socket.on("message", async (raw) => {
+    try {
+      const message = JSON.parse(String(raw)) as ClientCommand;
+      switch (message.type) {
+        case "hello":
+          sendEvent(socket, {
+            type: "ready",
+            payload: { workspacePath: defaultWorkspacePath, agentConnected: sessionManager.getStateSnapshot().sessions.length > 0 },
+          });
+          break;
+        case "create_session":
+          await sessionManager.createSession(
+            message.payload.workspacePath,
+            message.payload.title,
+            message.payload.modeId,
+          );
+          break;
+        case "prompt":
+          await sessionManager.prompt(
+            message.payload.clientSessionId,
+            message.payload.text,
+            message.payload.modeId,
+          );
+          break;
+        case "cancel":
+          await sessionManager.cancel(message.payload.clientSessionId);
+          break;
+        case "permission":
+          await sessionManager.resolvePermission(
+            message.payload.clientSessionId,
+            message.payload.requestId,
+            message.payload.optionId,
+          );
+          break;
+        case "close_session":
+          await sessionManager.closeSession(message.payload.clientSessionId);
+          break;
+      }
+    } catch (error) {
+      sendEvent(socket, {
+        type: "error",
+        payload: { message: formatError(error) },
+      });
+    }
+  });
+
+  socket.on("close", () => {
+    unsubscribe();
+  });
+});
+
+server.listen(port, () => {
+  console.log(`${appName} listening on http://localhost:${port}`);
+});
+
+function sendEvent(socket: WebSocket, event: SocketEvent) {
+  if (socket.readyState !== WebSocket.OPEN) {
+    return;
+  }
+  socket.send(JSON.stringify(event));
+}
+
+function formatError(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}

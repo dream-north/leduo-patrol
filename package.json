@@ -1,0 +1,40 @@
+{
+  "name": "leduo-patrol",
+  "version": "1.0.0",
+  "description": "leduo-patrol web console for driving Claude Code over ACP.",
+  "type": "module",
+  "main": "dist/server/index.js",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:web\" \"npm:dev:server\"",
+    "dev:web": "vite",
+    "dev:server": "tsx watch server/index.ts",
+    "build": "npm run build:web && npm run build:server",
+    "build:web": "vite build",
+    "build:server": "rm -rf dist/server && tsc -p tsconfig.server.json",
+    "start": "node dist/server/index.js",
+    "check": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.15.0",
+    "@zed-industries/claude-code-acp": "^0.16.2",
+    "express": "^5.2.1",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.3.5",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^5.1.4",
+    "concurrently": "^9.2.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}
