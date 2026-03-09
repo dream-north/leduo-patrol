@@ -1,4 +1,5 @@
 import express from "express";
+import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
@@ -53,6 +54,30 @@ app.get("/api/config", (_req, res) => {
 
 app.get("/api/state", (_req, res) => {
   res.json(sessionManager.getStateSnapshot());
+});
+
+app.get("/api/directories", async (req, res) => {
+  try {
+    const requestedRoot = typeof req.query.root === "string" ? req.query.root : defaultWorkspacePath;
+    const resolvedRoot = resolveAllowedPath(requestedRoot);
+    const entries = await readdir(resolvedRoot, { withFileTypes: true });
+    const directories = entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => ({
+        name: entry.name,
+        path: path.join(resolvedRoot, entry.name),
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name, "zh-Hans-CN"));
+
+    res.json({
+      rootPath: resolvedRoot,
+      directories,
+    });
+  } catch (error) {
+    res.status(400).json({
+      message: formatError(error),
+    });
+  }
 });
 
 const webDistPath = path.resolve(__dirname, "../web");
@@ -136,4 +161,18 @@ function formatError(error: unknown) {
   } catch {
     return String(error);
   }
+}
+
+function resolveAllowedPath(requestedPath: string) {
+  const resolvedPath = path.resolve(requestedPath);
+  const isAllowed = allowedRoots.some((rootPath) => {
+    const relativePath = path.relative(rootPath, resolvedPath);
+    return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+  });
+
+  if (!isAllowed) {
+    throw new Error(`Path is outside allowed roots: ${resolvedPath}`);
+  }
+
+  return resolvedPath;
 }

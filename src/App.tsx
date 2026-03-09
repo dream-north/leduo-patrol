@@ -16,7 +16,7 @@ type SessionUpdate = {
 
 type TimelineItem = {
   id: string;
-  kind: "system" | "user" | "agent" | "thought" | "tool" | "error";
+  kind: "system" | "user" | "agent" | "thought" | "tool" | "plan" | "error";
   title: string;
   body: string;
   meta?: string;
@@ -46,6 +46,11 @@ type SessionRecord = {
 
 type StateResponse = {
   sessions: SessionRecord[];
+};
+
+type DirectoryResponse = {
+  rootPath: string;
+  directories: Array<{ name: string; path: string }>;
 };
 
 type EventMessage =
@@ -91,6 +96,11 @@ export default function App() {
   const [promptText, setPromptText] = useState("");
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");
+  const [directoryBrowserPath, setDirectoryBrowserPath] = useState("");
+  const [directoryRootPath, setDirectoryRootPath] = useState("");
+  const [directoryOptions, setDirectoryOptions] = useState<Array<{ name: string; path: string }>>([]);
+  const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [directoryError, setDirectoryError] = useState("");
   const [globalTimeline, setGlobalTimeline] = useState<TimelineItem[]>([]);
   const [selectedItem, setSelectedItem] = useState<{ sessionTitle: string; item: TimelineItem } | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -99,6 +109,9 @@ export default function App() {
 
   const activeSession = sessions.find((session) => session.clientSessionId === activeSessionId) ?? null;
   const visibleTimeline = activeSession?.timeline ?? EMPTY_TIMELINE;
+  const browseRootPath = directoryBrowserPath || activeSession?.workspacePath || config?.workspacePath || "";
+  const currentBrowsePath = directoryRootPath || browseRootPath;
+  const canBrowseUp = canNavigateUp(currentBrowsePath, config?.allowedRoots ?? []);
 
   useEffect(() => {
     if (sessions.length === 0) {
@@ -117,13 +130,23 @@ export default function App() {
   }, [sessions.length]);
 
   useEffect(() => {
+    if (sessions.length > 0 && activeSessionId) {
+      setSidebarTab("sessions");
+    }
+  }, [activeSessionId, sessions.length]);
+
+  useEffect(() => {
+    setDirectoryBrowserPath(activeSession?.workspacePath ?? config?.workspacePath ?? "");
+  }, [activeSession?.workspacePath, config?.workspacePath]);
+
+  useEffect(() => {
     Promise.all([fetch("/api/config"), fetch("/api/state")])
       .then(async ([configResponse, stateResponse]) => {
         const configData = (await configResponse.json()) as AppConfig;
         const stateData = (await stateResponse.json()) as StateResponse;
         setConfig(configData);
         setWorkspacePath(configData.workspacePath);
-        setSessions(stateData.sessions);
+        setSessions(stateData.sessions.map(normalizeSessionRecord));
       })
       .catch((error) => {
         appendGlobalTimeline({
@@ -134,6 +157,48 @@ export default function App() {
         });
       });
   }, []);
+
+  useEffect(() => {
+    if (!browseRootPath) {
+      setDirectoryRootPath("");
+      setDirectoryOptions([]);
+      setDirectoryError("");
+      return;
+    }
+
+    const controller = new AbortController();
+    setDirectoryLoading(true);
+    setDirectoryError("");
+
+    fetch(`/api/directories?root=${encodeURIComponent(browseRootPath)}`, { signal: controller.signal })
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) {
+          const errorPayload = payload as { message?: string };
+          throw new Error(errorPayload.message || "目录读取失败");
+        }
+        const directoryPayload = payload as DirectoryResponse;
+        setDirectoryRootPath(directoryPayload.rootPath);
+        setDirectoryOptions(directoryPayload.directories);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setDirectoryRootPath(browseRootPath);
+        setDirectoryOptions([]);
+        setDirectoryError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setDirectoryLoading(false);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [browseRootPath]);
 
   useEffect(() => {
     const viewport = timelineViewportRef.current;
@@ -189,7 +254,11 @@ export default function App() {
     setSessions((current) =>
       current.map((session) =>
         session.clientSessionId === clientSessionId
-          ? { ...session, timeline: [...session.timeline, item], updatedAt: new Date().toISOString() }
+          ? {
+              ...session,
+              timeline: [...session.timeline, normalizeTimelineItem(item)],
+              updatedAt: new Date().toISOString(),
+            }
           : session,
       ),
     );
@@ -286,7 +355,7 @@ export default function App() {
           }
           return [
             ...current,
-            {
+            normalizeSessionRecord({
               clientSessionId: message.payload.clientSessionId,
               title: message.payload.title,
               workspacePath: message.payload.workspacePath,
@@ -299,7 +368,7 @@ export default function App() {
               timeline: [],
               permissions: [],
               updatedAt: new Date().toISOString(),
-            },
+            }),
           ];
         });
         ensureActiveSession(message.payload.clientSessionId);
@@ -366,7 +435,7 @@ export default function App() {
             message.payload.toolCall.rawInput,
             message.payload.toolCall.toolCallId,
           ),
-          body: formatToolDetails({
+          body: formatToolBody({
             toolCallId: message.payload.toolCall.toolCallId,
             title: message.payload.toolCall.title,
             status: message.payload.toolCall.status,
@@ -567,9 +636,8 @@ export default function App() {
         </div>
 
         <div className="status-grid">
-          <StatusCard label="连接" value={connectionState} />
+          <StatusCard label="连接" value={connectionState} tone={toneForConnectionState(connectionState)} />
           <StatusCard label="会话数" value={String(sessions.length)} />
-          <StatusCard label="当前会话" value={activeSession?.title ?? "未选择"} />
         </div>
 
         <div className="sidebar-tabs" role="tablist" aria-label="会话面板">
@@ -593,7 +661,7 @@ export default function App() {
           {sidebarTab === "create" ? (
             <div className="tab-panel">
               <div className="details">
-                <p>新建目录</p>
+                <p>会话目录</p>
                 <input value={workspacePath} onChange={(event) => setWorkspacePath(event.target.value)} />
                 <p>会话名</p>
                 <input
@@ -609,6 +677,51 @@ export default function App() {
                     </option>
                   ))}
                 </select>
+                <p>当前目录的子目录</p>
+                <select
+                  value=""
+                  disabled={directoryLoading || directoryOptions.length === 0}
+                  onChange={(event) => {
+                    if (event.target.value) {
+                      setDirectoryBrowserPath(event.target.value);
+                      setWorkspacePath(event.target.value);
+                    }
+                  }}
+                >
+                  <option value="">
+                    {directoryLoading
+                      ? "正在读取子目录..."
+                      : directoryOptions.length > 0
+                        ? "选择一个子目录"
+                        : "当前目录下没有可选子目录"}
+                  </option>
+                  {directoryOptions.map((option) => (
+                    <option key={option.path} value={option.path}>
+                      {option.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="inline-actions">
+                  <button
+                    className="secondary"
+                    type="button"
+                    disabled={!currentBrowsePath || !canBrowseUp}
+                    onClick={() => setDirectoryBrowserPath(parentDirectory(currentBrowsePath))}
+                  >
+                    返回上一级
+                  </button>
+                  <button
+                    className="secondary"
+                    type="button"
+                    disabled={!currentBrowsePath}
+                    onClick={() => setWorkspacePath(currentBrowsePath)}
+                  >
+                    使用当前目录
+                  </button>
+                </div>
+                <p>当前浏览目录</p>
+                <code>{currentBrowsePath || "加载中..."}</code>
+                {directoryError ? <p>{directoryError}</p> : null}
                 <p>允许根目录</p>
                 <code>{config?.allowedRoots.join("\n") ?? "加载中..."}</code>
               </div>
@@ -719,48 +832,69 @@ export default function App() {
         </div>
         {activeSession ? (
           <>
-            <div className="details session-meta">
-              <p>目录</p>
-              <code>{activeSession.workspacePath}</code>
-              <p>Claude 会话 ID</p>
-              <code>{activeSession.sessionId || "创建中..."}</code>
-              <p>默认模式</p>
-              <code>{labelForMode(activeSession.defaultModeId)}</code>
-              <p>当前模式</p>
-              <code>{labelForMode(activeSession.currentModeId)}</code>
-            </div>
-            <div className="actions compact">
-              <button className="secondary" onClick={() => closeSession(activeSession.clientSessionId)}>
-                关闭当前会话
-              </button>
-            </div>
             {activeSession.permissions.length === 0 ? (
               <div className="empty">当前会话没有待处理确认。</div>
             ) : (
-              activeSession.permissions.map((permission) => (
-                <section className="approval-card" key={permission.requestId}>
-                  <h3>
-                    {summarizeToolTitle(
-                      permission.toolCall.title,
-                      permission.toolCall.rawInput,
-                      permission.toolCall.toolCallId,
-                    )}
-                  </h3>
-                  <pre>{stringifyMaybe(permission.toolCall.rawInput ?? {})}</pre>
-                  <div className="approval-actions">
-                    {permission.options.map((option) => (
-                      <button
-                        key={option.optionId}
-                        className="secondary"
-                        onClick={() => resolvePermission(permission, option.optionId)}
-                      >
-                        {option.name}
-                      </button>
-                    ))}
-                  </div>
-                </section>
-              ))
+              <div className="approval-stack">
+                {activeSession.permissions.map((permission) => (
+                  <section className="approval-card approval-card-active" key={permission.requestId}>
+                    <p className="approval-label">待处理确认</p>
+                    <h3>
+                      {summarizeToolTitle(
+                        permission.toolCall.title,
+                        permission.toolCall.rawInput,
+                        permission.toolCall.toolCallId,
+                      )}
+                    </h3>
+                    <p className="approval-hint">
+                      {extractPlanText(permission.toolCall.rawInput)
+                        ? "计划详情已经显示在中间会话里，点击对应条目可查看完整 Markdown。"
+                        : "右侧只保留确认动作，详细内容请在中间会话中查看。"}
+                    </p>
+                    <div className="approval-actions">
+                      {permission.options.map((option) => (
+                        <button
+                          key={option.optionId}
+                          className="secondary"
+                          onClick={() => resolvePermission(permission, option.optionId)}
+                        >
+                          {option.name}
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
             )}
+            <section className="details session-meta session-meta-card">
+              <div className="session-meta-header">
+                <div>
+                  <p className="approval-label">会话详情</p>
+                  <h3>{activeSession.title}</h3>
+                </div>
+                <button className="secondary session-close" onClick={() => closeSession(activeSession.clientSessionId)}>
+                  关闭当前会话
+                </button>
+              </div>
+              <div className="session-meta-grid">
+                <div className="session-meta-item session-meta-item-wide">
+                  <span>目录</span>
+                  <code>{activeSession.workspacePath}</code>
+                </div>
+                <div className="session-meta-item session-meta-item-wide">
+                  <span>Claude 会话 ID</span>
+                  <code>{activeSession.sessionId || "创建中..."}</code>
+                </div>
+                <div className="session-meta-item">
+                  <span>默认模式</span>
+                  <code>{labelForMode(activeSession.defaultModeId)}</code>
+                </div>
+                <div className="session-meta-item">
+                  <span>当前模式</span>
+                  <code>{labelForMode(activeSession.currentModeId)}</code>
+                </div>
+              </div>
+            </section>
           </>
         ) : (
           <div className="empty">选择一个会话后再处理确认或关闭会话。</div>
@@ -778,9 +912,9 @@ export default function App() {
   );
 }
 
-function StatusCard(props: { label: string; value: string }) {
+function StatusCard(props: { label: string; value: string; tone?: "positive" | "negative" | "neutral" }) {
   return (
-    <div className="status-card">
+    <div className={`status-card ${props.tone ? `status-card-${props.tone}` : ""}`}>
       <span>{props.label}</span>
       <strong>{props.value}</strong>
     </div>
@@ -789,11 +923,12 @@ function StatusCard(props: { label: string; value: string }) {
 
 function TimelineRow(props: { item: TimelineItem; onOpen: () => void }) {
   const kindLabel = labelForKind(props.item.kind, props.item.title);
-  const summary = summarizeTimelineItem(props.item);
+  const expandedPreview = shouldUseExpandedPreview(props.item);
+  const summary = summarizeTimelineItem(props.item, expandedPreview);
   return (
-    <button className={`timeline-row ${props.item.kind}`} onClick={props.onOpen}>
+    <button className={`timeline-row ${props.item.kind} ${expandedPreview ? "timeline-row-multiline" : ""}`} onClick={props.onOpen}>
       <span className="timeline-kind">{kindLabel}</span>
-      <span className="timeline-body">{summary}</span>
+      <span className={`timeline-body ${expandedPreview ? "multiline" : ""}`}>{summary}</span>
       <span className="timeline-meta">{props.item.meta ?? "查看"}</span>
     </button>
   );
@@ -825,6 +960,8 @@ function labelForKind(kind: TimelineItem["kind"], fallbackTitle: string) {
       return "思路";
     case "tool":
       return "工具";
+    case "plan":
+      return "计划";
     case "error":
       return "错误";
     case "system":
@@ -834,11 +971,18 @@ function labelForKind(kind: TimelineItem["kind"], fallbackTitle: string) {
   }
 }
 
-function summarizeTimelineItem(item: TimelineItem) {
+function summarizeTimelineItem(item: TimelineItem, expandedPreview: boolean) {
+  if (expandedPreview) {
+    return toPreviewText(item.body);
+  }
   if (item.kind === "tool") {
     return toSingleLine(item.title);
   }
   return toSingleLine(item.body);
+}
+
+function shouldUseExpandedPreview(item: TimelineItem) {
+  return item.kind === "agent" || item.kind === "plan";
 }
 
 function summarizeToolTitle(rawTitle: unknown, rawInput: unknown, rawToolCallId: unknown) {
@@ -891,8 +1035,22 @@ function formatToolDetails(details: {
   });
 }
 
+function formatToolBody(details: {
+  toolCallId?: unknown;
+  title?: unknown;
+  status?: unknown;
+  rawInput?: unknown;
+  rawOutput?: unknown;
+}) {
+  return formatToolDetails(details);
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function extractPlanText(value: unknown) {
+  return extractPlanPreview(value)?.body ?? null;
 }
 
 function stringifyMaybe(value: unknown) {
@@ -906,8 +1064,156 @@ function labelForMode(modeId: string) {
   return MODE_OPTIONS.find((option) => option.id === modeId)?.label ?? modeId;
 }
 
+function toneForConnectionState(connectionState: string): "positive" | "negative" | "neutral" {
+  if (connectionState === "connected") {
+    return "positive";
+  }
+  if (connectionState === "closed" || connectionState === "error") {
+    return "negative";
+  }
+  return "neutral";
+}
+
+function canNavigateUp(currentPath: string, allowedRoots: string[]) {
+  const normalizedCurrent = normalizePath(currentPath);
+  if (!normalizedCurrent) {
+    return false;
+  }
+
+  return allowedRoots.some((rootPath) => {
+    const normalizedRoot = normalizePath(rootPath);
+    return normalizedCurrent !== normalizedRoot && isWithinRoot(normalizedRoot, normalizedCurrent);
+  });
+}
+
+function parentDirectory(pathValue: string) {
+  const trimmed = pathValue.replace(/[\\/]+$/, "");
+  const lastSeparatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+
+  if (lastSeparatorIndex <= 0) {
+    return trimmed.slice(0, 1) || trimmed;
+  }
+
+  return trimmed.slice(0, lastSeparatorIndex);
+}
+
+function isWithinRoot(rootPath: string, targetPath: string) {
+  return targetPath === rootPath || targetPath.startsWith(`${rootPath}/`);
+}
+
+function normalizePath(pathValue: string) {
+  const normalized = pathValue.replace(/\\/g, "/").replace(/\/+$/, "");
+  return normalized || "/";
+}
+
 function toSingleLine(value: string) {
   return value.replace(/\s+/g, " ").trim() || "(空)";
+}
+
+function toPreviewText(value: string) {
+  return value.trim() || "(空)";
+}
+
+function normalizeSessionRecord(session: SessionRecord): SessionRecord {
+  return {
+    ...session,
+    timeline: session.timeline.map(normalizeTimelineItem),
+  };
+}
+
+function normalizeTimelineItem(item: TimelineItem): TimelineItem {
+  if (item.kind !== "tool") {
+    return item;
+  }
+
+  const planPreview = extractPlanPreview(item.body);
+  if (!planPreview) {
+    return item;
+  }
+
+  return {
+    ...item,
+    kind: "plan",
+    title: planPreview.title,
+    body: planPreview.body,
+  };
+}
+
+function extractPlanPreview(value: unknown): { title: string; body: string } | null {
+  const parsed = tryParseJson(value);
+  if (parsed !== null) {
+    return extractPlanPreview(parsed);
+  }
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const preview = extractPlanPreview(entry);
+      if (preview) {
+        return preview;
+      }
+    }
+    return null;
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  if (typeof record.plan === "string") {
+    return {
+      title: "计划确认",
+      body: record.plan,
+    };
+  }
+
+  const filePath =
+    typeof record.file_path === "string"
+      ? record.file_path
+      : typeof record.path === "string"
+        ? record.path
+        : null;
+  const content =
+    typeof record.content === "string"
+      ? record.content
+      : typeof record.text === "string"
+        ? record.text
+        : null;
+
+  if (filePath?.includes("/.claude/plans/") && content) {
+    return {
+      title: "计划",
+      body: content,
+    };
+  }
+
+  for (const nestedKey of ["rawInput", "rawOutput", "input", "output", "content"]) {
+    if (nestedKey in record) {
+      const preview = extractPlanPreview(record[nestedKey]);
+      if (preview) {
+        return preview;
+      }
+    }
+  }
+
+  return null;
+}
+
+function tryParseJson(value: unknown) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 function MessageModal(props: {
