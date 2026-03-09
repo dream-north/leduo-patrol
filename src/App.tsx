@@ -809,7 +809,12 @@ export default function App() {
                       className={`session-chip ${session.clientSessionId === activeSessionId ? "active" : ""}`}
                       onClick={() => setActiveSessionId(session.clientSessionId)}
                     >
-                      <strong>{session.title}</strong>
+                      <span className="session-chip-header">
+                        <strong>{session.title}</strong>
+                        {session.permissions.length > 0 ? (
+                          <span className="session-chip-badge">{session.permissions.length} 待处理</span>
+                        ) : null}
+                      </span>
                       <span>{session.workspacePath}</span>
                       <span>
                         {session.permissions.length > 0 ? `${session.permissions.length} 待确认` : session.connectionState}
