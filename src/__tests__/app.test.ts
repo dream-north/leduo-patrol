@@ -47,3 +47,9 @@ test("app markdown decision and plan parsing helpers", () => {
   assert.equal(appTestables.extractPlanText({ rawInput: { file_path: "/repo/.claude/plans/p2.md", content: "abc" } }), "abc");
   assert.deepEqual(appTestables.tryParseJson('{"a":1}'), { a: 1 });
 });
+
+test("app markdown table helpers parse table syntax", () => {
+  assert.equal(appTestables.isMarkdownTableRow("| col1 | col2 |"), true);
+  assert.equal(appTestables.isMarkdownTableSeparator("| --- | :---: |"), true);
+  assert.deepEqual(appTestables.parseMarkdownTableRow("| a | b |"), ["a", "b"]);
+});

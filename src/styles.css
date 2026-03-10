@@ -815,6 +815,27 @@ h1 {
   background: transparent;
 }
 
+
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: 11px;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--line);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-body th {
+  background: rgba(66, 43, 26, 0.08);
+  font-weight: 600;
+}
+
 .diff-toolbar-tabs {
   display: flex;
   align-items: center;

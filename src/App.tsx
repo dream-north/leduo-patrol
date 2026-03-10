@@ -1443,7 +1443,10 @@ function makeId() {
 
 function renderMarkdownBlocks(source: string) {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
-  const blocks: Array<{ kind: "heading" | "paragraph" | "list" | "code"; level?: number; lines: string[] }> = [];
+  const blocks: Array<
+    | { kind: "heading" | "paragraph" | "list" | "code"; level?: number; lines: string[] }
+    | { kind: "table"; headers: string[]; rows: string[][] }
+  > = [];
   let paragraph: string[] = [];
   let list: string[] = [];
   let code: string[] = [];
@@ -1463,8 +1466,9 @@ function renderMarkdownBlocks(source: string) {
     }
   };
 
-  for (const rawLine of lines) {
-    const line = rawLine;
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
     if (line.startsWith("```")) {
       flushParagraph();
       flushList();
@@ -1475,11 +1479,34 @@ function renderMarkdownBlocks(source: string) {
       } else {
         inCode = true;
       }
+      index += 1;
       continue;
     }
 
     if (inCode) {
       code.push(line);
+      index += 1;
+      continue;
+    }
+
+    const nextLine = lines[index + 1] ?? "";
+    if (isMarkdownTableRow(line) && isMarkdownTableSeparator(nextLine)) {
+      flushParagraph();
+      flushList();
+
+      const headers = parseMarkdownTableRow(line);
+      const rows: string[][] = [];
+      index += 2;
+      while (index < lines.length) {
+        const rowLine = lines[index] ?? "";
+        if (!isMarkdownTableRow(rowLine) || !rowLine.trim()) {
+          break;
+        }
+        rows.push(parseMarkdownTableRow(rowLine));
+        index += 1;
+      }
+
+      blocks.push({ kind: "table", headers, rows });
       continue;
     }
 
@@ -1488,6 +1515,7 @@ function renderMarkdownBlocks(source: string) {
       flushParagraph();
       flushList();
       blocks.push({ kind: "heading", level: heading[1].length, lines: [heading[2]] });
+      index += 1;
       continue;
     }
 
@@ -1495,17 +1523,20 @@ function renderMarkdownBlocks(source: string) {
     if (listMatch) {
       flushParagraph();
       list.push(listMatch[1]);
+      index += 1;
       continue;
     }
 
     if (!line.trim()) {
       flushParagraph();
       flushList();
+      index += 1;
       continue;
     }
 
     flushList();
     paragraph.push(line);
+    index += 1;
   }
 
   flushParagraph();
@@ -1548,8 +1579,53 @@ function renderMarkdownBlocks(source: string) {
         </pre>
       );
     }
+    if (block.kind === "table") {
+      return (
+        <table key={`md-table-${index}`}>
+          <thead>
+            <tr>
+              {block.headers.map((header, cellIndex) => (
+                <th key={`md-table-${index}-h-${cellIndex}`}>{renderMarkdownInline(header)}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {block.rows.map((row, rowIndex) => (
+              <tr key={`md-table-${index}-r-${rowIndex}`}>
+                {block.headers.map((_, cellIndex) => (
+                  <td key={`md-table-${index}-r-${rowIndex}-c-${cellIndex}`}>
+                    {renderMarkdownInline(row[cellIndex] ?? "")}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      );
+    }
     return <p key={`md-paragraph-${index}`}>{renderMarkdownInline(block.lines.join(" "))}</p>;
   });
+}
+
+function isMarkdownTableRow(line: string) {
+  return line.includes("|") && parseMarkdownTableRow(line).length > 0;
+}
+
+function isMarkdownTableSeparator(line: string) {
+  const cells = parseMarkdownTableRow(line);
+  if (cells.length === 0) {
+    return false;
+  }
+  return cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function parseMarkdownTableRow(line: string) {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
 }
 
 function renderMarkdownInline(text: string) {
@@ -1882,4 +1958,7 @@ export const appTestables = {
   tryParseJson,
   shouldUseExpandedPreview,
   shouldRenderMarkdown,
+  parseMarkdownTableRow,
+  isMarkdownTableSeparator,
+  isMarkdownTableRow,
 };
