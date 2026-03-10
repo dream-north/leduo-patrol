@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import express from "express";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
