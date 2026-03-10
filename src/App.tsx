@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 
 type AppConfig = {
   appName: string;
@@ -1307,6 +1307,145 @@ function makeId() {
   return `lp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function renderMarkdownBlocks(source: string) {
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  const blocks: Array<{ kind: "heading" | "paragraph" | "list" | "code"; level?: number; lines: string[] }> = [];
+  let paragraph: string[] = [];
+  let list: string[] = [];
+  let code: string[] = [];
+  let inCode = false;
+
+  const flushParagraph = () => {
+    if (paragraph.length > 0) {
+      blocks.push({ kind: "paragraph", lines: paragraph });
+      paragraph = [];
+    }
+  };
+
+  const flushList = () => {
+    if (list.length > 0) {
+      blocks.push({ kind: "list", lines: list });
+      list = [];
+    }
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine;
+    if (line.startsWith("```")) {
+      flushParagraph();
+      flushList();
+      if (inCode) {
+        blocks.push({ kind: "code", lines: code });
+        code = [];
+        inCode = false;
+      } else {
+        inCode = true;
+      }
+      continue;
+    }
+
+    if (inCode) {
+      code.push(line);
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,6})\s+(.*)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      blocks.push({ kind: "heading", level: heading[1].length, lines: [heading[2]] });
+      continue;
+    }
+
+    const listMatch = line.match(/^\s*[-*+]\s+(.*)$/);
+    if (listMatch) {
+      flushParagraph();
+      list.push(listMatch[1]);
+      continue;
+    }
+
+    if (!line.trim()) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+
+    flushList();
+    paragraph.push(line);
+  }
+
+  flushParagraph();
+  flushList();
+  if (code.length > 0) {
+    blocks.push({ kind: "code", lines: code });
+  }
+
+  return blocks.map((block, index) => {
+    if (block.kind === "heading") {
+      const headingContent = renderMarkdownInline(block.lines[0] ?? "");
+      switch (Math.min(block.level ?? 3, 6)) {
+        case 1:
+          return <h1 key={`md-heading-${index}`}>{headingContent}</h1>;
+        case 2:
+          return <h2 key={`md-heading-${index}`}>{headingContent}</h2>;
+        case 3:
+          return <h3 key={`md-heading-${index}`}>{headingContent}</h3>;
+        case 4:
+          return <h4 key={`md-heading-${index}`}>{headingContent}</h4>;
+        case 5:
+          return <h5 key={`md-heading-${index}`}>{headingContent}</h5>;
+        default:
+          return <h6 key={`md-heading-${index}`}>{headingContent}</h6>;
+      }
+    }
+    if (block.kind === "list") {
+      return (
+        <ul key={`md-list-${index}`}>
+          {block.lines.map((item, itemIndex) => (
+            <li key={`md-list-${index}-${itemIndex}`}>{renderMarkdownInline(item)}</li>
+          ))}
+        </ul>
+      );
+    }
+    if (block.kind === "code") {
+      return (
+        <pre key={`md-code-${index}`}>
+          <code>{block.lines.join("\n")}</code>
+        </pre>
+      );
+    }
+    return <p key={`md-paragraph-${index}`}>{renderMarkdownInline(block.lines.join(" "))}</p>;
+  });
+}
+
+function renderMarkdownInline(text: string) {
+  const parts = text.split(/(\[[^\]]+\]\([^\)]+\)|`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/g).filter(Boolean);
+  return parts.map((part, index) => {
+    const linkMatch = part.match(/^\[([^\]]+)\]\(([^\)]+)\)$/);
+    if (linkMatch) {
+      return (
+        <a key={`md-link-${index}`} href={linkMatch[2]} target="_blank" rel="noreferrer">
+          {linkMatch[1]}
+        </a>
+      );
+    }
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return <strong key={`md-bold-${index}`}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("*") && part.endsWith("*") && part.length > 2) {
+      return <em key={`md-italic-${index}`}>{part.slice(1, -1)}</em>;
+    }
+    if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+      return <code key={`md-inline-${index}`}>{part.slice(1, -1)}</code>;
+    }
+    return <Fragment key={`md-text-${index}`}>{part}</Fragment>;
+  });
+}
+
+function shouldRenderMarkdown(item: TimelineItem) {
+  return item.kind === "agent" || item.kind === "plan";
+}
+
 function MessageModal(props: {
   sessionTitle: string;
   item: TimelineItem;
@@ -1325,7 +1464,11 @@ function MessageModal(props: {
           </button>
         </div>
         <p className="modal-meta">{props.item.meta ?? "详细内容"}</p>
-        <pre className="modal-body">{props.item.body}</pre>
+        {shouldRenderMarkdown(props.item) ? (
+          <div className="modal-body markdown-body">{renderMarkdownBlocks(props.item.body)}</div>
+        ) : (
+          <pre className="modal-body">{props.item.body}</pre>
+        )}
       </div>
     </div>
   );
