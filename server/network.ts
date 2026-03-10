@@ -1,4 +1,5 @@
 import os from "node:os";
+import net from "node:net";
 
 const EXCLUDED_INTERFACE_PREFIXES = ["lo", "docker", "br-", "veth", "virbr", "vmnet", "tun", "tap"];
 const PREFERRED_INTERFACE_PREFIXES = ["bond", "eth", "ens", "enp"];
@@ -29,6 +30,45 @@ export function pickPreferredLanIp() {
   return candidates[0]?.ip ?? "127.0.0.1";
 }
 
+export async function findAvailablePort(preferredPort: number, host = "0.0.0.0") {
+  let port = preferredPort;
+
+  while (port < preferredPort + 100) {
+    const available = await isPortAvailable(port, host);
+    if (available) {
+      return port;
+    }
+    port += 1;
+  }
+
+  throw new Error(`No available port found from ${preferredPort} to ${preferredPort + 99}`);
+}
+
+function isPortAvailable(port: number, host: string) {
+  return new Promise<boolean>((resolve, reject) => {
+    const server = net.createServer();
+
+    server.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "EADDRINUSE" || error.code === "EACCES") {
+        resolve(false);
+        return;
+      }
+      reject(error);
+    });
+
+    server.listen(port, host, () => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(true);
+      });
+    });
+  });
+}
+
 export const networkTestables = {
   shouldSkipInterface,
+  isPortAvailable,
 };
