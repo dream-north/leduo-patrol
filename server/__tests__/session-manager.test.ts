@@ -7,9 +7,26 @@ test("sessionManagerTestables.summarizeToolTitle summarizes from raw input", () 
   assert.equal(result, "npm test · /repo");
 });
 
+test("sessionManagerTestables.summarizeToolTitle falls back to tool id", () => {
+  const result = sessionManagerTestables.summarizeToolTitle("tool_exec", null, "tool-7");
+  assert.equal(result, "tool_exec");
+});
+
+test("sessionManagerTestables.labelForMode maps known and unknown modes", () => {
+  assert.equal(sessionManagerTestables.labelForMode("plan"), "Plan");
+  assert.equal(sessionManagerTestables.labelForMode("custom"), "custom");
+  assert.equal(sessionManagerTestables.labelForMode(undefined), "默认模式");
+});
+
 test("sessionManagerTestables.formatError handles Error and objects", () => {
   assert.equal(sessionManagerTestables.formatError(new Error("boom")), "boom");
   assert.match(sessionManagerTestables.formatError({ code: 1 }), /"code":1/);
+});
+
+test("sessionManagerTestables.stringifyMaybe and asRecord behave as expected", () => {
+  assert.equal(sessionManagerTestables.stringifyMaybe("ok"), "ok");
+  assert.equal(sessionManagerTestables.asRecord(["x"]), null);
+  assert.deepEqual(sessionManagerTestables.asRecord({ a: 1 }), { a: 1 });
 });
 
 test("SessionManager.getSessionHistory returns bounded page", () => {
