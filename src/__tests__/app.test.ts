@@ -2,6 +2,28 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { appTestables } from "../App";
 
+type SidebarSession = Parameters<typeof appTestables.getSessionSidebarStatus>[0];
+
+function makeSession(overrides: Partial<SidebarSession> = {}): SidebarSession {
+  return {
+    clientSessionId: "s1",
+    title: "session",
+    workspacePath: "/repo",
+    connectionState: "connected",
+    sessionId: "claude-1",
+    modes: ["default"],
+    defaultModeId: "default",
+    currentModeId: "default",
+    busy: false,
+    timeline: [],
+    historyTotal: 0,
+    historyStart: 0,
+    permissions: [],
+    updatedAt: "2026-03-11T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 test("app path helpers normalize and guard navigation", () => {
   assert.equal(appTestables.normalizePath("/a/b///"), "/a/b");
   assert.equal(appTestables.canNavigateUp("/a/b", ["/a"]), true);
@@ -28,6 +50,76 @@ test("app mode/connection helpers return expected labels", () => {
   assert.equal(appTestables.labelForMode("plan"), "Plan");
   assert.equal(appTestables.toneForConnectionState("connected"), "positive");
   assert.equal(appTestables.toneForConnectionState("error"), "negative");
+});
+
+test("app session sidebar status prefers pending over running or completed", () => {
+  const status = appTestables.getSessionSidebarStatus(
+    makeSession({
+      busy: true,
+      permissions: [
+        {
+          clientSessionId: "s1",
+          requestId: "p1",
+          toolCall: { toolCallId: "tc-1" },
+          options: [],
+        },
+      ],
+      timeline: [{ id: "done-1", kind: "system", title: "本轮完成", body: "stop" }],
+    }),
+  );
+
+  assert.deepEqual(status, { label: "待处理", tone: "pending" });
+});
+
+test("app session sidebar status handles running, completed, error, connecting", () => {
+  assert.deepEqual(appTestables.getSessionSidebarStatus(makeSession({ busy: true })), {
+    label: "运行中",
+    tone: "running",
+  });
+  assert.deepEqual(
+    appTestables.getSessionSidebarStatus(
+      makeSession({
+        timeline: [{ id: "done-1", kind: "system", title: "本轮完成", body: "stop" }],
+      }),
+    ),
+    { label: "已完成", tone: "completed" },
+  );
+  assert.deepEqual(appTestables.getSessionSidebarStatus(makeSession({ connectionState: "error" })), {
+    label: "异常",
+    tone: "error",
+  });
+  assert.deepEqual(appTestables.getSessionSidebarStatus(makeSession({ connectionState: "connecting" })), {
+    label: "连接中",
+    tone: "connecting",
+  });
+  assert.equal(appTestables.getSessionSidebarStatus(makeSession()), null);
+});
+
+test("app relative updatedAt formatter uses minute hour and day buckets", () => {
+  const now = Date.parse("2026-03-11T12:00:00.000Z");
+  assert.equal(appTestables.formatRelativeUpdatedAt("2026-03-11T11:59:40.000Z", now), "刚刚");
+  assert.equal(appTestables.formatRelativeUpdatedAt("2026-03-11T11:45:00.000Z", now), "15 分钟前");
+  assert.equal(appTestables.formatRelativeUpdatedAt("2026-03-11T09:00:00.000Z", now), "3 小时前");
+  assert.equal(appTestables.formatRelativeUpdatedAt("2026-03-08T12:00:00.000Z", now), "3 天前");
+});
+
+test("app completed prompt helper checks completion marker", () => {
+  assert.equal(
+    appTestables.hasCompletedPrompt(
+      makeSession({
+        timeline: [{ id: "done-1", kind: "system", title: "本轮完成", body: "stop" }],
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    appTestables.hasCompletedPrompt(
+      makeSession({
+        timeline: [{ id: "msg-1", kind: "agent", title: "Claude", body: "hi" }],
+      }),
+    ),
+    false,
+  );
 });
 
 test("app preview text helpers trim and condense", () => {

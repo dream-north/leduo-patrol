@@ -53,6 +53,13 @@ type SessionRecord = {
   updatedAt: string;
 };
 
+type SessionSidebarStatusTone = "pending" | "running" | "completed" | "error" | "connecting";
+
+type SessionSidebarStatus = {
+  label: string;
+  tone: SessionSidebarStatusTone;
+};
+
 type StateResponse = {
   sessions: SessionRecord[];
 };
@@ -1049,25 +1056,34 @@ export default function App() {
                 {sessions.length === 0 ? (
                   <div className="empty">还没有会话。切到“新建会话”创建一个。</div>
                 ) : (
-                  sessions.map((session) => (
-                    <button
-                      key={session.clientSessionId}
-                      className={`session-chip ${session.clientSessionId === activeSessionId ? "active" : ""}`}
-                      onClick={() => setActiveSessionId(session.clientSessionId)}
-                    >
-                      <span className="session-chip-header">
-                        <strong>{session.title}</strong>
-                        {session.permissions.length > 0 ? (
-                          <span className="session-chip-badge">{session.permissions.length} 待处理</span>
-                        ) : null}
-                      </span>
-                      <span>{session.workspacePath}</span>
-                      <span>
-                        {session.permissions.length > 0 ? `${session.permissions.length} 待确认` : session.connectionState}
-                      </span>
-                      <span>模式: {labelForMode(session.currentModeId || session.defaultModeId)}</span>
-                    </button>
-                  ))
+                  sessions.map((session) => {
+                    const sidebarStatus = getSessionSidebarStatus(session);
+                    const updatedAtLabel = formatRelativeUpdatedAt(session.updatedAt);
+                    return (
+                      <button
+                        key={session.clientSessionId}
+                        className={`session-chip ${session.clientSessionId === activeSessionId ? "active" : ""}`}
+                        onClick={() => setActiveSessionId(session.clientSessionId)}
+                      >
+                        <span className="session-chip-title" title={session.title}>
+                          {session.title}
+                        </span>
+                        <span className="session-chip-meta">
+                          <span className="session-chip-status">
+                            {sidebarStatus ? (
+                              <span className={`session-chip-tag session-chip-tag-${sidebarStatus.tone}`}>{sidebarStatus.label}</span>
+                            ) : null}
+                          </span>
+                          <span className="session-chip-time" title={session.updatedAt}>
+                            {updatedAtLabel}
+                          </span>
+                        </span>
+                        <span className="session-chip-path" title={session.workspacePath}>
+                          {session.workspacePath}
+                        </span>
+                      </button>
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -1554,6 +1570,53 @@ function toneForConnectionState(connectionState: string): "positive" | "negative
     return "negative";
   }
   return "neutral";
+}
+
+function getSessionSidebarStatus(session: SessionRecord): SessionSidebarStatus | null {
+  if (session.permissions.length > 0) {
+    return { label: "待处理", tone: "pending" };
+  }
+  if (session.connectionState === "error") {
+    return { label: "异常", tone: "error" };
+  }
+  if (session.busy) {
+    return { label: "运行中", tone: "running" };
+  }
+  if (hasCompletedPrompt(session)) {
+    return { label: "已完成", tone: "completed" };
+  }
+  if (session.connectionState === "connecting") {
+    return { label: "连接中", tone: "connecting" };
+  }
+  return null;
+}
+
+function hasCompletedPrompt(session: SessionRecord) {
+  return session.timeline.some((item) => item.kind === "system" && item.title === "本轮完成");
+}
+
+function formatRelativeUpdatedAt(updatedAt: string, now = Date.now()) {
+  const timestamp = Date.parse(updatedAt);
+  if (!Number.isFinite(timestamp)) {
+    return "刚刚";
+  }
+
+  const elapsedMs = Math.max(0, now - timestamp);
+  const elapsedMinutes = Math.floor(elapsedMs / 60_000);
+  if (elapsedMinutes < 1) {
+    return "刚刚";
+  }
+  if (elapsedMinutes < 60) {
+    return `${elapsedMinutes} 分钟前`;
+  }
+
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  if (elapsedHours < 24) {
+    return `${elapsedHours} 小时前`;
+  }
+
+  const elapsedDays = Math.floor(elapsedHours / 24);
+  return `${elapsedDays} 天前`;
 }
 
 function canNavigateUp(currentPath: string, allowedRoots: string[]) {
@@ -2337,6 +2400,9 @@ export const appTestables = {
   stringifyMaybe,
   labelForMode,
   toneForConnectionState,
+  getSessionSidebarStatus,
+  hasCompletedPrompt,
+  formatRelativeUpdatedAt,
   canNavigateUp,
   parentDirectory,
   isWithinRoot,
