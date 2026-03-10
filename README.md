@@ -60,6 +60,7 @@ LEDUO_PATROL_SSH_HOST=user@example-host
 LEDUO_PATROL_SSH_PATH=/absolute/workspace/path
 LEDUO_PATROL_VSCODE_URI=vscode://vscode-remote/ssh-remote+user@example-host/absolute/workspace/path
 ANTHROPIC_API_KEY=sk-...
+LEDUO_PATROL_ACCESS_KEY=your-fixed-key
 ```
 
 如果未设置 `LEDUO_PATROL_VSCODE_URI`，但设置了 `LEDUO_PATROL_SSH_HOST`，服务会自动生成一个 VS Code Remote SSH 链接。  
@@ -86,8 +87,23 @@ ANTHROPIC_API_KEY=sk-...
 - `server/session-manager.ts`: 会话生命周期、时间线窗口、持久化与权限流管理
 - `src/App.tsx`: 浏览器控制台
 
+## 访问校验 Key
+
+服务启动时会自动生成一次性访问 key，并在控制台打印可直接打开的地址，例如：
+
+```bash
+Access URL: http://localhost:3001/?key=xxxxxxxx
+```
+
+浏览器访问、前端 API 请求和 WebSocket 连接都需要携带这个 `key` 参数；未携带或错误会返回 `401 Unauthorized`。
+
+如需固定 key，可设置：
+
+```bash
+LEDUO_PATROL_ACCESS_KEY=your-fixed-key
+```
+
 ## 已知限制
 
 - 当前只实现了 Claude Code
-- 还没有用户鉴权
 - 目前终端能力没有暴露给 ACP client，先聚焦网页指令和确认流
