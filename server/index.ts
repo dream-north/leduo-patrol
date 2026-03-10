@@ -8,7 +8,7 @@ import { createServer } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import { SessionManager, type SocketEvent } from "./session-manager.js";
 import { formatError, resolveAllowedPath } from "./server-helpers.js";
-import { buildWorkspaceDiffSnapshot } from "./git-diff.js";
+import { buildSingleFileDiff, buildWorkspaceDiffFilesSnapshot, type DiffCategory } from "./git-diff.js";
 import { buildAccessCookie, createAccessKey, hasAuthorizedAccessCookie, isAccessKeyAuthorized } from "./access-key.js";
 import { findAvailablePort, pickPreferredLanIp } from "./network.js";
 
@@ -61,10 +61,20 @@ if (!process.env.LEDUO_PATROL_ALLOWED_ROOTS) {
 }
 
 app.use((req, res, next) => {
-  if (isAccessKeyAuthorized(req.originalUrl, accessKey) || hasAuthorizedAccessCookie(req.headers.cookie, accessKey)) {
-    if (isAccessKeyAuthorized(req.originalUrl, accessKey)) {
-      res.setHeader("Set-Cookie", buildAccessCookie(accessKey));
-    }
+  const authorizedByQuery = isAccessKeyAuthorized(req.originalUrl, accessKey);
+  const authorizedByCookie = hasAuthorizedAccessCookie(req.headers.cookie, accessKey);
+  const isApiRequest = req.path.startsWith("/api/");
+
+  if (authorizedByQuery) {
+    res.setHeader("Set-Cookie", buildAccessCookie(accessKey));
+  }
+
+  if (!isApiRequest) {
+    next();
+    return;
+  }
+
+  if (authorizedByQuery || authorizedByCookie) {
     next();
     return;
   }
@@ -106,7 +116,7 @@ app.get("/api/session-history", (req, res) => {
   }
 });
 
-app.get("/api/session-diff", async (req, res) => {
+app.get("/api/session-diff/files", async (req, res) => {
   try {
     const clientSessionId = typeof req.query.clientSessionId === "string" ? req.query.clientSessionId : "";
     if (!clientSessionId) {
@@ -114,8 +124,33 @@ app.get("/api/session-diff", async (req, res) => {
     }
 
     const workspacePath = sessionManager.getSessionWorkspacePath(clientSessionId);
-    const diffSnapshot = await buildWorkspaceDiffSnapshot(workspacePath);
+    const diffSnapshot = await buildWorkspaceDiffFilesSnapshot(workspacePath);
     res.json(diffSnapshot);
+  } catch (error) {
+    res.status(400).json({
+      message: formatError(error),
+    });
+  }
+});
+
+app.get("/api/session-diff/file", async (req, res) => {
+  try {
+    const clientSessionId = typeof req.query.clientSessionId === "string" ? req.query.clientSessionId : "";
+    const category = typeof req.query.category === "string" ? req.query.category : "";
+    const filePath = typeof req.query.filePath === "string" ? req.query.filePath : "";
+    if (!clientSessionId) {
+      throw new Error("clientSessionId is required");
+    }
+    if (!["workingTree", "staged", "untracked"].includes(category)) {
+      throw new Error("category is invalid");
+    }
+    if (!filePath.trim()) {
+      throw new Error("filePath is required");
+    }
+
+    const workspacePath = sessionManager.getSessionWorkspacePath(clientSessionId);
+    const fileDiff = await buildSingleFileDiff(workspacePath, category as DiffCategory, filePath);
+    res.json(fileDiff);
   } catch (error) {
     res.status(400).json({
       message: formatError(error),
