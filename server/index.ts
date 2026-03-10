@@ -8,6 +8,7 @@ import { SessionManager, type SocketEvent } from "./session-manager.js";
 import { formatError, resolveAllowedPath } from "./server-helpers.js";
 import { buildWorkspaceDiffSnapshot } from "./git-diff.js";
 import { createAccessKey, isAccessKeyAuthorized } from "./access-key.js";
+import { pickPreferredLanIp } from "./network.js";
 
 type ClientCommand =
   | { type: "hello" }
@@ -196,8 +197,9 @@ wss.on("connection", (socket, request) => {
 });
 
 server.listen(port, () => {
-  console.log(`${appName} listening on http://localhost:${port}`);
-  console.log(`Access URL: http://localhost:${port}/?key=${accessKey}`);
+  const lanIp = pickPreferredLanIp();
+  console.log(`${appName} listening on http://${lanIp}:${port}`);
+  console.log(`Access URL: http://${lanIp}:${port}/?key=${accessKey}`);
 });
 
 function sendEvent(socket: WebSocket, event: SocketEvent) {

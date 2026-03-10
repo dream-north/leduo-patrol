@@ -1,6 +1,4 @@
 import os from "node:os";
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
 
 const EXCLUDED_INTERFACE_PREFIXES = ["lo", "docker", "br-", "veth", "virbr", "vmnet", "tun", "tap"];
 const PREFERRED_INTERFACE_PREFIXES = ["bond", "eth", "ens", "enp"];
@@ -9,7 +7,7 @@ function shouldSkipInterface(name: string) {
   return EXCLUDED_INTERFACE_PREFIXES.some((prefix) => name.startsWith(prefix));
 }
 
-function pickDevHost() {
+export function pickPreferredLanIp() {
   const interfaces = os.networkInterfaces();
   const candidates: Array<{ name: string; ip: string; score: number }> = [];
 
@@ -28,26 +26,9 @@ function pickDevHost() {
   }
 
   candidates.sort((a, b) => a.score - b.score || a.name.localeCompare(b.name));
-  return candidates[0]?.ip ?? "0.0.0.0";
+  return candidates[0]?.ip ?? "127.0.0.1";
 }
 
-const devHost = pickDevHost();
-
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    host: devHost,
-    port: 5173,
-    proxy: {
-      "/api": "http://localhost:3001",
-      "/ws": {
-        target: "ws://localhost:3001",
-        ws: true,
-      },
-    },
-  },
-  build: {
-    outDir: "dist/web",
-    emptyOutDir: true,
-  },
-});
+export const networkTestables = {
+  shouldSkipInterface,
+};
