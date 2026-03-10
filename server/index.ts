@@ -154,8 +154,12 @@ if (hasBundledWeb) {
     res.sendFile(path.resolve(webDistPath, "index.html"));
   });
 } else {
+  app.get("/{*rest}", (_req, res) => {
+    res.status(503).send(`<!doctype html><html><body><h2>Web assets not found</h2><p>Missing bundled web at <code>${webDistPath}</code>.</p><p>Run <code>npm run build</code> before <code>npm start</code>, or use <code>npm run dev</code> for development.</p></body></html>`);
+  });
+
   console.log(`Bundled web assets not found at ${webDistPath}.`);
-  console.log(`Tip: run \"npm run build\" or start the web dev server at port ${devWebPort}.`);
+  console.log(`Tip: run \"npm run build\" before \"npm start\".`);
 }
 
 wss.on("connection", (socket, request) => {
@@ -224,7 +228,7 @@ await new Promise<void>((resolve) => {
 });
 
 const lanIp = pickPreferredLanIp();
-const accessPort = isDevServer || !hasBundledWeb ? devWebPort : listenPort;
+const accessPort = isDevServer ? devWebPort : listenPort;
 
 console.log(`${appName} server listening on http://${lanIp}:${listenPort}`);
 if (listenPort !== requestedPort) {
@@ -232,6 +236,10 @@ if (listenPort !== requestedPort) {
 }
 if (isDevServer) {
   console.log(`Dev Web URL (Vite default): http://${lanIp}:${devWebPort}`);
+} else if (hasBundledWeb) {
+  console.log(`Web UI is served by the same server port: http://${lanIp}:${listenPort}`);
+} else {
+  console.log("Web UI is unavailable on this start because bundled assets are missing.");
 }
 console.log(`Access URL: http://${lanIp}:${accessPort}/?key=${accessKey}`);
 

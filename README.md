@@ -101,7 +101,7 @@ LEDUO_PATROL_AGENT_BIN=/absolute/path/to/claude-code-acp
 服务启动时会自动生成一次性访问 key，并在控制台打印可直接打开的地址。
 
 - 开发模式（`npm run dev`）下，`Access URL` 默认指向 Web 端口（默认 `5173`）。
-- 生产模式（`npm start`）下，若存在打包后的 `dist/web` 资源，`Access URL` 指向 server 端口；若未找到打包资源，会提示并将 `Access URL` 指向 Web 端口，便于配合独立前端服务访问。
+- 生产模式（`npm start`）下，Web 由同一个 Express 服务静态托管，因此不会出现独立的 Web 监听端口；`Access URL` 会指向 server 端口。若未找到打包后的 `dist/web` 资源，服务会给出错误提示页与启动日志提示。
 
 浏览器访问、前端 API 请求和 WebSocket 连接都需要携带这个 `key` 参数；未携带或错误会返回 `401 Unauthorized`。
 
