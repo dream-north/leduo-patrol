@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import { SessionManager, type SocketEvent } from "./session-manager.js";
+import { formatError, resolveAllowedPath } from "./server-helpers.js";
 
 type ClientCommand =
   | { type: "hello" }
@@ -76,7 +77,7 @@ app.get("/api/session-history", (req, res) => {
 app.get("/api/directories", async (req, res) => {
   try {
     const requestedRoot = typeof req.query.root === "string" ? req.query.root : defaultWorkspacePath;
-    const resolvedRoot = resolveAllowedPath(requestedRoot);
+    const resolvedRoot = resolveAllowedPath(requestedRoot, allowedRoots);
     const entries = await readdir(resolvedRoot, { withFileTypes: true });
     const directories = entries
       .filter((entry) => entry.isDirectory())
@@ -167,29 +168,4 @@ function sendEvent(socket: WebSocket, event: SocketEvent) {
     return;
   }
   socket.send(JSON.stringify(event));
-}
-
-function formatError(error: unknown) {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
-}
-
-function resolveAllowedPath(requestedPath: string) {
-  const resolvedPath = path.resolve(requestedPath);
-  const isAllowed = allowedRoots.some((rootPath) => {
-    const relativePath = path.relative(rootPath, resolvedPath);
-    return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
-  });
-
-  if (!isAllowed) {
-    throw new Error(`Path is outside allowed roots: ${resolvedPath}`);
-  }
-
-  return resolvedPath;
 }
