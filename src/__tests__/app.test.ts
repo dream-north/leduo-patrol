@@ -48,6 +48,60 @@ test("app markdown decision and plan parsing helpers", () => {
   assert.deepEqual(appTestables.tryParseJson('{"a":1}'), { a: 1 });
 });
 
+test("app extractChunkText handles ACP content variants", () => {
+  assert.equal(appTestables.extractChunkText({ type: "text", text: "hello" }), "hello");
+  assert.equal(appTestables.extractChunkText({ type: "resource", resource: { text: "world" } }), "world");
+  assert.equal(
+    appTestables.extractChunkText({ type: "resource_link", uri: "file:///repo/.claude/plans/p1.md" }),
+    "[resource] file:///repo/.claude/plans/p1.md",
+  );
+});
+
+test("app timeline tree helpers group subagent span", () => {
+  const rows = appTestables.buildTimelineTreeRows([
+    {
+      id: "tool-start",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-1", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "agent-1",
+      kind: "agent",
+      title: "Claude",
+      body: "subagent output",
+    },
+    {
+      id: "tool-end",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-1", title: "Task", status: "completed" }),
+      meta: "completed",
+    },
+  ]);
+
+  assert.equal(rows[1]?.depth, 1);
+  assert.equal(rows[1]?.rootId, "tool-start");
+  assert.deepEqual(appTestables.countChildrenByRoot(rows), { "tool-start": 2 });
+  assert.equal(appTestables.isSubagentToolTitle("Task"), true);
+});
+
+test("app applyDemoPreset injects demo session for subagent tree preview", () => {
+  const fixtures = appTestables.buildDemoFixtures("/repo", "subagent-tree");
+  const sessions = appTestables.applyDemoPreset([], fixtures);
+  assert.equal(sessions[0]?.title, "Demo · SubAgent 树状折叠");
+  assert.equal(sessions[0]?.timeline[1]?.title, "Task");
+  assert.equal(sessions[0]?.timeline[1]?.meta, "running");
+});
+
+test("app buildDemoFixtures includes session diff showcase data", () => {
+  const fixtures = appTestables.buildDemoFixtures("/repo", "subagent-tree");
+  const session = fixtures?.bySessionId["demo-subagent-tree"];
+  assert.equal(session?.sessionDiff.workingTree.length, 2);
+  assert.equal(session?.fileDiffs["workingTree:src/App.tsx"]?.category, "workingTree");
+});
+
 test("app markdown table helpers parse table syntax", () => {
   assert.equal(appTestables.isMarkdownTableRow("| col1 | col2 |"), true);
   assert.equal(appTestables.isMarkdownTableSeparator("| --- | :---: |"), true);
