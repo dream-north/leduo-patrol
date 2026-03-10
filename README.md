@@ -1,4 +1,4 @@
-# 乐汪队 / leduo-patrol
+# 乐多汪汪队 / leduo-patrol
 
 一个部署在服务器上的 Web 控制台，用来通过 ACP 驱动 Claude Code，并在浏览器里接收执行流、工具调用和权限确认。
 
@@ -31,8 +31,10 @@ npm run dev
 默认情况下：
 
 - 前端开发服务运行在自动探测到的可访问内网 IP（优先 `bond* / eth* / ens* / enp*` 网卡）上
-- 后端服务运行在 `PORT`（默认 `3001`）
+- 后端服务运行在 `PORT`（默认 `3001`，端口冲突时会自动递增寻找可用端口）
 - 启动日志只打印一个推荐访问地址，避免 `br-*`、`veth*` 等虚拟网卡地址干扰
+
+- 开发模式下 `Access URL` 会优先打印前端 Web 端口（默认 `5173`，可通过 `LEDUO_PATROL_WEB_PORT` 指定），避免误用 server 端口
 
 > 说明：`npm run dev -- --host 0.0.0.0` 不会把参数透传到 `vite`，因为该命令实际启动的是 `concurrently`。本项目会在 `vite.config.ts` 内自动选择一个可访问的内网地址用于开发访问。
 
@@ -56,7 +58,8 @@ npm run check
 
 ```bash
 PORT=3001
-LEDUO_PATROL_APP_NAME=乐汪队
+LEDUO_PATROL_WEB_PORT=5173
+LEDUO_PATROL_APP_NAME=乐多汪汪队
 LEDUO_PATROL_WORKSPACE_PATH=/absolute/workspace/path
 LEDUO_PATROL_ALLOWED_ROOTS=/absolute/workspace/path,/another/allowed/root
 LEDUO_PATROL_SSH_HOST=user@example-host
@@ -112,3 +115,33 @@ LEDUO_PATROL_ACCESS_KEY=your-fixed-key
 
 - 当前只实现了 Claude Code
 - 目前终端能力没有暴露给 ACP client，先聚焦网页指令和确认流
+
+
+## 打包并发布为 npm 包
+
+可以把本项目作为一个可安装的 Node 服务发布：
+
+```bash
+npm run build
+npm pack
+```
+
+`npm pack` 会生成一个 `.tgz` 包，其他人可以这样安装并运行：
+
+```bash
+npm install -g ./leduo-patrol-1.0.0.tgz
+leduo-patrol
+```
+
+如果要发布到 npm registry：
+
+```bash
+npm login
+npm publish
+```
+
+建议发布前先检查打包内容：
+
+```bash
+npm pack --dry-run
+```

@@ -8,7 +8,7 @@ import { SessionManager, type SocketEvent } from "./session-manager.js";
 import { formatError, resolveAllowedPath } from "./server-helpers.js";
 import { buildWorkspaceDiffSnapshot } from "./git-diff.js";
 import { createAccessKey, isAccessKeyAuthorized } from "./access-key.js";
-import { pickPreferredLanIp } from "./network.js";
+import { findAvailablePort, pickPreferredLanIp } from "./network.js";
 
 type ClientCommand =
   | { type: "hello" }
@@ -26,13 +26,15 @@ const allowedRoots = (
     .map((entry) => entry.trim())
     .filter(Boolean) ?? [defaultWorkspacePath]
 ).map((entry) => path.resolve(entry));
-const appName = process.env.LEDUO_PATROL_APP_NAME ?? "乐汪队";
+const appName = process.env.LEDUO_PATROL_APP_NAME ?? "乐多汪汪队";
 const sshHost = process.env.LEDUO_PATROL_SSH_HOST ?? "";
 const sshPath = process.env.LEDUO_PATROL_SSH_PATH ?? defaultWorkspacePath;
 const vscodeRemoteUri =
   process.env.LEDUO_PATROL_VSCODE_URI ??
   (sshHost ? `vscode://vscode-remote/ssh-remote+${encodeURIComponent(sshHost)}${sshPath}` : "");
-const port = Number(process.env.PORT ?? 3001);
+const requestedPort = Number(process.env.PORT ?? 3001);
+const devWebPort = Number(process.env.LEDUO_PATROL_WEB_PORT ?? 5173);
+const isDevServer = process.env.npm_lifecycle_event === "dev:server";
 const agentBinPath = path.resolve(process.cwd(), "node_modules/.bin/claude-code-acp");
 const accessKey = process.env.LEDUO_PATROL_ACCESS_KEY?.trim() || createAccessKey();
 
@@ -196,11 +198,23 @@ wss.on("connection", (socket, request) => {
   });
 });
 
-server.listen(port, () => {
-  const lanIp = pickPreferredLanIp();
-  console.log(`${appName} listening on http://${lanIp}:${port}`);
-  console.log(`Access URL: http://${lanIp}:${port}/?key=${accessKey}`);
+const listenPort = await findAvailablePort(requestedPort);
+
+await new Promise<void>((resolve) => {
+  server.listen(listenPort, "0.0.0.0", () => resolve());
 });
+
+const lanIp = pickPreferredLanIp();
+const accessPort = isDevServer ? devWebPort : listenPort;
+
+console.log(`${appName} server listening on http://${lanIp}:${listenPort}`);
+if (listenPort !== requestedPort) {
+  console.log(`Port ${requestedPort} is busy, switched to ${listenPort}`);
+}
+if (isDevServer) {
+  console.log(`Dev Web URL (Vite default): http://${lanIp}:${devWebPort}`);
+}
+console.log(`Access URL: http://${lanIp}:${accessPort}/?key=${accessKey}`);
 
 function sendEvent(socket: WebSocket, event: SocketEvent) {
   if (socket.readyState !== WebSocket.OPEN) {

@@ -1,7 +1,7 @@
 {
   "name": "leduo-patrol",
   "version": "1.0.0",
-  "description": "leduo-patrol web console for driving Claude Code over ACP.",
+  "description": "乐多汪汪队（leduo-patrol）web console for driving Claude Code over ACP.",
   "type": "module",
   "main": "dist/server/index.js",
   "scripts": {
@@ -13,7 +13,8 @@
     "build:server": "rm -rf dist/server && tsc -p tsconfig.server.json",
     "start": "node dist/server/index.js",
     "check": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
-    "test": "tsx --test server/__tests__/*.test.ts src/__tests__/*.test.ts"
+    "test": "tsx --test server/__tests__/*.test.ts src/__tests__/*.test.ts",
+    "prepack": "npm run build"
   },
   "keywords": [],
   "author": "",
@@ -37,5 +38,12 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
-  }
+  },
+  "bin": {
+    "leduo-patrol": "dist/server/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ]
 }
