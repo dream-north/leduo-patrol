@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import express from "express";
-import { readdir } from "node:fs/promises";
+import { access, readdir } from "node:fs/promises";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
@@ -20,12 +21,13 @@ type ClientCommand =
   | { type: "close_session"; payload: { clientSessionId: string } };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const defaultWorkspacePath = process.env.LEDUO_PATROL_WORKSPACE_PATH ?? process.cwd();
+const launchCwd = process.cwd();
+const defaultWorkspacePath = process.env.LEDUO_PATROL_WORKSPACE_PATH ?? launchCwd;
 const allowedRoots = (
   process.env.LEDUO_PATROL_ALLOWED_ROOTS
     ?.split(",")
     .map((entry) => entry.trim())
-    .filter(Boolean) ?? [defaultWorkspacePath]
+    .filter(Boolean) ?? [launchCwd]
 ).map((entry) => path.resolve(entry));
 const appName = process.env.LEDUO_PATROL_APP_NAME ?? "乐多汪汪队";
 const sshHost = process.env.LEDUO_PATROL_SSH_HOST ?? "";
@@ -36,7 +38,7 @@ const vscodeRemoteUri =
 const requestedPort = Number(process.env.PORT ?? 3001);
 const devWebPort = Number(process.env.LEDUO_PATROL_WEB_PORT ?? 5173);
 const isDevServer = process.env.npm_lifecycle_event === "dev:server";
-const agentBinPath = path.resolve(process.cwd(), "node_modules/.bin/claude-code-acp");
+const agentBinPath = resolveAgentBinPath();
 const accessKey = process.env.LEDUO_PATROL_ACCESS_KEY?.trim() || createAccessKey();
 
 const app = express();
@@ -48,6 +50,15 @@ const sessionManager = new SessionManager({
 });
 
 await sessionManager.initialize();
+
+if (!process.env.LEDUO_PATROL_WORKSPACE_PATH) {
+  console.log(`LEDUO_PATROL_WORKSPACE_PATH not set, defaulting to current directory: ${defaultWorkspacePath}`);
+  console.log("Tip: set LEDUO_PATROL_WORKSPACE_PATH to customize the default workspace.");
+}
+if (!process.env.LEDUO_PATROL_ALLOWED_ROOTS) {
+  console.log(`LEDUO_PATROL_ALLOWED_ROOTS not set, defaulting to current directory: ${allowedRoots.join(",")}`);
+  console.log("Tip: set LEDUO_PATROL_ALLOWED_ROOTS (comma-separated) to customize allowed roots.");
+}
 
 app.use((req, res, next) => {
   if (isAccessKeyAuthorized(req.originalUrl, accessKey)) {
@@ -134,11 +145,18 @@ app.get("/api/directories", async (req, res) => {
 });
 
 const webDistPath = path.resolve(__dirname, "../web");
-app.use(express.static(webDistPath));
+const hasBundledWeb = await hasReadableFile(path.resolve(webDistPath, "index.html"));
 
-app.get("/{*rest}", (_req, res) => {
-  res.sendFile(path.resolve(webDistPath, "index.html"));
-});
+if (hasBundledWeb) {
+  app.use(express.static(webDistPath));
+
+  app.get("/{*rest}", (_req, res) => {
+    res.sendFile(path.resolve(webDistPath, "index.html"));
+  });
+} else {
+  console.log(`Bundled web assets not found at ${webDistPath}.`);
+  console.log(`Tip: run \"npm run build\" or start the web dev server at port ${devWebPort}.`);
+}
 
 wss.on("connection", (socket, request) => {
   if (!isAccessKeyAuthorized(request.url, accessKey)) {
@@ -206,7 +224,7 @@ await new Promise<void>((resolve) => {
 });
 
 const lanIp = pickPreferredLanIp();
-const accessPort = isDevServer ? devWebPort : listenPort;
+const accessPort = isDevServer || !hasBundledWeb ? devWebPort : listenPort;
 
 console.log(`${appName} server listening on http://${lanIp}:${listenPort}`);
 if (listenPort !== requestedPort) {
@@ -222,4 +240,28 @@ function sendEvent(socket: WebSocket, event: SocketEvent) {
     return;
   }
   socket.send(JSON.stringify(event));
+}
+
+function resolveAgentBinPath() {
+  if (process.env.LEDUO_PATROL_AGENT_BIN?.trim()) {
+    return process.env.LEDUO_PATROL_AGENT_BIN.trim();
+  }
+
+  const require = createRequire(import.meta.url);
+  try {
+    const pkgPath = require.resolve("@zed-industries/claude-code-acp/package.json");
+    const pkgDir = path.dirname(pkgPath);
+    return path.join(pkgDir, "dist", "index.js");
+  } catch {
+    return "claude-code-acp";
+  }
+}
+
+async function hasReadableFile(filePath: string) {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }

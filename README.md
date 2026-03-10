@@ -67,10 +67,13 @@ LEDUO_PATROL_SSH_PATH=/absolute/workspace/path
 LEDUO_PATROL_VSCODE_URI=vscode://vscode-remote/ssh-remote+user@example-host/absolute/workspace/path
 ANTHROPIC_API_KEY=sk-...
 LEDUO_PATROL_ACCESS_KEY=your-fixed-key
+LEDUO_PATROL_AGENT_BIN=/absolute/path/to/claude-code-acp
 ```
 
 如果未设置 `LEDUO_PATROL_VSCODE_URI`，但设置了 `LEDUO_PATROL_SSH_HOST`，服务会自动生成一个 VS Code Remote SSH 链接。  
-如果设置了 `LEDUO_PATROL_ALLOWED_ROOTS`，网页中只能连接这些根目录之下的路径；未设置时默认只允许 `LEDUO_PATROL_WORKSPACE_PATH`。
+如果设置了 `LEDUO_PATROL_ALLOWED_ROOTS`，网页中只能连接这些根目录之下的路径；未设置时默认只允许启动命令所在目录。
+如果未设置 `LEDUO_PATROL_WORKSPACE_PATH`，默认工作目录为启动命令所在目录（`process.cwd()`），并在启动日志中提示如何通过环境变量修改。
+如果未设置 `LEDUO_PATROL_ALLOWED_ROOTS`，默认允许根目录同样为启动命令所在目录，并会在启动日志中提示可配置项。
 
 ## 状态持久化
 
@@ -95,11 +98,10 @@ LEDUO_PATROL_ACCESS_KEY=your-fixed-key
 
 ## 访问校验 Key
 
-服务启动时会自动生成一次性访问 key，并在控制台打印可直接打开的地址，例如：
+服务启动时会自动生成一次性访问 key，并在控制台打印可直接打开的地址。
 
-```bash
-Access URL: http://localhost:3001/?key=xxxxxxxx
-```
+- 开发模式（`npm run dev`）下，`Access URL` 默认指向 Web 端口（默认 `5173`）。
+- 生产模式（`npm start`）下，若存在打包后的 `dist/web` 资源，`Access URL` 指向 server 端口；若未找到打包资源，会提示并将 `Access URL` 指向 Web 端口，便于配合独立前端服务访问。
 
 浏览器访问、前端 API 请求和 WebSocket 连接都需要携带这个 `key` 参数；未携带或错误会返回 `401 Unauthorized`。
 
@@ -109,6 +111,7 @@ Access URL: http://localhost:3001/?key=xxxxxxxx
 
 ```bash
 LEDUO_PATROL_ACCESS_KEY=your-fixed-key
+LEDUO_PATROL_AGENT_BIN=/absolute/path/to/claude-code-acp
 ```
 
 ## 已知限制
