@@ -474,14 +474,37 @@ h1 {
   gap: 10px;
 }
 
+.session-meta-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+
+.session-meta-actions .secondary {
+  min-width: 112px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+}
+
 .session-meta-header h3 {
   font-size: 16px;
   line-height: 1.1;
 }
 
 .session-close {
-  width: auto;
-  min-width: 112px;
+  background: rgba(175, 40, 40, 0.14);
+  color: #9a1c1c;
+}
+
+.session-diff-trigger {
+  background: rgba(20, 98, 138, 0.14);
+  color: #0a5c88;
 }
 
 .session-meta-grid {
@@ -654,6 +677,50 @@ h1 {
   gap: 12px;
 }
 
+.modal-actions-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.diff-title-wrap {
+  min-width: 0;
+}
+
+.diff-title-path {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(66, 43, 26, 0.09);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-btn-refresh {
+  background: rgba(20, 98, 138, 0.14);
+  color: #0a5c88;
+}
+
+.modal-btn-close {
+  background: rgba(175, 40, 40, 0.14);
+  color: #9a1c1c;
+}
+
+.readonly-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(159, 36, 36, 0.35);
+  background: rgba(175, 40, 40, 0.12);
+  color: #9a1c1c;
+  font-size: 10px;
+  vertical-align: middle;
+}
+
 .modal-meta {
   color: var(--muted);
   font-size: 11px;
@@ -722,6 +789,78 @@ h1 {
 .markdown-body pre code {
   padding: 0;
   background: transparent;
+}
+
+.diff-toolbar-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.diff-toolbar-tabs select {
+  min-width: 240px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.diff-tab {
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--muted);
+}
+
+.diff-tab.active {
+  background: rgba(216, 91, 52, 0.16);
+  border-color: rgba(216, 91, 52, 0.45);
+  color: var(--brand-dark);
+}
+
+.diff-block {
+  margin: 0.6em 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  overflow: auto;
+}
+
+.diff-block code {
+  display: block;
+  padding: 0;
+  background: transparent;
+}
+
+.diff-line {
+  display: block;
+  padding: 0 10px;
+  white-space: pre;
+}
+
+.diff-line-header {
+  color: #7b4d22;
+  background: rgba(133, 89, 48, 0.08);
+}
+
+.diff-line-file,
+.diff-line-hunk {
+  color: #005c99;
+  background: rgba(0, 92, 153, 0.1);
+}
+
+.diff-line-add {
+  color: #0d5d2a;
+  background: rgba(17, 151, 74, 0.16);
+}
+
+.diff-line-remove {
+  color: #8f1f2f;
+  background: rgba(201, 48, 74, 0.16);
 }
 
 .system-modal-list {

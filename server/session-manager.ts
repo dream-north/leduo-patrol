@@ -158,6 +158,10 @@ export class SessionManager {
     };
   }
 
+  getSessionWorkspacePath(clientSessionId: string) {
+    return this.getEntry(clientSessionId).snapshot.workspacePath;
+  }
+
   async createSession(requestedWorkspacePath: string, requestedTitle?: string, modeId?: string) {
     const resolvedWorkspacePath = await this.resolveRequestedWorkspace(requestedWorkspacePath);
     const existingEntry = [...this.sessions.values()].find(

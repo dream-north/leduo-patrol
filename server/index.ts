@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import { SessionManager, type SocketEvent } from "./session-manager.js";
+import { buildWorkspaceDiffSnapshot } from "./git-diff.js";
 
 type ClientCommand =
   | { type: "hello" }
@@ -66,6 +67,23 @@ app.get("/api/session-history", (req, res) => {
     }
 
     res.json(sessionManager.getSessionHistory(clientSessionId, before, limit));
+  } catch (error) {
+    res.status(400).json({
+      message: formatError(error),
+    });
+  }
+});
+
+app.get("/api/session-diff", async (req, res) => {
+  try {
+    const clientSessionId = typeof req.query.clientSessionId === "string" ? req.query.clientSessionId : "";
+    if (!clientSessionId) {
+      throw new Error("clientSessionId is required");
+    }
+
+    const workspacePath = sessionManager.getSessionWorkspacePath(clientSessionId);
+    const diffSnapshot = await buildWorkspaceDiffSnapshot(workspacePath);
+    res.json(diffSnapshot);
   } catch (error) {
     res.status(400).json({
       message: formatError(error),

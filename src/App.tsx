@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 type AppConfig = {
   appName: string;
@@ -61,6 +61,15 @@ type SessionHistoryResponse = {
   total: number;
 };
 
+type SessionDiffResponse = {
+  workspacePath: string;
+  workspaceReadonly: boolean;
+  repositoryRoot: string;
+  workingTreeDiff: string;
+  stagedDiff: string;
+  untrackedFiles: Array<{ path: string; diff: string }>;
+};
+
 type EventMessage =
   | { type: "ready"; payload: { workspacePath: string; agentConnected: boolean; clientSessionId?: string } }
   | {
@@ -111,6 +120,10 @@ export default function App() {
   const [directoryError, setDirectoryError] = useState("");
   const [globalTimeline, setGlobalTimeline] = useState<TimelineItem[]>([]);
   const [selectedItem, setSelectedItem] = useState<{ sessionTitle: string; item: TimelineItem } | null>(null);
+  const [sessionDiff, setSessionDiff] = useState<SessionDiffResponse | null>(null);
+  const [sessionDiffError, setSessionDiffError] = useState("");
+  const [sessionDiffOpen, setSessionDiffOpen] = useState(false);
+  const [sessionDiffLoading, setSessionDiffLoading] = useState(false);
   const [showSystemFeed, setShowSystemFeed] = useState(false);
   const [historyLoadingSessionId, setHistoryLoadingSessionId] = useState("");
   const socketRef = useRef<WebSocket | null>(null);
@@ -640,6 +653,30 @@ export default function App() {
     shouldStickToBottomRef.current = distanceToBottom < 40;
   }
 
+  async function openSessionDiff() {
+    if (!activeSession) {
+      return;
+    }
+    setSessionDiffOpen(true);
+    setSessionDiffLoading(true);
+    setSessionDiffError("");
+
+    try {
+      const response = await fetch(`/api/session-diff?clientSessionId=${encodeURIComponent(activeSession.clientSessionId)}`);
+      const payload = await response.json();
+      if (!response.ok) {
+        const errorPayload = payload as { message?: string };
+        throw new Error(errorPayload.message || "读取目录 Diff 失败");
+      }
+      setSessionDiff(payload as SessionDiffResponse);
+    } catch (error) {
+      setSessionDiff(null);
+      setSessionDiffError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSessionDiffLoading(false);
+    }
+  }
+
   function loadMoreHistory() {
     if (!activeSession || activeSession.historyStart <= 0 || historyLoadingSessionId === activeSession.clientSessionId) {
       return;
@@ -939,9 +976,6 @@ export default function App() {
                   <p className="approval-label">会话详情</p>
                   <h3>{activeSession.title}</h3>
                 </div>
-                <button className="secondary session-close" onClick={() => closeSession(activeSession.clientSessionId)}>
-                  关闭当前会话
-                </button>
               </div>
               <div className="session-meta-grid">
                 <div className="session-meta-item session-meta-item-wide">
@@ -960,6 +994,14 @@ export default function App() {
                   <span>当前模式</span>
                   <code>{labelForMode(activeSession.currentModeId)}</code>
                 </div>
+              </div>
+              <div className="session-meta-actions">
+                <button className="secondary session-diff-trigger" onClick={openSessionDiff}>
+                  查看diff
+                </button>
+                <button className="secondary session-close" onClick={() => closeSession(activeSession.clientSessionId)}>
+                  关闭会话
+                </button>
               </div>
             </section>
           </>
@@ -984,6 +1026,17 @@ export default function App() {
             setShowSystemFeed(false);
             setSelectedItem({ sessionTitle: "系统消息", item });
           }}
+        />
+      ) : null}
+
+      {sessionDiffOpen ? (
+        <SessionDiffModal
+          sessionTitle={activeSession?.title ?? "当前会话"}
+          loading={sessionDiffLoading}
+          error={sessionDiffError}
+          snapshot={sessionDiff}
+          onClose={() => setSessionDiffOpen(false)}
+          onRefresh={openSessionDiff}
         />
       ) : null}
     </div>
@@ -1499,4 +1552,231 @@ function SystemFeedModal(props: {
       </div>
     </div>
   );
+}
+
+function SessionDiffModal(props: {
+  sessionTitle: string;
+  loading: boolean;
+  error: string;
+  snapshot: SessionDiffResponse | null;
+  onClose: () => void;
+  onRefresh: () => void;
+}) {
+  const [viewMode, setViewMode] = useState<"flat" | "byFile">("flat");
+  const [selectedFilePath, setSelectedFilePath] = useState("");
+  const groupedDiffs = useMemo(() => groupDiffsByFile(props.snapshot), [props.snapshot]);
+
+  useEffect(() => {
+    if (groupedDiffs.length === 0) {
+      setSelectedFilePath("");
+      return;
+    }
+    if (!groupedDiffs.some((item) => item.filePath === selectedFilePath)) {
+      setSelectedFilePath(groupedDiffs[0].filePath);
+    }
+  }, [groupedDiffs, selectedFilePath]);
+
+  const selectedFile = groupedDiffs.find((item) => item.filePath === selectedFilePath) ?? null;
+
+  return (
+    <div className="modal-backdrop" onClick={props.onClose}>
+      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div className="diff-title-wrap">
+            <p className="eyebrow">{props.sessionTitle}</p>
+            <h3>
+              当前目录累计代码 Diff
+              {props.snapshot?.workspaceReadonly ? <span className="readonly-badge">只读目录</span> : null}
+            </h3>
+            {props.snapshot ? <code className="diff-title-path">{props.snapshot.workspacePath}</code> : null}
+            {props.snapshot && props.snapshot.repositoryRoot !== props.snapshot.workspacePath ? (
+              <p className="modal-meta">仓库根目录: {props.snapshot.repositoryRoot}</p>
+            ) : null}
+          </div>
+          <div className="modal-actions-inline">
+            <button className="secondary modal-btn-refresh" onClick={props.onRefresh} disabled={props.loading}>
+              刷新
+            </button>
+            <button className="secondary modal-btn-close" onClick={props.onClose}>
+              关闭
+            </button>
+          </div>
+        </div>
+        {props.loading ? <p className="modal-meta">正在读取 Git Diff...</p> : null}
+        {props.error ? <p className="modal-meta">{props.error}</p> : null}
+        {props.snapshot ? (
+          <div className="modal-body markdown-body">
+            <div className="diff-toolbar-tabs" role="tablist" aria-label="Diff 查看模式">
+              <button
+                className={`diff-tab ${viewMode === "flat" ? "active" : ""}`}
+                onClick={() => setViewMode("flat")}
+                role="tab"
+                aria-selected={viewMode === "flat"}
+                type="button"
+              >
+                平铺查看
+              </button>
+              <button
+                className={`diff-tab ${viewMode === "byFile" ? "active" : ""}`}
+                onClick={() => setViewMode("byFile")}
+                role="tab"
+                aria-selected={viewMode === "byFile"}
+                type="button"
+              >
+                按文件查看
+              </button>
+              {viewMode === "byFile" ? (
+                <select value={selectedFilePath} onChange={(event) => setSelectedFilePath(event.target.value)}>
+                  {groupedDiffs.length === 0 ? <option value="">当前没有文件变更</option> : null}
+                  {groupedDiffs.map((item) => (
+                    <option key={item.filePath} value={item.filePath}>
+                      {item.filePath}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+            </div>
+
+            {viewMode === "flat" ? (
+              <>
+                <h4>未暂存修改 (working tree)</h4>
+                <DiffBlock diff={props.snapshot.workingTreeDiff} />
+
+                <h4>已暂存修改 (staged)</h4>
+                <DiffBlock diff={props.snapshot.stagedDiff} />
+
+                <h4>未跟踪文件</h4>
+                {props.snapshot.untrackedFiles.length === 0 ? (
+                  <p>(空)</p>
+                ) : (
+                  props.snapshot.untrackedFiles.map((item) => (
+                    <Fragment key={item.path}>
+                      <p>
+                        <code>{item.path}</code>
+                      </p>
+                      <DiffBlock diff={item.diff} />
+                    </Fragment>
+                  ))
+                )}
+              </>
+            ) : (
+              <>
+                <h4>文件 Diff</h4>
+                {!selectedFile ? (
+                  <p>(空)</p>
+                ) : (
+                  selectedFile.sources.map((source) => (
+                    <Fragment key={`${selectedFile.filePath}-${source.label}`}>
+                      <p>{source.label}</p>
+                      <DiffBlock diff={source.diff} />
+                    </Fragment>
+                  ))
+                )}
+              </>
+            )}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function DiffBlock(props: { diff: string }) {
+  const trimmed = props.diff.trim();
+  if (!trimmed) {
+    return <p>(空)</p>;
+  }
+
+  const lines = props.diff.replace(/\r\n/g, "\n").split("\n");
+  return (
+    <pre className="diff-block">
+      <code>
+        {lines.map((line, index) => (
+          <span key={`${index}-${line}`} className={`diff-line ${classNameForDiffLine(line)}`}>
+            {line || " "}
+          </span>
+        ))}
+      </code>
+    </pre>
+  );
+}
+
+function classNameForDiffLine(line: string) {
+  if (line.startsWith("+++ ") || line.startsWith("--- ")) {
+    return "diff-line-file";
+  }
+  if (line.startsWith("@@ ")) {
+    return "diff-line-hunk";
+  }
+  if (line.startsWith("diff --git") || line.startsWith("index ") || line.startsWith("new file mode") || line.startsWith("deleted file mode")) {
+    return "diff-line-header";
+  }
+  if (line.startsWith("+")) {
+    return "diff-line-add";
+  }
+  if (line.startsWith("-")) {
+    return "diff-line-remove";
+  }
+  return "";
+}
+
+function groupDiffsByFile(snapshot: SessionDiffResponse | null) {
+  if (!snapshot) {
+    return [] as Array<{ filePath: string; sources: Array<{ label: string; diff: string }> }>;
+  }
+
+  const grouped = new Map<string, Array<{ label: string; diff: string }>>();
+  const add = (filePath: string, label: string, diff: string) => {
+    const normalizedPath = filePath.trim() || "(未知文件)";
+    const list = grouped.get(normalizedPath) ?? [];
+    list.push({ label, diff });
+    grouped.set(normalizedPath, list);
+  };
+
+  for (const item of splitDiffByFile(snapshot.workingTreeDiff)) {
+    add(item.filePath, "未暂存修改 (working tree)", item.diff);
+  }
+  for (const item of splitDiffByFile(snapshot.stagedDiff)) {
+    add(item.filePath, "已暂存修改 (staged)", item.diff);
+  }
+  for (const item of snapshot.untrackedFiles) {
+    add(item.path, "未跟踪文件", item.diff);
+  }
+
+  return [...grouped.entries()]
+    .map(([filePath, sources]) => ({ filePath, sources }))
+    .sort((left, right) => left.filePath.localeCompare(right.filePath));
+}
+
+function splitDiffByFile(diffText: string) {
+  if (!diffText.trim()) {
+    return [] as Array<{ filePath: string; diff: string }>;
+  }
+
+  const lines = diffText.replace(/\r\n/g, "\n").split("\n");
+  const blocks: Array<{ filePath: string; diff: string }> = [];
+  let currentFilePath = "";
+  let currentLines: string[] = [];
+
+  const pushCurrent = () => {
+    if (currentLines.length === 0) {
+      return;
+    }
+    blocks.push({ filePath: currentFilePath || "(未知文件)", diff: currentLines.join("\n") });
+    currentLines = [];
+  };
+
+  for (const line of lines) {
+    const diffHeader = line.match(/^diff --git a\/(.+) b\/(.+)$/);
+    if (diffHeader) {
+      pushCurrent();
+      currentFilePath = diffHeader[2];
+      currentLines.push(line);
+      continue;
+    }
+    currentLines.push(line);
+  }
+
+  pushCurrent();
+  return blocks;
 }
