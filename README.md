@@ -45,14 +45,7 @@ npm run build
 npm start
 ```
 
-## 测试
-
-```bash
-npm test
-npm run check
-```
-
-当前仓库已提供基于 Node.js 内置 test runner（通过 `tsx --test` 执行）的单元测试，覆盖前端关键纯函数（目录边界、工具摘要、计划提取）以及后端关键逻辑（会话历史窗口、工作区路径安全校验、错误格式化）。
+> 开发者向的编程与验证测试技巧请见 `AGENTS.md`。
 
 ## 可选环境变量
 
@@ -88,13 +81,6 @@ LEDUO_PATROL_AGENT_BIN=/absolute/path/to/claude-code-acp
 - 管理中的会话列表
 - 每个会话的工作目录、模式与最近状态
 - 浏览器刷新后用于恢复界面的基础数据
-
-## 架构
-
-- `server/index.ts`: Express + WebSocket 服务
-- `server/acp-session.ts`: ACP client bridge，负责启动 Claude Code ACP agent
-- `server/session-manager.ts`: 会话生命周期、时间线窗口、持久化与权限流管理
-- `src/App.tsx`: 浏览器控制台
 
 ## 访问校验 Key
 
