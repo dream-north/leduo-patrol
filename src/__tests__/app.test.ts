@@ -48,6 +48,60 @@ test("app markdown decision and plan parsing helpers", () => {
   assert.deepEqual(appTestables.tryParseJson('{"a":1}'), { a: 1 });
 });
 
+test("app extractChunkText handles ACP content variants", () => {
+  assert.equal(appTestables.extractChunkText({ type: "text", text: "hello" }), "hello");
+  assert.equal(appTestables.extractChunkText({ type: "resource", resource: { text: "world" } }), "world");
+  assert.equal(
+    appTestables.extractChunkText({ type: "resource_link", uri: "file:///repo/.claude/plans/p1.md" }),
+    "[resource] file:///repo/.claude/plans/p1.md",
+  );
+});
+
+test("app timeline tree helpers group subagent span", () => {
+  const rows = appTestables.buildTimelineTreeRows([
+    {
+      id: "tool-start",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-1", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "agent-1",
+      kind: "agent",
+      title: "Claude",
+      body: "subagent output",
+    },
+    {
+      id: "tool-end",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-1", title: "Task", status: "completed" }),
+      meta: "completed",
+    },
+  ]);
+
+  assert.equal(rows[1]?.depth, 1);
+  assert.equal(rows[1]?.rootId, "tool-start");
+  assert.deepEqual(appTestables.countChildrenByRoot(rows), { "tool-start": 2 });
+  assert.equal(appTestables.isSubagentToolTitle("Task"), true);
+});
+
+test("app applyDemoPreset injects demo session for subagent tree preview", () => {
+  const sessions = appTestables.applyDemoPreset([], "/repo", "subagent-tree");
+  assert.equal(sessions[0]?.title, "Demo · SubAgent 树状折叠");
+  assert.equal(sessions[0]?.timeline[1]?.title, "Task");
+  assert.equal(sessions[0]?.timeline[1]?.meta, "running");
+});
+
+test("app buildDemoFixtures provides unified timeline and git diff demo data", () => {
+  const fixtures = appTestables.buildDemoFixtures([], "/repo", "git-diff");
+  assert.equal(fixtures.sessions[0]?.title, "Demo · Git Diff 展示");
+  const sessionId = fixtures.sessions[0]?.clientSessionId ?? "";
+  assert.equal(fixtures.diffBySessionId[sessionId]?.workingTree.length > 0, true);
+  assert.equal(Boolean(fixtures.fileDiffBySessionId[sessionId]?.["workingTree:src/App.tsx"]), true);
+});
+
 test("app markdown table helpers parse table syntax", () => {
   assert.equal(appTestables.isMarkdownTableRow("| col1 | col2 |"), true);
   assert.equal(appTestables.isMarkdownTableSeparator("| --- | :---: |"), true);
