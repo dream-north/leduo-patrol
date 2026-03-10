@@ -29,6 +29,25 @@ test("sessionManagerTestables.stringifyMaybe and asRecord behave as expected", (
   assert.deepEqual(sessionManagerTestables.asRecord({ a: 1 }), { a: 1 });
 });
 
+test("sessionManagerTestables.extractChunkText handles ACP content variants", () => {
+  assert.equal(sessionManagerTestables.extractChunkText({ type: "text", text: "hello" }), "hello");
+  assert.equal(
+    sessionManagerTestables.extractChunkText({ type: "resource", resource: { text: "from-resource" } }),
+    "from-resource",
+  );
+  assert.equal(
+    sessionManagerTestables.extractChunkText({ type: "resource_link", uri: "file:///tmp/demo.txt" }),
+    "[resource] file:///tmp/demo.txt",
+  );
+  assert.equal(
+    sessionManagerTestables.extractChunkText([
+      { type: "text", text: "line-1" },
+      { type: "resource", resource: { text: "line-2" } },
+    ]),
+    "line-1\nline-2",
+  );
+});
+
 test("SessionManager.getSessionHistory returns bounded page", () => {
   const manager = new SessionManager({ allowedRoots: [process.cwd()], agentBinPath: "claude" });
   const timeline: TimelineItem[] = Array.from({ length: 10 }, (_, index) => ({

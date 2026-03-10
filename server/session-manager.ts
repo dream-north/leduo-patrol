@@ -436,16 +436,16 @@ export class SessionManager {
     const snapshot = entry.snapshot;
     switch (update.sessionUpdate) {
       case "agent_message_chunk": {
-        const content = update.content as { type?: string; text?: string } | undefined;
-        if (content?.type === "text" && content.text) {
-          this.appendTextChunk(entry, "agent", "Claude", content.text);
+        const chunkText = extractChunkText(update.content);
+        if (chunkText) {
+          this.appendTextChunk(entry, "agent", "Claude", chunkText);
         }
         break;
       }
       case "agent_thought_chunk": {
-        const content = update.content as { type?: string; text?: string } | undefined;
-        if (content?.type === "text" && content.text) {
-          this.appendTextChunk(entry, "thought", "思路", content.text);
+        const chunkText = extractChunkText(update.content);
+        if (chunkText) {
+          this.appendTextChunk(entry, "thought", "思路", chunkText);
         }
         break;
       }
@@ -717,12 +717,47 @@ function formatError(error: unknown) {
   }
 }
 
+function extractChunkText(content: unknown): string | null {
+  if (!content) {
+    return null;
+  }
+
+  if (Array.isArray(content)) {
+    const joined = content.map((item) => extractChunkText(item)).filter((item): item is string => Boolean(item)).join("\n");
+    return joined || null;
+  }
+
+  const record = asRecord(content);
+  if (!record) {
+    return null;
+  }
+
+  if (typeof record.text === "string" && record.text.trim()) {
+    return record.text;
+  }
+
+  if (record.type === "resource") {
+    const resource = asRecord(record.resource);
+    if (typeof resource?.text === "string" && resource.text.trim()) {
+      return resource.text;
+    }
+  }
+
+  if (record.type === "resource_link") {
+    const uri = typeof record.uri === "string" ? record.uri : "";
+    return uri ? `[resource] ${uri}` : "[resource]";
+  }
+
+  return null;
+}
+
 
 export const sessionManagerTestables = {
   stringifyMaybe,
   formatToolDetails,
   summarizeToolTitle,
   asRecord,
+  extractChunkText,
   labelForMode,
   formatError,
 };
