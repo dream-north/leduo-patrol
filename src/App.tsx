@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 
 type AppConfig = {
   appName: string;
@@ -20,6 +21,12 @@ type TimelineItem = {
   title: string;
   body: string;
   meta?: string;
+};
+
+type TimelineTreeRow = {
+  item: TimelineItem;
+  depth: number;
+  rootId: string | null;
 };
 
 type PermissionPayload = {
@@ -117,11 +124,33 @@ const MODE_OPTIONS = [
 
 const EMPTY_TIMELINE: TimelineItem[] = [];
 
+type DemoPreset = "subagent-tree" | "git-diff" | null;
+
+type DemoFixtures = {
+  sessions: SessionRecord[];
+  diffBySessionId: Record<string, SessionDiffResponse>;
+  fileDiffBySessionId: Record<string, Record<string, SessionFileDiffResponse>>;
+};
+
 function readAccessKeyFromUrl() {
   if (typeof window === "undefined") {
     return "";
   }
   return new URLSearchParams(window.location.search).get("key")?.trim() ?? "";
+}
+
+function readDemoPresetFromUrl(): DemoPreset {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const value = new URLSearchParams(window.location.search).get("demo")?.trim().toLowerCase();
+  if (value === "subagent-tree") {
+    return "subagent-tree";
+  }
+  if (value === "git-diff") {
+    return "git-diff";
+  }
+  return null;
 }
 
 function withAccessKey(path: string, keyOverride?: string) {
@@ -164,12 +193,18 @@ export default function App() {
   const [sessionFileDiffCache, setSessionFileDiffCache] = useState<Record<string, SessionFileDiffResponse>>({});
   const [showSystemFeed, setShowSystemFeed] = useState(false);
   const [historyLoadingSessionId, setHistoryLoadingSessionId] = useState("");
+  const [collapsedSubagentRoots, setCollapsedSubagentRoots] = useState<Record<string, true>>({});
+  const [demoDiffBySessionId, setDemoDiffBySessionId] = useState<Record<string, SessionDiffResponse>>({});
+  const [demoFileDiffBySessionId, setDemoFileDiffBySessionId] = useState<Record<string, Record<string, SessionFileDiffResponse>>>({});
+  const demoPreset = useMemo(() => readDemoPresetFromUrl(), []);
   const socketRef = useRef<WebSocket | null>(null);
   const timelineViewportRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
 
   const activeSession = sessions.find((session) => session.clientSessionId === activeSessionId) ?? null;
   const visibleTimeline = activeSession?.timeline ?? EMPTY_TIMELINE;
+  const timelineRows = useMemo(() => buildTimelineTreeRows(visibleTimeline), [visibleTimeline]);
+  const rootChildCount = useMemo(() => countChildrenByRoot(timelineRows), [timelineRows]);
   const browseRootPath = directoryBrowserPath || activeSession?.workspacePath || config?.workspacePath || "";
   const currentBrowsePath = directoryRootPath || browseRootPath;
   const canBrowseUp = canNavigateUp(currentBrowsePath, config?.allowedRoots ?? []);
@@ -218,7 +253,11 @@ export default function App() {
         const stateData = (await stateResponse.json()) as StateResponse;
         setConfig(configData);
         setWorkspacePath(configData.workspacePath);
-        setSessions(stateData.sessions.map(normalizeSessionRecord));
+        const normalizedSessions = stateData.sessions.map(normalizeSessionRecord);
+        const demoFixtures = buildDemoFixtures(normalizedSessions, configData.workspacePath, demoPreset);
+        setSessions(demoFixtures.sessions);
+        setDemoDiffBySessionId(demoFixtures.diffBySessionId);
+        setDemoFileDiffBySessionId(demoFixtures.fileDiffBySessionId);
         setAuthPrompt("");
       })
       .catch((error) => {
@@ -566,23 +605,23 @@ export default function App() {
   function consumeSessionUpdate(clientSessionId: string, update: SessionUpdate) {
     switch (update.sessionUpdate) {
       case "agent_message_chunk": {
-        const content = update.content as { type?: string; text?: string } | undefined;
-        if (content?.type === "text" && content.text) {
-          appendSessionTextChunk(clientSessionId, "agent", "Claude", content.text);
+        const chunkText = extractChunkText(update.content);
+        if (chunkText) {
+          appendSessionTextChunk(clientSessionId, "agent", "Claude", chunkText);
         }
         break;
       }
       case "user_message_chunk": {
-        const content = update.content as { type?: string; text?: string } | undefined;
-        if (content?.type === "text" && content.text) {
-          appendSessionTextChunk(clientSessionId, "user", "你", content.text);
+        const chunkText = extractChunkText(update.content);
+        if (chunkText) {
+          appendSessionTextChunk(clientSessionId, "user", "你", chunkText);
         }
         break;
       }
       case "agent_thought_chunk": {
-        const content = update.content as { type?: string; text?: string } | undefined;
-        if (content?.type === "text" && content.text) {
-          appendSessionTextChunk(clientSessionId, "thought", "思路", content.text);
+        const chunkText = extractChunkText(update.content);
+        if (chunkText) {
+          appendSessionTextChunk(clientSessionId, "thought", "思路", chunkText);
         }
         break;
       }
@@ -719,6 +758,14 @@ export default function App() {
     setSessionDiffLoading(true);
     setSessionDiffError("");
 
+    const demoSnapshot = demoDiffBySessionId[activeSession.clientSessionId];
+    if (demoSnapshot) {
+      setSessionDiff(demoSnapshot);
+      setSessionFileDiffCache(demoFileDiffBySessionId[activeSession.clientSessionId] ?? {});
+      setSessionDiffLoading(false);
+      return;
+    }
+
     try {
       const response = await fetch(withAccessKey(`/api/session-diff/files?clientSessionId=${encodeURIComponent(activeSession.clientSessionId)}`));
       const payload = await response.json();
@@ -741,6 +788,11 @@ export default function App() {
       throw new Error("当前没有可用会话");
     }
     const cacheKey = `${category}:${filePath}`;
+    const demoCache = demoFileDiffBySessionId[activeSession.clientSessionId];
+    const demoHit = demoCache?.[cacheKey];
+    if (demoHit) {
+      return demoHit;
+    }
     const cached = sessionFileDiffCache[cacheKey];
     if (cached) {
       return cached;
@@ -1014,13 +1066,36 @@ export default function App() {
                 : "先在左侧创建一个目录会话。"}
             </div>
           ) : (
-            visibleTimeline.map((item) => (
-              <TimelineRow
-                key={item.id}
-                item={item}
-                onOpen={() => setSelectedItem({ sessionTitle: activeSession?.title ?? "当前会话", item })}
-              />
-            ))
+            timelineRows.map((row) => {
+              const collapsed = row.rootId ? Boolean(collapsedSubagentRoots[row.rootId]) : false;
+              if (row.depth > 0 && collapsed) {
+                return null;
+              }
+              const childCount = rootChildCount[row.item.id] ?? 0;
+              return (
+                <TimelineRow
+                  key={row.item.id}
+                  item={row.item}
+                  depth={row.depth}
+                  childCount={childCount}
+                  collapsed={Boolean(collapsedSubagentRoots[row.item.id])}
+                  onToggleCollapse={
+                    childCount > 0
+                      ? () =>
+                          setCollapsedSubagentRoots((current) => {
+                            if (current[row.item.id]) {
+                              const next = { ...current };
+                              delete next[row.item.id];
+                              return next;
+                            }
+                            return { ...current, [row.item.id]: true };
+                          })
+                      : undefined
+                  }
+                  onOpen={() => setSelectedItem({ sessionTitle: activeSession?.title ?? "当前会话", item: row.item })}
+                />
+              );
+            })
           )}
         </div>
         <div className="composer">
@@ -1176,13 +1251,38 @@ function StatusCard(props: { label: string; value: string; tone?: "positive" | "
   );
 }
 
-function TimelineRow(props: { item: TimelineItem; onOpen: () => void }) {
+function TimelineRow(props: {
+  item: TimelineItem;
+  depth?: number;
+  childCount?: number;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
+  onOpen: () => void;
+}) {
   const kindLabel = labelForKind(props.item.kind, props.item.title);
   const expandedPreview = shouldUseExpandedPreview(props.item);
   const summary = summarizeTimelineItem(props.item, expandedPreview);
   return (
-    <button className={`timeline-row ${props.item.kind} ${expandedPreview ? "timeline-row-multiline" : ""}`} onClick={props.onOpen}>
-      <span className="timeline-kind">{kindLabel}</span>
+    <button
+      className={`timeline-row ${props.item.kind} ${expandedPreview ? "timeline-row-multiline" : ""}`}
+      onClick={props.onOpen}
+      style={{ "--timeline-depth": `${Math.max(0, props.depth ?? 0)}` } as CSSProperties}
+    >
+      <span className="timeline-kind">
+        {kindLabel}
+        {props.childCount ? (
+          <span
+            className="timeline-fold"
+            role="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              props.onToggleCollapse?.();
+            }}
+          >
+            {props.collapsed ? "▸" : "▾"} 子项 {props.childCount}
+          </span>
+        ) : null}
+      </span>
       <span className={`timeline-body ${expandedPreview ? "multiline" : ""}`}>{summary}</span>
       <span className="timeline-meta">{props.item.meta ?? "查看"}</span>
     </button>
@@ -1238,6 +1338,84 @@ function summarizeTimelineItem(item: TimelineItem, expandedPreview: boolean) {
 
 function shouldUseExpandedPreview(item: TimelineItem) {
   return item.kind === "agent" || item.kind === "plan";
+}
+
+function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
+  const rows: TimelineTreeRow[] = [];
+  const activeRoots: Array<{ rootId: string; toolCallId: string | null }> = [];
+
+  for (const item of items) {
+    const toolMeta = readToolMeta(item);
+    const activeRootId = activeRoots.at(-1)?.rootId ?? null;
+
+    rows.push({
+      item,
+      depth: activeRootId ? activeRoots.length : 0,
+      rootId: activeRootId,
+    });
+
+    if (!toolMeta || !isSubagentToolTitle(toolMeta.title)) {
+      continue;
+    }
+
+    if (!isTerminalToolStatus(toolMeta.status)) {
+      activeRoots.push({ rootId: item.id, toolCallId: toolMeta.toolCallId });
+      continue;
+    }
+
+    if (toolMeta.toolCallId) {
+      let index = -1;
+      for (let i = activeRoots.length - 1; i >= 0; i -= 1) {
+        if (activeRoots[i]?.toolCallId === toolMeta.toolCallId) {
+          index = i;
+          break;
+        }
+      }
+      if (index >= 0) {
+        activeRoots.splice(index, 1);
+        continue;
+      }
+    }
+
+    if (activeRoots.length > 0) {
+      activeRoots.pop();
+    }
+  }
+
+  return rows;
+}
+
+function countChildrenByRoot(rows: TimelineTreeRow[]) {
+  const count: Record<string, number> = {};
+  for (const row of rows) {
+    if (!row.rootId) {
+      continue;
+    }
+    count[row.rootId] = (count[row.rootId] ?? 0) + 1;
+  }
+  return count;
+}
+
+function readToolMeta(item: TimelineItem): { title: string | null; status: string | null; toolCallId: string | null } | null {
+  if (item.kind !== "tool") {
+    return null;
+  }
+  const parsed = tryParseJson(item.body);
+  const record = asRecord(parsed);
+  const title = typeof record?.title === "string" ? record.title : item.title;
+  const status = typeof record?.status === "string" ? record.status : item.meta ?? null;
+  const toolCallId = typeof record?.toolCallId === "string" ? record.toolCallId : null;
+  return { title, status, toolCallId };
+}
+
+function isSubagentToolTitle(title: string | null) {
+  const normalized = (title ?? "").toLowerCase();
+  return normalized.includes("subagent") || normalized === "task" || normalized.includes(" task");
+}
+
+function isTerminalToolStatus(status: string | null) {
+  const normalized = (status ?? "").toLowerCase();
+  return normalized === "completed" || normalized === "failed" || normalized === "canceled" || normalized === "cancelled";
 }
 
 function summarizeToolTitle(rawTitle: unknown, rawInput: unknown, rawToolCallId: unknown) {
@@ -1381,6 +1559,214 @@ function normalizeSessionRecord(session: SessionRecord): SessionRecord {
   };
 }
 
+function emptyDemoFixtures(sessions: SessionRecord[]): DemoFixtures {
+  return {
+    sessions,
+    diffBySessionId: {},
+    fileDiffBySessionId: {},
+  };
+}
+
+function buildDemoFixtures(sessions: SessionRecord[], workspacePath: string, demoPreset: DemoPreset): DemoFixtures {
+  if (demoPreset === "subagent-tree") {
+    return buildSubagentTreeDemoFixtures(sessions, workspacePath);
+  }
+  if (demoPreset === "git-diff") {
+    return buildGitDiffDemoFixtures(sessions, workspacePath);
+  }
+  return emptyDemoFixtures(sessions);
+}
+
+function applyDemoPreset(sessions: SessionRecord[], workspacePath: string, demoPreset: DemoPreset): SessionRecord[] {
+  return buildDemoFixtures(sessions, workspacePath, demoPreset).sessions;
+}
+
+function buildSubagentTreeDemoFixtures(sessions: SessionRecord[], workspacePath: string): DemoFixtures {
+  const demoSession: SessionRecord = normalizeSessionRecord({
+    clientSessionId: "demo-subagent-tree",
+    title: "Demo · SubAgent 树状折叠",
+    workspacePath,
+    connectionState: "connected",
+    sessionId: "demo-session",
+    modes: ["default", "plan"],
+    defaultModeId: "default",
+    currentModeId: "default",
+    busy: false,
+    timeline: [
+      {
+        id: "demo-user-1",
+        kind: "user",
+        title: "你",
+        body: "请把仓库结构分析一下，并把复杂任务交给 subagent。",
+      },
+      {
+        id: "demo-tool-task-start",
+        kind: "tool",
+        title: "Task",
+        body: JSON.stringify({ toolCallId: "demo-task-1", title: "Task", status: "running" }, null, 2),
+        meta: "running",
+      },
+      {
+        id: "demo-agent-sub-1",
+        kind: "agent",
+        title: "Claude",
+        body: "subagent 正在扫描目录并归类模块边界。",
+      },
+      {
+        id: "demo-tool-sub-search",
+        kind: "tool",
+        title: "ripgrep",
+        body: JSON.stringify({ toolCallId: "demo-rg-1", title: "ripgrep", status: "completed" }, null, 2),
+        meta: "completed",
+      },
+      {
+        id: "demo-agent-sub-2",
+        kind: "agent",
+        title: "Claude",
+        body: "subagent 完成了初步分析，准备回传主 agent。",
+      },
+      {
+        id: "demo-tool-task-end",
+        kind: "tool",
+        title: "Task",
+        body: JSON.stringify({ toolCallId: "demo-task-1", title: "Task", status: "completed" }, null, 2),
+        meta: "completed",
+      },
+      {
+        id: "demo-agent-main",
+        kind: "agent",
+        title: "Claude",
+        body: "已汇总 subagent 结果：你可以点击 `Task` 行右侧子项按钮折叠/展开内部输出。",
+      },
+    ],
+    historyTotal: 7,
+    historyStart: 0,
+    permissions: [],
+    updatedAt: new Date().toISOString(),
+  });
+
+  const rest = sessions.filter((session) => session.clientSessionId !== demoSession.clientSessionId);
+  return {
+    sessions: [demoSession, ...rest],
+    diffBySessionId: {
+      [demoSession.clientSessionId]: buildSubagentDemoDiffSnapshot(workspacePath),
+    },
+    fileDiffBySessionId: {
+      [demoSession.clientSessionId]: buildSubagentDemoFileDiffMap(),
+    },
+  };
+}
+
+function buildGitDiffDemoFixtures(sessions: SessionRecord[], workspacePath: string): DemoFixtures {
+  const demoSession: SessionRecord = normalizeSessionRecord({
+    clientSessionId: "demo-git-diff",
+    title: "Demo · Git Diff 展示",
+    workspacePath,
+    connectionState: "connected",
+    sessionId: "demo-git-diff-session",
+    modes: ["default"],
+    defaultModeId: "default",
+    currentModeId: "default",
+    busy: false,
+    timeline: [
+      { id: "demo-diff-user", kind: "user", title: "你", body: "请展示当前仓库的 diff 情况。" },
+      { id: "demo-diff-agent", kind: "agent", title: "Claude", body: "已准备好 diff 分类数据，可点“查看diff”查看文件级差异。" },
+    ],
+    historyTotal: 2,
+    historyStart: 0,
+    permissions: [],
+    updatedAt: new Date().toISOString(),
+  });
+
+  const rest = sessions.filter((session) => session.clientSessionId !== demoSession.clientSessionId);
+  return {
+    sessions: [demoSession, ...rest],
+    diffBySessionId: {
+      [demoSession.clientSessionId]: buildGitDiffDemoSnapshot(workspacePath),
+    },
+    fileDiffBySessionId: {
+      [demoSession.clientSessionId]: buildGitDiffDemoFileDiffMap(),
+    },
+  };
+}
+
+function buildSubagentDemoDiffSnapshot(workspacePath: string): SessionDiffResponse {
+  return {
+    workspacePath,
+    workspaceReadonly: false,
+    repositoryRoot: workspacePath,
+    workingTree: [{ filePath: "src/App.tsx", changeType: "修改" }],
+    staged: [{ filePath: "src/styles.css", changeType: "修改" }],
+    untracked: [{ filePath: "docs/demo-notes.md", changeType: "新增" }],
+  };
+}
+
+function buildSubagentDemoFileDiffMap(): Record<string, SessionFileDiffResponse> {
+  return {
+    "workingTree:src/App.tsx": {
+      category: "workingTree",
+      filePath: "src/App.tsx",
+      omitted: false,
+      diff: "@@ -1,3 +1,4 @@\n+// demo timeline row\n",
+    },
+    "staged:src/styles.css": {
+      category: "staged",
+      filePath: "src/styles.css",
+      omitted: false,
+      diff: "@@ -10,3 +10,5 @@\n+.timeline-row-demo {\n+  border-color: #ccc;\n+}\n",
+    },
+    "untracked:docs/demo-notes.md": {
+      category: "untracked",
+      filePath: "docs/demo-notes.md",
+      omitted: false,
+      diff: "# Demo Notes\n\nTrack subagent tree behavior.\n",
+    },
+  };
+}
+
+function buildGitDiffDemoSnapshot(workspacePath: string): SessionDiffResponse {
+  return {
+    workspacePath,
+    workspaceReadonly: false,
+    repositoryRoot: workspacePath,
+    workingTree: [
+      { filePath: "server/session-manager.ts", changeType: "修改" },
+      { filePath: "src/App.tsx", changeType: "修改" },
+    ],
+    staged: [{ filePath: "README.md", changeType: "修改" }],
+    untracked: [{ filePath: "AGENTS.md", changeType: "新增" }],
+  };
+}
+
+function buildGitDiffDemoFileDiffMap(): Record<string, SessionFileDiffResponse> {
+  return {
+    "workingTree:server/session-manager.ts": {
+      category: "workingTree",
+      filePath: "server/session-manager.ts",
+      omitted: false,
+      diff: "@@ -430,6 +430,10 @@\n+const chunkText = extractChunkText(update.content);\n",
+    },
+    "workingTree:src/App.tsx": {
+      category: "workingTree",
+      filePath: "src/App.tsx",
+      omitted: false,
+      diff: "@@ -1300,6 +1300,20 @@\n+function buildTimelineTreeRows(...) {\n+  // ...\n+}\n",
+    },
+    "staged:README.md": {
+      category: "staged",
+      filePath: "README.md",
+      omitted: false,
+      diff: "@@ -1,3 +1,4 @@\n+> developer tips moved to AGENTS.md\n",
+    },
+    "untracked:AGENTS.md": {
+      category: "untracked",
+      filePath: "AGENTS.md",
+      omitted: false,
+      diff: "# AGENTS.md\n\nDeveloper playbook\n",
+    },
+  };
+}
+
 function normalizeTimelineItem(item: TimelineItem): TimelineItem {
   if (item.kind !== "tool") {
     return item;
@@ -1474,6 +1860,40 @@ function tryParseJson(value: unknown) {
   } catch {
     return null;
   }
+}
+
+function extractChunkText(content: unknown): string | null {
+  if (!content) {
+    return null;
+  }
+
+  if (Array.isArray(content)) {
+    const joined = content.map((item) => extractChunkText(item)).filter((item): item is string => Boolean(item)).join("\n");
+    return joined || null;
+  }
+
+  const record = asRecord(content);
+  if (!record) {
+    return null;
+  }
+
+  if (typeof record.text === "string" && record.text.trim()) {
+    return record.text;
+  }
+
+  if (record.type === "resource") {
+    const resource = asRecord(record.resource);
+    if (typeof resource?.text === "string" && resource.text.trim()) {
+      return resource.text;
+    }
+  }
+
+  if (record.type === "resource_link") {
+    const uri = typeof record.uri === "string" ? record.uri : "";
+    return uri ? `[resource] ${uri}` : "[resource]";
+  }
+
+  return null;
 }
 
 function makeId() {
@@ -1953,7 +2373,13 @@ export const appTestables = {
   toPreviewText,
   normalizeTimelineItem,
   extractPlanPreview,
+  extractChunkText,
   tryParseJson,
+  buildTimelineTreeRows,
+  countChildrenByRoot,
+  isSubagentToolTitle,
+  applyDemoPreset,
+  buildDemoFixtures,
   shouldUseExpandedPreview,
   shouldRenderMarkdown,
   parseMarkdownTableRow,

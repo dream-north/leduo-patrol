@@ -604,10 +604,13 @@ h1 {
 
 .timeline-row {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) 82px;
+  grid-template-columns: minmax(108px, max-content) minmax(0, 1fr) max-content;
   gap: 8px;
   align-items: center;
-  width: 100%;
+  box-sizing: border-box;
+  width: calc(100% - (var(--timeline-depth, 0) * 18px));
+  margin-left: calc(var(--timeline-depth, 0) * 18px);
+  min-width: 0;
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -620,12 +623,28 @@ h1 {
   align-items: start;
 }
 
-.timeline-row .timeline-kind,
 .timeline-row .timeline-meta {
   font-size: 11px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.timeline-row .timeline-kind {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.timeline-row .timeline-fold {
+  color: var(--muted);
+  font-size: 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 6px;
 }
 
 .timeline-row .timeline-body {
@@ -649,6 +668,7 @@ h1 {
 .timeline-row .timeline-meta {
   color: var(--muted);
   text-align: right;
+  padding-left: 8px;
 }
 
 .timeline-row.user {
