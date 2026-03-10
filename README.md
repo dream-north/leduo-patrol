@@ -30,8 +30,10 @@ npm run dev
 
 默认情况下：
 
-- 前端开发服务运行在 `http://localhost:5173`
+- 前端开发服务运行在 `http://localhost:5173`（已监听 `0.0.0.0`，可远程访问）
 - 后端服务运行在 `http://localhost:3001`
+
+> 说明：`npm run dev -- --host 0.0.0.0` 不会把参数透传到 `vite`，因为该命令实际启动的是 `concurrently`。本项目已在 `vite.config.ts` 中固定 `host: "0.0.0.0"`，直接 `npm run dev` 即可。
 
 生产构建：
 
