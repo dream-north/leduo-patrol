@@ -63,6 +63,14 @@ export type SocketEvent =
       payload: {
         clientSessionId: string;
       };
+    }
+  | {
+      type: "session_mode_changed";
+      payload: {
+        clientSessionId: string;
+        defaultModeId: string;
+        currentModeId: string;
+      };
     };
 
 type PersistedState = {
@@ -228,6 +236,28 @@ export class SessionManager {
     entry.snapshot.updatedAt = new Date().toISOString();
     this.schedulePersist();
     await entry.acpSession?.prompt(text);
+  }
+
+  async setSessionMode(clientSessionId: string, modeId: string) {
+    const entry = this.getEntry(clientSessionId);
+    await this.connectSession(entry);
+    if (!modeId) {
+      return;
+    }
+
+    await entry.acpSession?.setMode(modeId);
+    entry.snapshot.defaultModeId = modeId;
+    entry.snapshot.currentModeId = modeId;
+    entry.snapshot.updatedAt = new Date().toISOString();
+    this.schedulePersist();
+    this.emit({
+      type: "session_mode_changed",
+      payload: {
+        clientSessionId,
+        defaultModeId: entry.snapshot.defaultModeId,
+        currentModeId: entry.snapshot.currentModeId,
+      },
+    });
   }
 
   async cancel(clientSessionId: string) {

@@ -119,6 +119,10 @@ type EventMessage =
   | { type: "prompt_started"; payload: { clientSessionId: string; promptId: string; text: string } }
   | { type: "prompt_finished"; payload: { clientSessionId: string; promptId: string; stopReason: string } }
   | { type: "session_update"; payload: SessionUpdate & { clientSessionId: string } }
+  | {
+      type: "session_mode_changed";
+      payload: { clientSessionId: string; defaultModeId: string; currentModeId: string };
+    }
   | { type: "permission_requested"; payload: PermissionPayload }
   | { type: "permission_resolved"; payload: { clientSessionId: string; requestId: string; optionId: string } }
   | { type: "session_closed"; payload: { clientSessionId: string } }
@@ -202,6 +206,10 @@ export default function App() {
   const shouldStickToBottomRef = useRef(true);
 
   const activeSession = sessions.find((session) => session.clientSessionId === activeSessionId) ?? null;
+  const activeSessionModeOptions =
+    activeSession?.modes.length && activeSession.modes.length > 0
+      ? activeSession.modes.map((modeId) => ({ id: modeId, label: labelForMode(modeId) }))
+      : MODE_OPTIONS.map((option) => ({ id: option.id, label: option.label }));
   const visibleTimeline = activeSession?.timeline ?? EMPTY_TIMELINE;
   const globalErrorItems = useMemo(() => globalTimeline.filter((item) => item.kind === "error"), [globalTimeline]);
   const timelineRows = useMemo(() => buildTimelineTreeRows(visibleTimeline), [visibleTimeline]);
@@ -543,6 +551,13 @@ export default function App() {
           body: message.payload.stopReason,
         });
         break;
+      case "session_mode_changed":
+        updateSession(message.payload.clientSessionId, (session) => ({
+          ...session,
+          defaultModeId: message.payload.defaultModeId,
+          currentModeId: message.payload.currentModeId,
+        }));
+        break;
       case "session_update":
         consumeSessionUpdate(message.payload.clientSessionId, message.payload);
         break;
@@ -706,6 +721,13 @@ export default function App() {
     sendCommand({
       type: "close_session",
       payload: { clientSessionId },
+    });
+  }
+
+  function changeSessionMode(clientSessionId: string, modeId: string) {
+    sendCommand({
+      type: "set_mode",
+      payload: { clientSessionId, modeId },
     });
   }
 
@@ -1113,7 +1135,7 @@ export default function App() {
         </div>
         <div className="composer">
           <select value={promptModeId} onChange={(event) => setPromptModeId(event.target.value)}>
-            <option value="inherit">沿用当前会话模式</option>
+            <option value="inherit">沿用会话模式</option>
             {MODE_OPTIONS.map((option) => (
               <option key={option.id} value={option.id}>
                 本次消息使用 {option.label}
@@ -1196,13 +1218,25 @@ export default function App() {
                   <span>Claude 会话 ID</span>
                   <code>{activeSession.sessionId || "创建中..."}</code>
                 </div>
-                <div className="session-meta-item">
-                  <span>默认模式</span>
-                  <code>{labelForMode(activeSession.defaultModeId)}</code>
-                </div>
-                <div className="session-meta-item">
-                  <span>当前模式</span>
-                  <code>{labelForMode(activeSession.currentModeId)}</code>
+                <div className="session-meta-item session-meta-item-wide">
+                  <span>会话模式</span>
+                  <select
+                    value={activeSession.defaultModeId}
+                    disabled={!activeSession.sessionId || activeSession.busy}
+                    onChange={(event) => changeSessionMode(activeSession.clientSessionId, event.target.value)}
+                  >
+                    {activeSessionModeOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="session-meta-note">新消息默认使用这个模式；发送框仍可按单条消息临时覆盖。</p>
+                  {activeSession.currentModeId !== activeSession.defaultModeId ? (
+                    <p className="session-meta-note">
+                      当前 ACP 临时处于 {labelForMode(activeSession.currentModeId)}，未指定模式的新消息仍会按会话模式发送。
+                    </p>
+                  ) : null}
                 </div>
               </div>
               <div className="session-meta-actions">

@@ -596,6 +596,24 @@ h1 {
   margin: 0;
 }
 
+.session-meta-item select {
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.session-meta-note {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .approval-card h3 {
   margin-bottom: 8px;
   font-size: 12px;

@@ -84,3 +84,53 @@ test("SessionManager.getSessionHistory returns bounded page", () => {
   assert.equal(page.total, 10);
   assert.deepEqual(page.items.map((item: TimelineItem) => item.id), ["6", "7", "8"]);
 });
+
+test("SessionManager.setSessionMode updates default and current mode together", async () => {
+  const manager = new SessionManager({ allowedRoots: [process.cwd()], agentBinPath: "claude" });
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  let requestedMode = "";
+  manager.subscribe((event) => {
+    events.push(event as { type: string; payload: Record<string, unknown> });
+  });
+
+  (manager as any).sessions.set("s1", {
+    snapshot: {
+      clientSessionId: "s1",
+      title: "demo",
+      workspacePath: process.cwd(),
+      connectionState: "connected",
+      sessionId: "x",
+      modes: ["default", "plan"],
+      defaultModeId: "default",
+      currentModeId: "default",
+      busy: false,
+      timeline: [],
+      historyTotal: 0,
+      historyStart: 0,
+      permissions: [],
+      updatedAt: new Date().toISOString(),
+    },
+    acpSession: {
+      setMode: async (modeId: string) => {
+        requestedMode = modeId;
+      },
+    },
+    connectPromise: null,
+    fullTimeline: [],
+  });
+
+  await manager.setSessionMode("s1", "plan");
+
+  const entry = (manager as any).sessions.get("s1");
+  assert.equal(requestedMode, "plan");
+  assert.equal(entry.snapshot.defaultModeId, "plan");
+  assert.equal(entry.snapshot.currentModeId, "plan");
+  assert.deepEqual(events.at(-1), {
+    type: "session_mode_changed",
+    payload: {
+      clientSessionId: "s1",
+      defaultModeId: "plan",
+      currentModeId: "plan",
+    },
+  });
+});

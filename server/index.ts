@@ -16,6 +16,7 @@ type ClientCommand =
   | { type: "hello" }
   | { type: "create_session"; payload: { workspacePath: string; title?: string; modeId?: string } }
   | { type: "prompt"; payload: { clientSessionId: string; text: string; modeId?: string } }
+  | { type: "set_mode"; payload: { clientSessionId: string; modeId: string } }
   | { type: "cancel"; payload: { clientSessionId: string } }
   | { type: "permission"; payload: { clientSessionId: string; requestId: string; optionId: string } }
   | { type: "close_session"; payload: { clientSessionId: string } };
@@ -231,6 +232,9 @@ wss.on("connection", (socket, request) => {
             message.payload.text,
             message.payload.modeId,
           );
+          break;
+        case "set_mode":
+          await sessionManager.setSessionMode(message.payload.clientSessionId, message.payload.modeId);
           break;
         case "cancel":
           await sessionManager.cancel(message.payload.clientSessionId);
