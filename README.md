@@ -2,18 +2,18 @@
 
 一个部署在服务器上的 Web 控制台，用来通过 ACP 驱动 Claude Code，并在浏览器里接收执行流、工具调用和权限确认。
 
-## 当前实现
+## 功能概览
 
-- Web 控制台可向 Claude Code 发送文本指令
-- 可在同一页面中并行管理多个服务器目录会话
-- 可在网页中指定服务器目录，并在该目录启动独立 Claude Code 会话
-- 会话列表、历史时间线和当前详情会持久化到服务器用户目录，并在刷新后自动恢复
-- 后端通过 `@zed-industries/claude-code-acp` 启动 Claude Code ACP agent
-- 浏览器可实时看到 Claude 的消息、工具调用、计划和错误
-- 需要确认的工具调用会在右侧面板弹出，支持在网页中批准或拒绝
-- 提供 VS Code Remote SSH 按钮，可直接跳转到远程工作区
-- 每个目录会话有独立的消息流、忙碌状态和待确认列表
-- 创建会话时可选择默认模式，发送消息时也可临时覆盖模式
+- 支持在同一页面并行管理多个目录会话，每个会话拥有独立时间线、忙碌状态、权限确认与模式状态。
+- 支持创建新会话时指定默认模式（如 default / plan / acceptEdits 等），发送消息时也可临时覆盖本次模式。
+- 会话状态支持服务端持久化与自动恢复：刷新页面后可继续查看会话列表、时间线窗口与基础状态。
+- 支持按窗口展示时间线并分页加载历史记录，避免长会话时前端一次性加载过多数据。
+- 工具调用与计划内容会被整理成更可读的时间线条目，支持在详情弹窗查看完整内容。
+- Agent 与计划详情支持 Markdown 渲染（包含标题、列表、代码块、行内强调和链接）。
+- 待确认的工具调用会集中展示在右侧面板，可直接在 Web 界面批准/拒绝。
+- 提供 VS Code Remote SSH 快捷入口（通过环境变量配置）。
+- 支持目录浏览接口，并限制在允许的根目录内，避免越权访问。
+- 支持会话取消、关闭、恢复与错误态反馈，便于长期运行。
 
 ## 环境要求
 
@@ -40,6 +40,15 @@ npm run build
 npm start
 ```
 
+## 测试
+
+```bash
+npm test
+npm run check
+```
+
+当前仓库已提供基于 Node.js 内置 test runner（通过 `tsx --test` 执行）的单元测试，覆盖前端关键纯函数（目录边界、工具摘要、计划提取）以及后端关键逻辑（会话历史窗口、工作区路径安全校验、错误格式化）。
+
 ## 可选环境变量
 
 ```bash
@@ -53,7 +62,7 @@ LEDUO_PATROL_VSCODE_URI=vscode://vscode-remote/ssh-remote+user@example-host/abso
 ANTHROPIC_API_KEY=sk-...
 ```
 
-如果未设置 `LEDUO_PATROL_VSCODE_URI`，但设置了 `LEDUO_PATROL_SSH_HOST`，服务会自动生成一个 VS Code Remote SSH 链接。
+如果未设置 `LEDUO_PATROL_VSCODE_URI`，但设置了 `LEDUO_PATROL_SSH_HOST`，服务会自动生成一个 VS Code Remote SSH 链接。  
 如果设置了 `LEDUO_PATROL_ALLOWED_ROOTS`，网页中只能连接这些根目录之下的路径；未设置时默认只允许 `LEDUO_PATROL_WORKSPACE_PATH`。
 
 ## 状态持久化
@@ -67,13 +76,14 @@ ANTHROPIC_API_KEY=sk-...
 其中包含：
 
 - 管理中的会话列表
-- 每个会话的工作目录、模式、时间线和最近状态
-- 浏览器刷新后用于恢复界面的数据
+- 每个会话的工作目录、模式与最近状态
+- 浏览器刷新后用于恢复界面的基础数据
 
 ## 架构
 
 - `server/index.ts`: Express + WebSocket 服务
 - `server/acp-session.ts`: ACP client bridge，负责启动 Claude Code ACP agent
+- `server/session-manager.ts`: 会话生命周期、时间线窗口、持久化与权限流管理
 - `src/App.tsx`: 浏览器控制台
 
 ## 已知限制
