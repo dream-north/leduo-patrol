@@ -9,7 +9,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { SessionManager, type SocketEvent } from "./session-manager.js";
 import { formatError, resolveAllowedPath } from "./server-helpers.js";
 import { buildWorkspaceDiffSnapshot } from "./git-diff.js";
-import { createAccessKey, isAccessKeyAuthorized } from "./access-key.js";
+import { buildAccessCookie, createAccessKey, hasAuthorizedAccessCookie, isAccessKeyAuthorized } from "./access-key.js";
 import { findAvailablePort, pickPreferredLanIp } from "./network.js";
 
 type ClientCommand =
@@ -61,7 +61,10 @@ if (!process.env.LEDUO_PATROL_ALLOWED_ROOTS) {
 }
 
 app.use((req, res, next) => {
-  if (isAccessKeyAuthorized(req.originalUrl, accessKey)) {
+  if (isAccessKeyAuthorized(req.originalUrl, accessKey) || hasAuthorizedAccessCookie(req.headers.cookie, accessKey)) {
+    if (isAccessKeyAuthorized(req.originalUrl, accessKey)) {
+      res.setHeader("Set-Cookie", buildAccessCookie(accessKey));
+    }
     next();
     return;
   }
