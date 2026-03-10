@@ -102,6 +102,18 @@ const MODE_OPTIONS = [
 
 const EMPTY_TIMELINE: TimelineItem[] = [];
 
+function withAccessKey(path: string) {
+  if (typeof window === "undefined") {
+    return path;
+  }
+  const url = new URL(path, window.location.origin);
+  const key = new URLSearchParams(window.location.search).get("key");
+  if (key) {
+    url.searchParams.set("key", key);
+  }
+  return `${url.pathname}${url.search}`;
+}
+
 export default function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [workspacePath, setWorkspacePath] = useState("");
@@ -163,7 +175,7 @@ export default function App() {
   }, [activeSession?.workspacePath, config?.workspacePath]);
 
   useEffect(() => {
-    Promise.all([fetch("/api/config"), fetch("/api/state")])
+    Promise.all([fetch(withAccessKey("/api/config")), fetch(withAccessKey("/api/state"))])
       .then(async ([configResponse, stateResponse]) => {
         const configData = (await configResponse.json()) as AppConfig;
         const stateData = (await stateResponse.json()) as StateResponse;
@@ -193,7 +205,7 @@ export default function App() {
     setDirectoryLoading(true);
     setDirectoryError("");
 
-    fetch(`/api/directories?root=${encodeURIComponent(browseRootPath)}`, { signal: controller.signal })
+    fetch(withAccessKey(`/api/directories?root=${encodeURIComponent(browseRootPath)}`), { signal: controller.signal })
       .then(async (response) => {
         const payload = await response.json();
         if (!response.ok) {
@@ -233,7 +245,7 @@ export default function App() {
 
   useEffect(() => {
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const socket = new WebSocket(`${protocol}://${window.location.host}/ws`);
+    const socket = new WebSocket(`${protocol}://${window.location.host}${withAccessKey("/ws")}`);
     socketRef.current = socket;
 
     socket.addEventListener("open", () => {
@@ -662,7 +674,7 @@ export default function App() {
     setSessionDiffError("");
 
     try {
-      const response = await fetch(`/api/session-diff?clientSessionId=${encodeURIComponent(activeSession.clientSessionId)}`);
+      const response = await fetch(withAccessKey(`/api/session-diff?clientSessionId=${encodeURIComponent(activeSession.clientSessionId)}`));
       const payload = await response.json();
       if (!response.ok) {
         const errorPayload = payload as { message?: string };
@@ -684,7 +696,7 @@ export default function App() {
 
     setHistoryLoadingSessionId(activeSession.clientSessionId);
     fetch(
-      `/api/session-history?clientSessionId=${encodeURIComponent(activeSession.clientSessionId)}&before=${activeSession.historyStart}&limit=120`,
+      withAccessKey(`/api/session-history?clientSessionId=${encodeURIComponent(activeSession.clientSessionId)}&before=${activeSession.historyStart}&limit=120`),
     )
       .then(async (response) => {
         const payload = (await response.json()) as SessionHistoryResponse | { message?: string };
