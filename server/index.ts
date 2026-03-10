@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import { SessionManager, type SocketEvent } from "./session-manager.js";
 import { buildWorkspaceDiffSnapshot } from "./git-diff.js";
+import { createAccessKey, isAccessKeyAuthorized } from "./access-key.js";
 
 type ClientCommand =
   | { type: "hello" }
@@ -31,6 +32,7 @@ const vscodeRemoteUri =
   (sshHost ? `vscode://vscode-remote/ssh-remote+${encodeURIComponent(sshHost)}${sshPath}` : "");
 const port = Number(process.env.PORT ?? 3001);
 const agentBinPath = path.resolve(process.cwd(), "node_modules/.bin/claude-code-acp");
+const accessKey = process.env.LEDUO_PATROL_ACCESS_KEY?.trim() || createAccessKey();
 
 const app = express();
 const server = createServer(app);
@@ -41,6 +43,17 @@ const sessionManager = new SessionManager({
 });
 
 await sessionManager.initialize();
+
+app.use((req, res, next) => {
+  if (isAccessKeyAuthorized(req.originalUrl, accessKey)) {
+    next();
+    return;
+  }
+
+  res.status(401).json({
+    message: "Unauthorized: invalid access key",
+  });
+});
 
 app.get("/api/config", (_req, res) => {
   res.json({
@@ -122,7 +135,12 @@ app.get("/{*rest}", (_req, res) => {
   res.sendFile(path.resolve(webDistPath, "index.html"));
 });
 
-wss.on("connection", (socket) => {
+wss.on("connection", (socket, request) => {
+  if (!isAccessKeyAuthorized(request.url, accessKey)) {
+    socket.close(1008, "Unauthorized");
+    return;
+  }
+
   const unsubscribe = sessionManager.subscribe((event) => sendEvent(socket, event));
 
   socket.on("message", async (raw) => {
@@ -178,6 +196,7 @@ wss.on("connection", (socket) => {
 
 server.listen(port, () => {
   console.log(`${appName} listening on http://localhost:${port}`);
+  console.log(`Access URL: http://localhost:${port}/?key=${accessKey}`);
 });
 
 function sendEvent(socket: WebSocket, event: SocketEvent) {
