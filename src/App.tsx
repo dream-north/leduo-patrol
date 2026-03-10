@@ -1780,3 +1780,25 @@ function splitDiffByFile(diffText: string) {
   pushCurrent();
   return blocks;
 }
+
+export const appTestables = {
+  summarizeToolTitle,
+  formatToolDetails,
+  formatToolBody,
+  asRecord,
+  extractPlanText,
+  stringifyMaybe,
+  labelForMode,
+  toneForConnectionState,
+  canNavigateUp,
+  parentDirectory,
+  isWithinRoot,
+  normalizePath,
+  toSingleLine,
+  toPreviewText,
+  normalizeTimelineItem,
+  extractPlanPreview,
+  tryParseJson,
+  shouldUseExpandedPreview,
+  shouldRenderMarkdown,
+};

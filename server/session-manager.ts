@@ -716,3 +716,13 @@ function formatError(error: unknown) {
     return String(error);
   }
 }
+
+
+export const sessionManagerTestables = {
+  stringifyMaybe,
+  formatToolDetails,
+  summarizeToolTitle,
+  asRecord,
+  labelForMode,
+  formatError,
+};

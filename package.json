@@ -12,7 +12,8 @@
     "build:web": "vite build",
     "build:server": "rm -rf dist/server && tsc -p tsconfig.server.json",
     "start": "node dist/server/index.js",
-    "check": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
+    "check": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "test": "tsx --test server/__tests__/*.test.ts src/__tests__/*.test.ts"
   },
   "keywords": [],
   "author": "",
