@@ -49,6 +49,30 @@ pre {
   height: 100vh;
 }
 
+
+.access-gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  padding: 16px;
+}
+
+.access-card {
+  width: min(520px, 100%);
+  padding: 24px;
+  display: grid;
+  gap: 12px;
+}
+
+.access-card input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
 .shell {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr) 280px;

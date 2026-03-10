@@ -102,12 +102,19 @@ const MODE_OPTIONS = [
 
 const EMPTY_TIMELINE: TimelineItem[] = [];
 
-function withAccessKey(path: string) {
+function readAccessKeyFromUrl() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  return new URLSearchParams(window.location.search).get("key")?.trim() ?? "";
+}
+
+function withAccessKey(path: string, keyOverride?: string) {
   if (typeof window === "undefined") {
     return path;
   }
   const url = new URL(path, window.location.origin);
-  const key = new URLSearchParams(window.location.search).get("key");
+  const key = (keyOverride ?? readAccessKeyFromUrl()).trim();
   if (key) {
     url.searchParams.set("key", key);
   }
@@ -116,6 +123,9 @@ function withAccessKey(path: string) {
 
 export default function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
+  const [accessKey, setAccessKey] = useState(() => readAccessKeyFromUrl());
+  const [accessKeyInput, setAccessKeyInput] = useState(() => readAccessKeyFromUrl());
+  const [authPrompt, setAuthPrompt] = useState("");
   const [workspacePath, setWorkspacePath] = useState("");
   const [newSessionTitle, setNewSessionTitle] = useState("");
   const [newSessionModeId, setNewSessionModeId] = useState("default");
@@ -175,23 +185,40 @@ export default function App() {
   }, [activeSession?.workspacePath, config?.workspacePath]);
 
   useEffect(() => {
-    Promise.all([fetch(withAccessKey("/api/config")), fetch(withAccessKey("/api/state"))])
+    if (!accessKey) {
+      setAuthPrompt("访问需要 key，请先输入后再进入控制台。");
+      return;
+    }
+
+    Promise.all([fetch(withAccessKey("/api/config", accessKey)), fetch(withAccessKey("/api/state", accessKey))])
       .then(async ([configResponse, stateResponse]) => {
+        if (configResponse.status === 401 || stateResponse.status === 401) {
+          throw new Error("key 无效或已过期，请重新输入。");
+        }
+        if (!configResponse.ok || !stateResponse.ok) {
+          throw new Error("初始化失败：配置或状态请求异常。");
+        }
         const configData = (await configResponse.json()) as AppConfig;
         const stateData = (await stateResponse.json()) as StateResponse;
         setConfig(configData);
         setWorkspacePath(configData.workspacePath);
         setSessions(stateData.sessions.map(normalizeSessionRecord));
+        setAuthPrompt("");
       })
       .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("key")) {
+          setAuthPrompt(message);
+          return;
+        }
         appendGlobalTimeline({
           id: makeId(),
           kind: "error",
           title: "初始化失败",
-          body: error instanceof Error ? error.message : String(error),
+          body: message,
         });
       });
-  }, []);
+  }, [accessKey]);
 
   useEffect(() => {
     if (!browseRootPath) {
@@ -244,8 +271,11 @@ export default function App() {
   }, [activeSessionId, visibleTimeline.length]);
 
   useEffect(() => {
+    if (!accessKey) {
+      return;
+    }
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const socket = new WebSocket(`${protocol}://${window.location.host}${withAccessKey("/ws")}`);
+    const socket = new WebSocket(`${protocol}://${window.location.host}${withAccessKey("/ws", accessKey)}`);
     socketRef.current = socket;
 
     socket.addEventListener("open", () => {
@@ -279,7 +309,7 @@ export default function App() {
         socketRef.current = null;
       }
     };
-  }, []);
+  }, [accessKey]);
 
   function appendGlobalTimeline(item: TimelineItem) {
     setGlobalTimeline((current) => [...current, item]);
@@ -730,6 +760,45 @@ export default function App() {
       });
   }
 
+
+  function applyAccessKey() {
+    const normalizedKey = accessKeyInput.trim();
+    if (!normalizedKey) {
+      setAuthPrompt("请输入有效 key。");
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set("key", normalizedKey);
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    setAccessKey(normalizedKey);
+    setAuthPrompt("");
+  }
+
+  if (!accessKey || (authPrompt && !config)) {
+    return (
+      <div className="access-gate">
+        <div className="panel access-card">
+          <p className="eyebrow">leduo-patrol</p>
+          <h1>请输入访问 Key</h1>
+          <p className="lede">{authPrompt || "当前链接未携带 key，无法访问 API 与 WebSocket。"}</p>
+          <input
+            value={accessKeyInput}
+            placeholder="粘贴服务启动时输出的 key"
+            onChange={(event) => setAccessKeyInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                applyAccessKey();
+              }
+            }}
+          />
+          <button className="primary" type="button" onClick={applyAccessKey}>
+            进入控制台
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="shell multi-session">
       <aside className="panel masthead">
@@ -833,7 +902,7 @@ export default function App() {
                 <code>{currentBrowsePath || "加载中..."}</code>
                 {directoryError ? <p>{directoryError}</p> : null}
                 <p>允许根目录</p>
-                <code>{config?.allowedRoots.join("\n") ?? "加载中..."}</code>
+                <code>{config?.allowedRoots?.join("\n") ?? "加载中..."}</code>
               </div>
               <div className="actions">
                 <button className="primary" onClick={createSession} disabled={!workspacePath.trim()}>

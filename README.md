@@ -30,10 +30,11 @@ npm run dev
 
 默认情况下：
 
-- 前端开发服务运行在 `http://localhost:5173`（已监听 `0.0.0.0`，可远程访问）
-- 后端服务运行在 `http://localhost:3001`
+- 前端开发服务运行在自动探测到的可访问内网 IP（优先 `bond* / eth* / ens* / enp*` 网卡）上
+- 后端服务运行在 `PORT`（默认 `3001`）
+- 启动日志只打印一个推荐访问地址，避免 `br-*`、`veth*` 等虚拟网卡地址干扰
 
-> 说明：`npm run dev -- --host 0.0.0.0` 不会把参数透传到 `vite`，因为该命令实际启动的是 `concurrently`。本项目已在 `vite.config.ts` 中固定 `host: "0.0.0.0"`，直接 `npm run dev` 即可。
+> 说明：`npm run dev -- --host 0.0.0.0` 不会把参数透传到 `vite`，因为该命令实际启动的是 `concurrently`。本项目会在 `vite.config.ts` 内自动选择一个可访问的内网地址用于开发访问。
 
 生产构建：
 
@@ -98,6 +99,8 @@ Access URL: http://localhost:3001/?key=xxxxxxxx
 ```
 
 浏览器访问、前端 API 请求和 WebSocket 连接都需要携带这个 `key` 参数；未携带或错误会返回 `401 Unauthorized`。
+
+前端页面在检测到 URL 缺少 `key` 或 `key` 失效时，会先展示一个 key 输入页，粘贴后可直接进入控制台。
 
 如需固定 key，可设置：
 
