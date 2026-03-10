@@ -186,13 +186,13 @@ export default function App() {
   const [directoryLoading, setDirectoryLoading] = useState(false);
   const [directoryError, setDirectoryError] = useState("");
   const [globalTimeline, setGlobalTimeline] = useState<TimelineItem[]>([]);
+  const [showGlobalErrors, setShowGlobalErrors] = useState(false);
   const [selectedItem, setSelectedItem] = useState<{ sessionTitle: string; item: TimelineItem } | null>(null);
   const [sessionDiff, setSessionDiff] = useState<SessionDiffResponse | null>(null);
   const [sessionDiffError, setSessionDiffError] = useState("");
   const [sessionDiffOpen, setSessionDiffOpen] = useState(false);
   const [sessionDiffLoading, setSessionDiffLoading] = useState(false);
   const [sessionFileDiffCache, setSessionFileDiffCache] = useState<Record<string, SessionFileDiffResponse>>({});
-  const [showSystemFeed, setShowSystemFeed] = useState(false);
   const [historyLoadingSessionId, setHistoryLoadingSessionId] = useState("");
   const [collapsedSubagentRoots, setCollapsedSubagentRoots] = useState<Record<string, true>>({});
   const [demoFixtures, setDemoFixtures] = useState<DemoFixtures | null>(null);
@@ -203,6 +203,7 @@ export default function App() {
 
   const activeSession = sessions.find((session) => session.clientSessionId === activeSessionId) ?? null;
   const visibleTimeline = activeSession?.timeline ?? EMPTY_TIMELINE;
+  const globalErrorItems = useMemo(() => globalTimeline.filter((item) => item.kind === "error"), [globalTimeline]);
   const timelineRows = useMemo(() => buildTimelineTreeRows(visibleTimeline), [visibleTimeline]);
   const rootChildCount = useMemo(() => countChildrenByRoot(timelineRows), [timelineRows]);
   const browseRootPath = directoryBrowserPath || activeSession?.workspacePath || config?.workspacePath || "";
@@ -899,22 +900,30 @@ export default function App() {
   return (
     <div className="shell multi-session">
       <aside className="panel masthead">
-        <div>
-          <p className="eyebrow">leduo-patrol</p>
-          <h1>{config?.appName ?? "乐汪队"}</h1>
-          <p className="lede">同一页面内管理多个服务器目录会话，输出会自动合并并支持折叠。</p>
+        <div className="masthead-intro">
+          <div>
+            <p className="eyebrow">leduo-patrol</p>
+            <h1>{config?.appName ?? "乐汪队"}</h1>
+            <p className="lede">同一页面内管理多个服务器目录会话，输出会自动合并并支持折叠。</p>
+          </div>
+          {globalErrorItems.length > 0 ? (
+            <button
+              className="error-indicator"
+              type="button"
+              onClick={() => setShowGlobalErrors(true)}
+              aria-label={`查看 ${globalErrorItems.length} 条应用错误`}
+              title={`查看 ${globalErrorItems.length} 条应用错误`}
+            >
+              <span className="error-indicator-dot" aria-hidden="true" />
+              <span className="error-indicator-count">{globalErrorItems.length}</span>
+            </button>
+          ) : null}
         </div>
 
         <div className="status-grid">
           <StatusCard label="连接" value={connectionState} tone={toneForConnectionState(connectionState)} />
           <StatusCard label="会话数" value={String(sessions.length)} />
         </div>
-
-        {globalTimeline.length > 0 ? (
-          <button className="system-trigger secondary" type="button" onClick={() => setShowSystemFeed(true)}>
-            系统消息 {globalTimeline.length}
-          </button>
-        ) : null}
 
         <div className="sidebar-tabs" role="tablist" aria-label="会话面板">
           <button
@@ -1219,13 +1228,15 @@ export default function App() {
         />
       ) : null}
 
-      {showSystemFeed ? (
+      {showGlobalErrors ? (
         <SystemFeedModal
-          items={globalTimeline}
-          onClose={() => setShowSystemFeed(false)}
+          items={globalErrorItems}
+          title="应用错误"
+          subtitle="仅展示未归属到单个会话的全局异常。"
+          onClose={() => setShowGlobalErrors(false)}
           onOpenItem={(item) => {
-            setShowSystemFeed(false);
-            setSelectedItem({ sessionTitle: "系统消息", item });
+            setShowGlobalErrors(false);
+            setSelectedItem({ sessionTitle: "应用错误", item });
           }}
         />
       ) : null}
@@ -2074,6 +2085,8 @@ function MessageModal(props: {
 
 function SystemFeedModal(props: {
   items: TimelineItem[];
+  title: string;
+  subtitle: string;
   onClose: () => void;
   onOpenItem: (item: TimelineItem) => void;
 }) {
@@ -2082,8 +2095,8 @@ function SystemFeedModal(props: {
       <div className="modal-card system-modal-card" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div>
-            <p className="eyebrow">系统消息</p>
-            <h3>应用级状态与错误</h3>
+            <p className="eyebrow">{props.title}</p>
+            <h3>{props.subtitle}</h3>
           </div>
           <button className="secondary" onClick={props.onClose}>
             关闭

@@ -126,18 +126,54 @@ h1 {
   font-size: 12px;
 }
 
+.masthead-intro {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.error-indicator {
+  flex: 0 0 auto;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid rgba(177, 59, 47, 0.18);
+  border-radius: 999px;
+  background: rgba(201, 48, 74, 0.1);
+  color: #9d2131;
+  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease;
+}
+
+.error-indicator:hover {
+  transform: translateY(-1px);
+  background: rgba(201, 48, 74, 0.16);
+  border-color: rgba(177, 59, 47, 0.32);
+}
+
+.error-indicator-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 4px rgba(201, 48, 74, 0.12);
+}
+
+.error-indicator-count {
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .status-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 8px;
   margin-top: 14px;
-}
-
-.system-trigger {
-  width: 100%;
-  margin-top: 8px;
-  padding: 8px 10px;
-  font-size: 11px;
 }
 
 .status-card,
@@ -166,6 +202,7 @@ h1 {
   display: block;
   font-size: 12px;
   line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .status-card-positive strong {
