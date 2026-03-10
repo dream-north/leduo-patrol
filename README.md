@@ -119,6 +119,16 @@ LEDUO_PATROL_AGENT_BIN=/absolute/path/to/claude-code-acp
 - 当前只实现了 Claude Code
 - 目前终端能力没有暴露给 ACP client，先聚焦网页指令和确认流
 
+## UI 演示（SubAgent 树状折叠）
+
+可在 URL 上附加 `demo=subagent-tree` 使用前端模拟数据快速查看树状折叠效果：
+
+```bash
+http://<host>:5173/?key=<access-key>&demo=subagent-tree
+```
+
+该参数只影响前端展示，用于演示 Task/SubAgent 输出的缩进、分组与折叠交互。
+
 
 ## 打包并发布为 npm 包
 
