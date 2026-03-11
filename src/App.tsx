@@ -1126,6 +1126,7 @@ export default function App() {
                     const sidebarStatus = getSessionSidebarStatus(session);
                     const updatedAtLabel = formatRelativeUpdatedAt(session.updatedAt);
                     const sessionModeLabel = labelForMode(session.defaultModeId);
+                    const sidebarWorkspacePath = formatWorkspacePathForSidebar(session.workspacePath, config?.allowedRoots ?? []);
                     return (
                       <button
                         key={session.clientSessionId}
@@ -1149,7 +1150,7 @@ export default function App() {
                           </span>
                         </span>
                         <span className="session-chip-path" title={session.workspacePath}>
-                          {session.workspacePath}
+                          {sidebarWorkspacePath}
                         </span>
                       </button>
                     );
@@ -1481,7 +1482,25 @@ function canMergeToolTimelineItem(existingItem: TimelineItem, incomingItem: Time
   }
   const existingMeta = readToolMeta(existingItem);
   const incomingMeta = readToolMeta(incomingItem);
-  return existingMeta?.toolCallId === toolCallId && incomingMeta?.toolCallId === toolCallId;
+  if (existingMeta?.toolCallId !== toolCallId || incomingMeta?.toolCallId !== toolCallId) {
+    return false;
+  }
+  const existingTitle = normalizeToolTitleForMerge(existingMeta.title ?? existingItem.title);
+  const incomingTitle = normalizeToolTitleForMerge(incomingMeta.title ?? incomingItem.title);
+  const existingIsSubagent = isSubagentToolTitle(existingMeta.title);
+  const incomingIsSubagent = isSubagentToolTitle(incomingMeta.title);
+
+  if (existingIsSubagent || incomingIsSubagent) {
+    return existingIsSubagent && incomingIsSubagent && existingTitle === incomingTitle;
+  }
+  if (existingTitle && incomingTitle && existingTitle !== incomingTitle) {
+    return false;
+  }
+  return true;
+}
+
+function normalizeToolTitleForMerge(title: string | null) {
+  return (title ?? "").trim().toLowerCase();
 }
 
 function mergeToolTimelineItems(existingItem: TimelineItem, incomingItem: TimelineItem) {
@@ -1897,6 +1916,29 @@ function normalizeSessionTitle(title: string) {
 
 function formatSessionTitleForDisplay(title: string) {
   return title.replace(/_/g, "_\u200b");
+}
+
+function formatWorkspacePathForSidebar(workspacePath: string, allowedRoots: string[]) {
+  const normalizedPath = workspacePath.trim();
+  if (!normalizedPath) {
+    return workspacePath;
+  }
+
+  const matchingRoot = allowedRoots
+    .map((root) => root.trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)
+    .find((root) => isWithinRoot(root, normalizedPath));
+
+  if (!matchingRoot) {
+    return normalizedPath;
+  }
+  if (normalizedPath === matchingRoot) {
+    return "…/";
+  }
+
+  const suffix = normalizedPath.slice(matchingRoot.length).replace(/^\/+/, "");
+  return suffix ? `…/${suffix}` : "…/";
 }
 
 function normalizeSessionRecord(session: SessionRecord): SessionRecord {
@@ -2659,6 +2701,7 @@ export const appTestables = {
   normalizeTimelineItem,
   normalizeSessionTitle,
   formatSessionTitleForDisplay,
+  formatWorkspacePathForSidebar,
   resolveToolDisplayTitle,
   extractPlanPreview,
   extractChunkText,

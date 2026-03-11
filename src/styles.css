@@ -494,8 +494,8 @@ h1 {
   display: -webkit-box;
   min-width: 0;
   overflow: hidden;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -592,7 +592,7 @@ h1 {
   white-space: nowrap;
   color: var(--muted);
   font-size: 11px;
-  line-height: 1.4;
+  line-height: 1.55;
 }
 
 .session-chip-time {
@@ -604,6 +604,7 @@ h1 {
   white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;
+  padding-bottom: 2px;
 }
 
 .session-meta {
