@@ -1102,6 +1102,7 @@ export default function App() {
                   sessions.map((session) => {
                     const sidebarStatus = getSessionSidebarStatus(session);
                     const updatedAtLabel = formatRelativeUpdatedAt(session.updatedAt);
+                    const sessionModeLabel = labelForMode(session.defaultModeId);
                     return (
                       <button
                         key={session.clientSessionId}
@@ -1116,6 +1117,9 @@ export default function App() {
                             {sidebarStatus ? (
                               <span className={`session-chip-tag session-chip-tag-${sidebarStatus.tone}`}>{sidebarStatus.label}</span>
                             ) : null}
+                            <span className="session-chip-mode" title={`会话模式：${sessionModeLabel}`}>
+                              {sessionModeLabel}
+                            </span>
                           </span>
                           <span className="session-chip-time" title={session.updatedAt}>
                             {updatedAtLabel}

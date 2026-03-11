@@ -520,8 +520,24 @@ h1 {
 .session-chip-status {
   display: flex;
   align-items: center;
+  gap: 6px;
   min-width: 0;
   flex: 1;
+}
+
+.session-chip-mode {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid rgba(66, 43, 26, 0.18);
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.6);
+  white-space: nowrap;
 }
 
 .session-chip-tag {
