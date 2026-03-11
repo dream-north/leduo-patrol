@@ -31,3 +31,36 @@ test("ClaudeAcpSession.cancel is a no-op when no active prompt", async () => {
   await session.cancel();
   assert.ok(true);
 });
+
+
+test("ClaudeAcpSession.shouldIgnoreAgentStderr filters known ACP session/update invalid params noise", () => {
+  const session = makeSession();
+  const ignored = (session as any).shouldIgnoreAgentStderr(`Error handling notification { method: 'session/update' } { message: 'Invalid params' }`);
+  assert.equal(ignored, true);
+});
+
+test("ClaudeAcpSession.shouldIgnoreAgentStderr keeps non-matching errors", () => {
+  const session = makeSession();
+  const ignored = (session as any).shouldIgnoreAgentStderr("Error: connection reset");
+  assert.equal(ignored, false);
+});
+
+
+test("ClaudeAcpSession.resolvePermission forwards optional note via _meta", async () => {
+  const session = makeSession();
+  const calls: unknown[] = [];
+  (session as any).pendingPermissions.set("req-1", {
+    resolve: (value: unknown) => calls.push(value),
+    reject: () => undefined,
+  });
+
+  await session.resolvePermission("req-1", "deny", "请先解释影响范围");
+
+  assert.deepEqual(calls[0], {
+    outcome: {
+      outcome: "selected",
+      optionId: "deny",
+      _meta: { note: "请先解释影响范围" },
+    },
+  });
+});

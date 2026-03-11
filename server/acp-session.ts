@@ -82,9 +82,10 @@ export class ClaudeAcpSession {
 
       this.agentProcess.stderr.on("data", (chunk) => {
         const message = chunk.toString().trim();
-        if (message) {
-          this.onEvent({ type: "error", payload: { message } });
+        if (!message || this.shouldIgnoreAgentStderr(message)) {
+          return;
         }
+        this.onEvent({ type: "error", payload: { message } });
       });
 
       this.agentProcess.on("exit", (code, signal) => {
@@ -283,7 +284,7 @@ export class ClaudeAcpSession {
     await this.connection.cancel({ sessionId: this.sessionId });
   }
 
-  async resolvePermission(requestId: string, optionId: string) {
+  async resolvePermission(requestId: string, optionId: string, note?: string) {
     const pending = this.pendingPermissions.get(requestId);
     if (!pending) {
       throw new Error("Permission request was not found or already resolved.");
@@ -293,6 +294,7 @@ export class ClaudeAcpSession {
       outcome: {
         outcome: "selected",
         optionId,
+        _meta: note && note.trim() ? { note: note.trim() } : undefined,
       },
     });
     this.pendingPermissions.delete(requestId);
@@ -318,6 +320,14 @@ export class ClaudeAcpSession {
       type: "ready",
       payload: { workspacePath: this.workspacePath, agentConnected: true },
     });
+  }
+
+  private shouldIgnoreAgentStderr(message: string) {
+    return (
+      message.includes("Error handling notification") &&
+      message.includes("method: 'session/update'") &&
+      message.includes("message: 'Invalid params'")
+    );
   }
 
   private async handlePermissionRequest(

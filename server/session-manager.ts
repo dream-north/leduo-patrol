@@ -264,8 +264,8 @@ export class SessionManager {
     await this.getEntry(clientSessionId).acpSession?.cancel();
   }
 
-  async resolvePermission(clientSessionId: string, requestId: string, optionId: string) {
-    await this.getEntry(clientSessionId).acpSession?.resolvePermission(requestId, optionId);
+  async resolvePermission(clientSessionId: string, requestId: string, optionId: string, note?: string) {
+    await this.getEntry(clientSessionId).acpSession?.resolvePermission(requestId, optionId, note);
   }
 
   async closeSession(clientSessionId: string) {

@@ -18,7 +18,7 @@ type ClientCommand =
   | { type: "prompt"; payload: { clientSessionId: string; text: string; modeId?: string } }
   | { type: "set_mode"; payload: { clientSessionId: string; modeId: string } }
   | { type: "cancel"; payload: { clientSessionId: string } }
-  | { type: "permission"; payload: { clientSessionId: string; requestId: string; optionId: string } }
+  | { type: "permission"; payload: { clientSessionId: string; requestId: string; optionId: string; note?: string } }
   | { type: "close_session"; payload: { clientSessionId: string } };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -244,6 +244,7 @@ wss.on("connection", (socket, request) => {
             message.payload.clientSessionId,
             message.payload.requestId,
             message.payload.optionId,
+            message.payload.note,
           );
           break;
         case "close_session":

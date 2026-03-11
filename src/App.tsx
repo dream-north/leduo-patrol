@@ -187,7 +187,6 @@ export default function App() {
   const [newSessionTitle, setNewSessionTitle] = useState("");
   const [newSessionModeId, setNewSessionModeId] = useState("default");
   const [sidebarTab, setSidebarTab] = useState<"sessions" | "create">("sessions");
-  const [promptModeId, setPromptModeId] = useState("inherit");
   const [connectionState, setConnectionState] = useState("connecting");
   const [promptText, setPromptText] = useState("");
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
@@ -207,6 +206,7 @@ export default function App() {
   const [sessionFileDiffCache, setSessionFileDiffCache] = useState<Record<string, SessionFileDiffResponse>>({});
   const [historyLoadingSessionId, setHistoryLoadingSessionId] = useState("");
   const [collapsedSubagentRoots, setCollapsedSubagentRoots] = useState<Record<string, true>>({});
+  const [permissionNotes, setPermissionNotes] = useState<Record<string, string>>({});
   const [demoFixtures, setDemoFixtures] = useState<DemoFixtures | null>(null);
   const demoPreset = useMemo(() => readDemoPresetFromUrl(), []);
   const socketRef = useRef<WebSocket | null>(null);
@@ -691,6 +691,14 @@ export default function App() {
           ...session,
           permissions: session.permissions.filter((permission) => permission.requestId !== message.payload.requestId),
         }));
+        setPermissionNotes((current) => {
+          if (!current[message.payload.requestId]) {
+            return current;
+          }
+          const next = { ...current };
+          delete next[message.payload.requestId];
+          return next;
+        });
         break;
       case "session_closed":
         setSessions((current) => current.filter((session) => session.clientSessionId !== message.payload.clientSessionId));
@@ -824,7 +832,6 @@ export default function App() {
         payload: {
           clientSessionId: activeSession.clientSessionId,
           text,
-          modeId: promptModeId === "inherit" ? undefined : promptModeId,
         },
       })
     ) {
@@ -857,15 +864,27 @@ export default function App() {
     });
   }
 
-  function resolvePermission(permission: PermissionPayload, optionId: string) {
-    sendCommand({
+  function resolvePermission(permission: PermissionPayload, optionId: string, note?: string) {
+    const normalizedNote = note?.trim();
+    const didSend = sendCommand({
       type: "permission",
       payload: {
         clientSessionId: permission.clientSessionId,
         requestId: permission.requestId,
         optionId,
+        note: normalizedNote || undefined,
       },
     });
+    if (didSend) {
+      setPermissionNotes((current) => {
+        if (!current[permission.requestId]) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[permission.requestId];
+        return next;
+      });
+    }
   }
 
   function openVscodeRemote() {
@@ -1283,40 +1302,73 @@ export default function App() {
           <div className="composer composer-pending-placeholder">
             <p className="composer-pending-title">待处理确认</p>
             <div className="composer-pending-list">
-              {activeSession?.permissions.map((permission) => (
-                <section className="composer-pending-item" key={permission.requestId}>
-                  <p className="composer-pending-tool">
-                    {summarizeToolTitle(
-                      permission.toolCall.title,
-                      permission.toolCall.rawInput,
-                      permission.toolCall.toolCallId,
-                    )}
-                  </p>
-                  <div className="composer-pending-actions">
-                    {permission.options.map((option) => (
-                      <button
-                        key={option.optionId}
-                        className="secondary"
-                        onClick={() => resolvePermission(permission, option.optionId)}
-                      >
-                        {option.name}
-                      </button>
-                    ))}
-                  </div>
-                </section>
-              ))}
+              {activeSession?.permissions.map((permission) => {
+                const denyOption = permission.options.find((option) => option.kind === "deny") ?? permission.options[0];
+                return (
+                  <section className="composer-pending-item" key={permission.requestId}>
+                    <p className="composer-pending-tool">
+                      {summarizeToolTitle(
+                        permission.toolCall.title,
+                        permission.toolCall.rawInput,
+                        permission.toolCall.toolCallId,
+                      )}
+                    </p>
+                    <div className="composer-pending-actions">
+                      {permission.options.map((option) => (
+                        <button
+                          key={option.optionId}
+                          className="secondary"
+                          onClick={() => resolvePermission(permission, option.optionId)}
+                        >
+                          {option.name}
+                        </button>
+                      ))}
+                    </div>
+                    {denyOption ? (
+                      <div className="composer-pending-note-row">
+                        <input
+                          value={permissionNotes[permission.requestId] ?? ""}
+                          onChange={(event) =>
+                            setPermissionNotes((current) => ({
+                              ...current,
+                              [permission.requestId]: event.target.value,
+                            }))
+                          }
+                          placeholder="补充说明给 Claude（可选）"
+                        />
+                        <button
+                          className="secondary"
+                          onClick={() => resolvePermission(permission, denyOption.optionId, permissionNotes[permission.requestId])}
+                        >
+                          拒绝并附言
+                        </button>
+                      </div>
+                    ) : null}
+                  </section>
+                );
+              })}
             </div>
           </div>
         ) : (
           <div className="composer">
-            <select value={promptModeId} onChange={(event) => setPromptModeId(event.target.value)} disabled={activeSession?.busy}>
-              <option value="inherit">沿用会话模式</option>
-              {MODE_OPTIONS.map((option) => (
-                <option key={option.id} value={option.id}>
-                  本次消息使用 {option.label}
-                </option>
-              ))}
-            </select>
+            <div className="composer-mode-row">
+              <span>会话模式</span>
+              <select
+                value={activeSession?.defaultModeId ?? "default"}
+                disabled={!activeSession?.sessionId || activeSession?.busy}
+                onChange={(event) => {
+                  if (activeSession) {
+                    changeSessionMode(activeSession.clientSessionId, event.target.value);
+                  }
+                }}
+              >
+                {activeSessionModeOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
             <textarea
               placeholder={activeSession?.busy ? "会话运行中，暂时不能发送新消息。" : "例如：分析这个目录的仓库结构，然后给我一个重构计划。"}
               value={promptText}
@@ -1348,33 +1400,6 @@ export default function App() {
         </div>
         {activeSession ? (
           <>
-            {activeSession.permissions.length > 0 ? (
-              <div className="approval-stack">
-                {activeSession.permissions.map((permission) => (
-                  <section className="approval-card approval-card-active" key={permission.requestId}>
-                    <p className="approval-label">待处理确认</p>
-                    <h3>
-                      {summarizeToolTitle(
-                        permission.toolCall.title,
-                        permission.toolCall.rawInput,
-                        permission.toolCall.toolCallId,
-                      )}
-                    </h3>
-                    <div className="approval-actions">
-                      {permission.options.map((option) => (
-                        <button
-                          key={option.optionId}
-                          className="secondary"
-                          onClick={() => resolvePermission(permission, option.optionId)}
-                        >
-                          {option.name}
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                ))}
-              </div>
-            ) : null}
             <section className="details session-meta session-meta-card">
               <div className="session-meta-header">
                 <div>
@@ -1393,21 +1418,11 @@ export default function App() {
                 </div>
                 <div className="session-meta-item session-meta-item-wide">
                   <span>会话模式</span>
-                  <select
-                    value={activeSession.defaultModeId}
-                    disabled={!activeSession.sessionId || activeSession.busy}
-                    onChange={(event) => changeSessionMode(activeSession.clientSessionId, event.target.value)}
-                  >
-                    {activeSessionModeOptions.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="session-meta-note">新消息默认使用这个模式；发送框仍可按单条消息临时覆盖。</p>
+                  <code>{labelForMode(activeSession.defaultModeId)}</code>
+                  <p className="session-meta-note">模式选择已移动到输入框上方，发送消息前可随时切换。</p>
                   {activeSession.currentModeId !== activeSession.defaultModeId ? (
                     <p className="session-meta-note">
-                      当前 ACP 临时处于 {labelForMode(activeSession.currentModeId)}，未指定模式的新消息仍会按会话模式发送。
+                      当前 ACP 临时处于 {labelForMode(activeSession.currentModeId)}，下一条消息会按新的会话模式同步。
                     </p>
                   ) : null}
                 </div>
@@ -2165,6 +2180,33 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
     },
   };
 
+  const overflowSessions = Array.from({ length: 7 }, (_, index) => {
+    const sequence = index + 2;
+    return normalizeSessionRecord({
+      clientSessionId: `demo-session-${sequence}`,
+      title: `demo_session_${sequence}_workspace_review_iteration`,
+      workspacePath: `${workspacePath}/demo/session-${sequence}`,
+      connectionState: "connected",
+      sessionId: `demo-session-${sequence}`,
+      modes: ["default", "plan"],
+      defaultModeId: "default",
+      currentModeId: "default",
+      busy: sequence % 3 === 0,
+      timeline: [
+        {
+          id: `demo-${sequence}-user-1`,
+          kind: "user",
+          title: "你",
+          body: `请继续处理会话 ${sequence} 的任务。`,
+        },
+      ],
+      historyTotal: 1,
+      historyStart: 0,
+      permissions: [],
+      updatedAt: new Date(Date.now() - sequence * 60_000).toISOString(),
+    });
+  });
+
   return {
     bySessionId: {
       [demoSession.clientSessionId]: {
@@ -2172,6 +2214,16 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
         sessionDiff: demoSessionDiff,
         fileDiffs: demoFileDiffs,
       },
+      ...Object.fromEntries(
+        overflowSessions.map((session) => [
+          session.clientSessionId,
+          {
+            session,
+            sessionDiff: demoSessionDiff,
+            fileDiffs: demoFileDiffs,
+          },
+        ]),
+      ),
     },
   };
 }

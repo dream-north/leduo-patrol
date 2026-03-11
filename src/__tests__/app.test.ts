@@ -323,6 +323,12 @@ test("app applyDemoPreset injects demo session for subagent tree preview", () =>
   assert.equal(sessions[0]?.timeline[1]?.meta, "running");
 });
 
+
+test("app buildDemoFixtures includes 8 sessions for overflow sidebar regression", () => {
+  const fixtures = appTestables.buildDemoFixtures("/repo", "subagent-tree");
+  assert.equal(Object.keys(fixtures?.bySessionId ?? {}).length, 8);
+});
+
 test("app buildDemoFixtures includes session diff showcase data", () => {
   const fixtures = appTestables.buildDemoFixtures("/repo", "subagent-tree");
   const session = fixtures?.bySessionId["demo-subagent-tree"];
