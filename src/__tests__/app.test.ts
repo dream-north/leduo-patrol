@@ -318,7 +318,7 @@ test("app summarizeToolTitle reads subagent description from stringified rawInpu
 test("app applyDemoPreset injects demo session for subagent tree preview", () => {
   const fixtures = appTestables.buildDemoFixtures("/repo", "subagent-tree");
   const sessions = appTestables.applyDemoPreset([], fixtures);
-  assert.equal(sessions[0]?.title, "Demo · SubAgent 树状折叠");
+  assert.equal(sessions[0]?.title, "Demo_山水长卷_青绿千里_云岚叠嶂_溪桥烟雨_丹青工笔设色超长会话名称展示");
   assert.equal(sessions[0]?.timeline[1]?.title, "Task");
   assert.equal(sessions[0]?.timeline[1]?.meta, "running");
 });
