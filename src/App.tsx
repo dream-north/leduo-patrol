@@ -1827,10 +1827,15 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
     return null;
   }
 
+  const demoLongSessionTitle =
+    "Demo_山水长卷_青绿千里_云岚叠嶂_溪桥烟雨_丹青工笔设色超长会话名称展示";
+  const demoLongWorkspacePath =
+    "/workspace/leduo-patrol/demo_assets/very_long_gallery_workspace/ink_landscape_collection_archive/seasonal_series_spring_morning_mist_over_mountains_with_boat_and_pines";
+
   const demoSession: SessionRecord = normalizeSessionRecord({
     clientSessionId: "demo-subagent-tree",
-    title: "Demo · SubAgent 树状折叠",
-    workspacePath,
+    title: demoLongSessionTitle,
+    workspacePath: demoLongWorkspacePath,
     connectionState: "connected",
     sessionId: "demo-session",
     modes: ["default", "plan"],
@@ -1891,9 +1896,9 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
   });
 
   const demoSessionDiff: SessionDiffResponse = {
-    workspacePath,
+    workspacePath: demoLongWorkspacePath,
     workspaceReadonly: false,
-    repositoryRoot: workspacePath,
+    repositoryRoot: demoLongWorkspacePath,
     workingTree: [
       { filePath: "src/App.tsx", changeType: "修改" },
       { filePath: "src/styles.css", changeType: "修改" },
