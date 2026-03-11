@@ -82,7 +82,7 @@ export class ClaudeAcpSession {
 
       this.agentProcess.stderr.on("data", (chunk) => {
         const message = chunk.toString().trim();
-        if (!message || this.shouldIgnoreAgentStderr(message)) {
+        if (!message || this.shouldIgnoreAgentStderr(message) || this.shouldIgnoreToolOutputLog(message)) {
           return;
         }
         this.onEvent({ type: "error", payload: { message } });
@@ -328,6 +328,11 @@ export class ClaudeAcpSession {
       message.includes("method: 'session/update'") &&
       message.includes("message: 'Invalid params'")
     );
+  }
+
+  private shouldIgnoreToolOutputLog(message: string) {
+    const normalized = message.trim();
+    return normalized.startsWith('[{"index":') || normalized.startsWith("[{\"index\":");
   }
 
   private async handlePermissionRequest(
