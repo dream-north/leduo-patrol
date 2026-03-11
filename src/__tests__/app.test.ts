@@ -277,7 +277,7 @@ test("app canMergeToolTimelineItem only merges same toolCallId", () => {
   };
 
   assert.equal(appTestables.canMergeToolTimelineItem(existing, incomingSame, "tc-1"), true);
-  assert.equal(appTestables.canMergeToolTimelineItem(existing, incomingChild, "tc-1"), true);
+  assert.equal(appTestables.canMergeToolTimelineItem(existing, incomingChild, "tc-1"), false);
 });
 test("app timeline tree helpers use first child title for Task parent summary when toolCallId matches", () => {
   const rows = appTestables.buildTimelineTreeRows([
@@ -330,7 +330,17 @@ test("app buildDemoFixtures includes session diff showcase data", () => {
   assert.equal(session?.fileDiffs["workingTree:src/App.tsx"]?.category, "workingTree");
 });
 
-
+test("app formatWorkspacePathForSidebar trims allowed root prefix", () => {
+  assert.equal(
+    appTestables.formatWorkspacePathForSidebar(
+      "/home/user/repo/project-a",
+      ["/tmp", "/home/user/repo"],
+    ),
+    "…/project-a",
+  );
+  assert.equal(appTestables.formatWorkspacePathForSidebar("/home/user/repo", ["/home/user/repo"]), "…/");
+  assert.equal(appTestables.formatWorkspacePathForSidebar("/outside/path", ["/home/user/repo"]), "/outside/path");
+});
 
 test("app session title helpers normalize and format underscores", () => {
   assert.equal(appTestables.normalizeSessionTitle("  "), "未命名会话");
