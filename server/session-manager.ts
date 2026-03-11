@@ -683,11 +683,20 @@ function formatToolDetails(details: {
 
 function summarizeToolTitle(rawTitle: unknown, rawInput: unknown, rawToolCallId: unknown) {
   const title = typeof rawTitle === "string" ? rawTitle.trim() : "";
+  const record = asRecord(rawInput) ?? asRecord(tryParseJson(rawInput));
+  const normalizedTitle = title.toLowerCase();
+  const isSubagent = normalizedTitle.includes("subagent") || normalizedTitle === "task" || normalizedTitle.includes(" task");
+  if (isSubagent) {
+    const summary = readSubagentSummary(record);
+    if (summary) {
+      return `${title || "Task"} · ${summary}`;
+    }
+  }
+
   if (title && !/^工具\s+tool_/.test(title) && !/^tool_/.test(title)) {
     return title;
   }
 
-  const record = asRecord(rawInput);
   const command =
     typeof record?.command === "string"
       ? record.command
@@ -713,6 +722,49 @@ function summarizeToolTitle(rawTitle: unknown, rawInput: unknown, rawToolCallId:
     return title;
   }
   return typeof rawToolCallId === "string" ? `工具 ${rawToolCallId}` : "工具调用";
+}
+
+function readSubagentSummary(record: Record<string, unknown> | null): string | null {
+  if (!record) {
+    return null;
+  }
+
+  for (const key of ["title", "description"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  for (const key of ["rawInput", "input", "args", "payload", "params"]) {
+    if (!(key in record)) {
+      continue;
+    }
+    const nestedRecord = asRecord(record[key]) ?? asRecord(tryParseJson(record[key]));
+    const nested = readSubagentSummary(nestedRecord);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
+function tryParseJson(value: unknown) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

@@ -175,8 +175,144 @@ test("app timeline tree helpers group subagent span", () => {
 
   assert.equal(rows[1]?.depth, 1);
   assert.equal(rows[1]?.rootId, "tool-start");
-  assert.deepEqual(appTestables.countChildrenByRoot(rows), { "tool-start": 2 });
+  assert.deepEqual(appTestables.countChildrenByRoot(rows), { "tool-start": 1 });
   assert.equal(appTestables.isSubagentToolTitle("Task"), true);
+});
+
+test("app timeline tree helpers exit collapsed subtree after matching completion", () => {
+  const rows = appTestables.buildTimelineTreeRows([
+    {
+      id: "task-running",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-task", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "tool-inside",
+      kind: "tool",
+      title: "Read",
+      body: "inside",
+      meta: "running",
+    },
+    {
+      id: "task-completed",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-task", title: "Task", status: "completed" }),
+      meta: "completed",
+    },
+    {
+      id: "tool-outside",
+      kind: "tool",
+      title: "Write",
+      body: "outside",
+      meta: "completed",
+    },
+  ]);
+
+  assert.equal(rows[2]?.item.id, "tool-outside");
+  assert.equal(rows[2]?.depth, 0);
+});
+
+test("app timeline tree helpers support concurrent subagent roots by toolCallId", () => {
+  const rows = appTestables.buildTimelineTreeRows([
+    {
+      id: "task-1",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-1", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "task-2",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-2", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "task-1-done",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-1", title: "Task", status: "completed" }),
+      meta: "completed",
+    },
+    {
+      id: "still-in-task-2",
+      kind: "agent",
+      title: "Claude",
+      body: "inside task 2",
+    },
+  ]);
+
+  assert.equal(rows[2]?.item.id, "still-in-task-2");
+  assert.equal(rows[2]?.depth, 1);
+  assert.equal(rows[2]?.rootId, "task-2");
+});
+
+
+
+test("app canMergeToolTimelineItem only merges same toolCallId with same title", () => {
+  const existing = {
+    id: "existing",
+    kind: "tool" as const,
+    title: "Task",
+    body: JSON.stringify({ toolCallId: "tc-1", title: "Task", status: "running" }),
+    meta: "running",
+  };
+  const incomingSame = {
+    id: "incoming-1",
+    kind: "tool" as const,
+    title: "Task",
+    body: JSON.stringify({ toolCallId: "tc-1", title: "Task", status: "completed" }),
+    meta: "completed",
+  };
+  const incomingChild = {
+    id: "incoming-2",
+    kind: "tool" as const,
+    title: "探索当前代码库结构",
+    body: JSON.stringify({ toolCallId: "tc-1", title: "探索当前代码库结构", status: "completed" }),
+    meta: "completed",
+  };
+
+  assert.equal(appTestables.canMergeToolTimelineItem(existing, incomingSame, "tc-1"), true);
+  assert.equal(appTestables.canMergeToolTimelineItem(existing, incomingChild, "tc-1"), false);
+});
+test("app timeline tree helpers use first child title for Task parent summary when toolCallId matches", () => {
+  const rows = appTestables.buildTimelineTreeRows([
+    {
+      id: "task-root",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-1", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "task-child",
+      kind: "tool",
+      title: "探索当前代码库结构",
+      body: JSON.stringify({ toolCallId: "tc-1", title: "探索当前代码库结构", status: "running" }),
+      meta: "running",
+    },
+  ]);
+
+  assert.equal(rows[0]?.displayTitle, "Task · 探索当前代码库结构");
+});
+test("app summarizeToolTitle uses subagent description in Task title", () => {
+  assert.equal(
+    appTestables.summarizeToolTitle("Task", { description: "探索当前代码库结构" }, "tc-1"),
+    "Task · 探索当前代码库结构",
+  );
+});
+
+test("app summarizeToolTitle reads subagent description from stringified rawInput", () => {
+  const rawInput = JSON.stringify({
+    rawInput: {
+      description: "探索当前代码库结构",
+    },
+  });
+  assert.equal(appTestables.summarizeToolTitle("Task", rawInput, "tc-2"), "Task · 探索当前代码库结构");
 });
 
 test("app applyDemoPreset injects demo session for subagent tree preview", () => {
