@@ -235,7 +235,7 @@ export class SessionManager {
     }
     entry.snapshot.updatedAt = new Date().toISOString();
     this.schedulePersist();
-    await entry.acpSession?.prompt(text);
+    await entry.acpSession?.prompt(enrichPromptWithToolHints(text));
   }
 
   async setSessionMode(clientSessionId: string, modeId: string) {
@@ -771,6 +771,18 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
+function enrichPromptWithToolHints(text: string) {
+  const normalized = text.trim();
+  if (!normalized) {
+    return text;
+  }
+  const hint = `\n\n[Tool routing hint]\n如果要读写工作区文件，请优先直接调用 mcp_acp_Read / mcp_acp_Write；只有在工具名未知时再调用 ToolSearch。`;
+  if (normalized.includes("mcp_acp_Read") || normalized.includes("mcp_acp_Write")) {
+    return normalized;
+  }
+  return `${normalized}${hint}`;
+}
+
 function labelForMode(modeId?: string) {
   switch (modeId) {
     case "default":
@@ -840,6 +852,7 @@ export const sessionManagerTestables = {
   summarizeToolTitle,
   asRecord,
   extractChunkText,
+  enrichPromptWithToolHints,
   labelForMode,
   formatError,
 };

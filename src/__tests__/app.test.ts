@@ -84,10 +84,16 @@ test("app session sidebar status handles running, completed, error, connecting",
     ),
     { label: "已完成", tone: "completed" },
   );
-  assert.deepEqual(appTestables.getSessionSidebarStatus(makeSession({ connectionState: "error" })), {
-    label: "异常",
-    tone: "error",
-  });
+  assert.equal(appTestables.getSessionSidebarStatus(makeSession({ connectionState: "error" })), null);
+  assert.deepEqual(
+    appTestables.getSessionSidebarStatus(
+      makeSession({
+        connectionState: "error",
+        timeline: [{ id: "err-1", kind: "error", title: "错误", body: "boom" }],
+      }),
+    ),
+    { label: "异常", tone: "error" },
+  );
   assert.deepEqual(appTestables.getSessionSidebarStatus(makeSession({ connectionState: "connecting" })), {
     label: "连接中",
     tone: "connecting",
@@ -416,4 +422,44 @@ test("app markdown table helpers parse table syntax", () => {
   assert.equal(appTestables.isMarkdownTableRow("| col1 | col2 |"), true);
   assert.equal(appTestables.isMarkdownTableSeparator("| --- | :---: |"), true);
   assert.deepEqual(appTestables.parseMarkdownTableRow("| a | b |"), ["a", "b"]);
+});
+
+
+test("app normalizeMergedTimeline merges tool updates on restore", () => {
+  const merged = appTestables.normalizeMergedTimeline([
+    {
+      id: "t1",
+      kind: "tool",
+      title: "Read",
+      body: JSON.stringify({ toolCallId: "tc-1", title: "Read", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "t2",
+      kind: "tool",
+      title: "Read",
+      body: JSON.stringify({ toolCallId: "tc-1", title: "Read", status: "completed" }),
+      meta: "completed",
+    },
+  ]);
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0]?.id, "t1");
+  assert.equal(merged[0]?.kind, "tool");
+});
+
+test("app helpers truncate pending preview text", () => {
+  const longText = "x".repeat(900);
+  const truncated = appTestables.truncateUnknownText(longText, 120);
+  assert.match(truncated, /^x{120}\.\.\.（已截断，原始 900 字符）$/);
+});
+
+test("app findLatestExecutionPlan returns latest plan entry", () => {
+  const plan = appTestables.findLatestExecutionPlan([
+    { id: "1", kind: "system", title: "执行计划", body: "plan 1" },
+    { id: "2", kind: "agent", title: "Claude", body: "doing" },
+    { id: "3", kind: "system", title: "执行计划", body: "plan 2" },
+  ]);
+
+  assert.equal(plan, "plan 2");
 });

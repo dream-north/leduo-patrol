@@ -140,3 +140,13 @@ test("SessionManager.setSessionMode updates default and current mode together", 
     },
   });
 });
+
+
+test("sessionManagerTestables.enrichPromptWithToolHints appends routing hint once", () => {
+  const enriched = sessionManagerTestables.enrichPromptWithToolHints("请读取配置并写回");
+  assert.match(enriched, /mcp_acp_Read/);
+  assert.match(enriched, /mcp_acp_Write/);
+
+  const untouched = sessionManagerTestables.enrichPromptWithToolHints("请使用 mcp_acp_Read 读取文件");
+  assert.equal(untouched, "请使用 mcp_acp_Read 读取文件");
+});
