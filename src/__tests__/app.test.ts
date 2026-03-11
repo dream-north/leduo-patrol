@@ -328,6 +328,7 @@ test("app buildDemoFixtures includes session diff showcase data", () => {
   const session = fixtures?.bySessionId["demo-subagent-tree"];
   assert.equal(session?.sessionDiff.workingTree.length, 2);
   assert.equal(session?.fileDiffs["workingTree:src/App.tsx"]?.category, "workingTree");
+  assert.equal(session?.session.permissions.length, 1);
 });
 
 test("app formatWorkspacePathForSidebar trims allowed root prefix", () => {

@@ -212,8 +212,11 @@ export default function App() {
   const socketRef = useRef<WebSocket | null>(null);
   const timelineViewportRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
+  const notifiedPermissionRequestIdsRef = useRef<Record<string, true>>({});
+  const notifiedCompletionIdsRef = useRef<Record<string, true>>({});
 
   const activeSession = sessions.find((session) => session.clientSessionId === activeSessionId) ?? null;
+  const activeSessionHasPendingPermission = Boolean(activeSession && activeSession.permissions.length > 0);
   const activeSessionModeOptions =
     activeSession?.modes.length && activeSession.modes.length > 0
       ? activeSession.modes.map((modeId) => ({ id: modeId, label: labelForMode(modeId) }))
@@ -342,6 +345,36 @@ export default function App() {
   }, [activeSessionId, visibleTimeline.length]);
 
   useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window) || Notification.permission !== "default") {
+      return;
+    }
+    void Notification.requestPermission();
+  }, []);
+
+  useEffect(() => {
+    for (const session of sessions) {
+      for (const permission of session.permissions) {
+        if (notifiedPermissionRequestIdsRef.current[permission.requestId]) {
+          continue;
+        }
+        notifiedPermissionRequestIdsRef.current[permission.requestId] = true;
+        pushBrowserNotification("待处理确认", `${formatSessionTitleForDisplay(session.title)}: ${summarizeToolTitle(permission.toolCall.title, permission.toolCall.rawInput, permission.toolCall.toolCallId)}`);
+      }
+
+      for (const item of session.timeline) {
+        if (item.kind !== "system" || item.title !== "本轮完成") {
+          continue;
+        }
+        if (notifiedCompletionIdsRef.current[item.id]) {
+          continue;
+        }
+        notifiedCompletionIdsRef.current[item.id] = true;
+        pushBrowserNotification("任务已完成", `${formatSessionTitleForDisplay(session.title)}: ${item.body || "本轮执行完成"}`);
+      }
+    }
+  }, [sessions]);
+
+  useEffect(() => {
     if (!accessKey) {
       return;
     }
@@ -386,6 +419,17 @@ export default function App() {
     setGlobalTimeline((current) => [...current, item]);
   }
 
+  function pushBrowserNotification(title: string, body: string) {
+    if (typeof window === "undefined" || !("Notification" in window) || Notification.permission !== "granted") {
+      return;
+    }
+    try {
+      new Notification(title, { body });
+    } catch {
+      // no-op
+    }
+  }
+
   function appendSessionTimeline(clientSessionId: string, item: TimelineItem) {
     setSessions((current) =>
       current.map((session) =>
@@ -414,12 +458,21 @@ export default function App() {
           let existingIndex = -1;
           for (let index = session.timeline.length - 1; index >= 0; index -= 1) {
             const item = session.timeline[index];
+            if (item?.kind === "system" && item.title === "本轮完成") {
+              break;
+            }
             if (item?.kind !== "tool") {
               continue;
             }
             if (canMergeToolTimelineItem(item, nextItem, nextToolCallId)) {
-              existingIndex = index;
-              break;
+              const itemMeta = readToolMeta(item);
+              if (!isTerminalToolStatus(itemMeta?.status ?? null)) {
+                existingIndex = index;
+                break;
+              }
+              if (existingIndex < 0) {
+                existingIndex = index;
+              }
             }
           }
           if (existingIndex >= 0) {
@@ -762,7 +815,7 @@ export default function App() {
 
   function submitPrompt() {
     const text = promptText.trim();
-    if (!text || !activeSession) {
+    if (!text || !activeSession || activeSession.busy) {
       return;
     }
     if (
@@ -1219,33 +1272,73 @@ export default function App() {
               );
             })
           )}
+          {activeSession?.busy ? (
+            <div className="timeline-running-indicator" aria-live="polite">
+              <span className="timeline-running-dot" aria-hidden="true" />
+              正在运行中...
+            </div>
+          ) : null}
         </div>
-        <div className="composer">
-          <select value={promptModeId} onChange={(event) => setPromptModeId(event.target.value)}>
-            <option value="inherit">沿用会话模式</option>
-            {MODE_OPTIONS.map((option) => (
-              <option key={option.id} value={option.id}>
-                本次消息使用 {option.label}
-              </option>
-            ))}
-          </select>
-          <textarea
-            placeholder="例如：分析这个目录的仓库结构，然后给我一个重构计划。"
-            value={promptText}
-            onChange={(event) => setPromptText(event.target.value)}
-            onKeyDown={(event) => {
-              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                submitPrompt();
-              }
-            }}
-          />
-          <button className="primary" onClick={submitPrompt} disabled={!promptText.trim() || !activeSession || activeSession.busy}>
-            发送到当前会话
-          </button>
-          <button className="secondary" onClick={cancelActiveSession} disabled={!activeSession?.busy}>
-            取消当前会话任务
-          </button>
-        </div>
+        {activeSessionHasPendingPermission ? (
+          <div className="composer composer-pending-placeholder">
+            <p className="composer-pending-title">待处理确认</p>
+            <div className="composer-pending-list">
+              {activeSession?.permissions.map((permission) => (
+                <section className="composer-pending-item" key={permission.requestId}>
+                  <p className="composer-pending-tool">
+                    {summarizeToolTitle(
+                      permission.toolCall.title,
+                      permission.toolCall.rawInput,
+                      permission.toolCall.toolCallId,
+                    )}
+                  </p>
+                  <div className="composer-pending-actions">
+                    {permission.options.map((option) => (
+                      <button
+                        key={option.optionId}
+                        className="secondary"
+                        onClick={() => resolvePermission(permission, option.optionId)}
+                      >
+                        {option.name}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="composer">
+            <select value={promptModeId} onChange={(event) => setPromptModeId(event.target.value)} disabled={activeSession?.busy}>
+              <option value="inherit">沿用会话模式</option>
+              {MODE_OPTIONS.map((option) => (
+                <option key={option.id} value={option.id}>
+                  本次消息使用 {option.label}
+                </option>
+              ))}
+            </select>
+            <textarea
+              placeholder={activeSession?.busy ? "会话运行中，暂时不能发送新消息。" : "例如：分析这个目录的仓库结构，然后给我一个重构计划。"}
+              value={promptText}
+              disabled={activeSession?.busy}
+              onChange={(event) => setPromptText(event.target.value)}
+              onKeyDown={(event) => {
+                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                  submitPrompt();
+                }
+              }}
+            />
+            <div className="composer-actions">
+              <button className="primary" onClick={submitPrompt} disabled={!promptText.trim() || !activeSession || activeSession.busy}>
+                发送到当前会话
+              </button>
+              <button className="secondary composer-cancel" onClick={cancelActiveSession} disabled={!activeSession?.busy}>
+                <span aria-hidden="true">⏹</span>
+                停止
+              </button>
+            </div>
+          </div>
+        )}
       </main>
 
       <aside className="panel approvals">
@@ -1255,9 +1348,7 @@ export default function App() {
         </div>
         {activeSession ? (
           <>
-            {activeSession.permissions.length === 0 ? (
-              <div className="empty">当前会话没有待处理确认。</div>
-            ) : (
+            {activeSession.permissions.length > 0 ? (
               <div className="approval-stack">
                 {activeSession.permissions.map((permission) => (
                   <section className="approval-card approval-card-active" key={permission.requestId}>
@@ -1269,11 +1360,6 @@ export default function App() {
                         permission.toolCall.toolCallId,
                       )}
                     </h3>
-                    <p className="approval-hint">
-                      {extractPlanText(permission.toolCall.rawInput)
-                        ? "计划详情已经显示在中间会话里，点击对应条目可查看完整 Markdown。"
-                        : "右侧只保留确认动作，详细内容请在中间会话中查看。"}
-                    </p>
                     <div className="approval-actions">
                       {permission.options.map((option) => (
                         <button
@@ -1288,7 +1374,7 @@ export default function App() {
                   </section>
                 ))}
               </div>
-            )}
+            ) : null}
             <section className="details session-meta session-meta-card">
               <div className="session-meta-header">
                 <div>
@@ -1492,9 +1578,6 @@ function canMergeToolTimelineItem(existingItem: TimelineItem, incomingItem: Time
 
   if (existingIsSubagent || incomingIsSubagent) {
     return existingIsSubagent && incomingIsSubagent && existingTitle === incomingTitle;
-  }
-  if (existingTitle && incomingTitle && existingTitle !== incomingTitle) {
-    return false;
   }
   return true;
 }
@@ -2024,7 +2107,22 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
     ],
     historyTotal: 7,
     historyStart: 0,
-    permissions: [],
+    permissions: [
+      {
+        clientSessionId: "demo-subagent-tree",
+        requestId: "demo-permission-1",
+        toolCall: {
+          toolCallId: "demo-task-1",
+          title: "Task",
+          status: "pending",
+          rawInput: { description: "等待你确认是否继续执行" },
+        },
+        options: [
+          { optionId: "demo-allow", name: "允许", kind: "allow" },
+          { optionId: "demo-deny", name: "拒绝", kind: "deny" },
+        ],
+      },
+    ],
     updatedAt: new Date().toISOString(),
   });
 
