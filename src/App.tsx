@@ -205,7 +205,7 @@ export default function App() {
   const [sessionDiffLoading, setSessionDiffLoading] = useState(false);
   const [sessionFileDiffCache, setSessionFileDiffCache] = useState<Record<string, SessionFileDiffResponse>>({});
   const [historyLoadingSessionId, setHistoryLoadingSessionId] = useState("");
-  const [collapsedSubagentRoots, setCollapsedSubagentRoots] = useState<Record<string, true>>({});
+  const [collapsedSubagentRoots, setCollapsedSubagentRoots] = useState<Record<string, boolean>>({});
   const [permissionNotes, setPermissionNotes] = useState<Record<string, string>>({});
   const [demoFixtures, setDemoFixtures] = useState<DemoFixtures | null>(null);
   const demoPreset = useMemo(() => readDemoPresetFromUrl(), []);
@@ -225,6 +225,7 @@ export default function App() {
   const globalErrorItems = useMemo(() => globalTimeline.filter((item) => item.kind === "error"), [globalTimeline]);
   const timelineRows = useMemo(() => buildTimelineTreeRows(visibleTimeline), [visibleTimeline]);
   const rootChildCount = useMemo(() => countChildrenByRoot(timelineRows), [timelineRows]);
+  const latestExecutionPlan = useMemo(() => findLatestExecutionPlan(visibleTimeline), [visibleTimeline]);
   const browseRootPath = directoryBrowserPath || activeSession?.workspacePath || config?.workspacePath || "";
   const currentBrowsePath = directoryRootPath || browseRootPath;
   const canBrowseUp = canNavigateUp(currentBrowsePath, config?.allowedRoots ?? []);
@@ -250,6 +251,25 @@ export default function App() {
       setSidebarTab("sessions");
     }
   }, [activeSessionId, sessions.length]);
+
+  useEffect(() => {
+    setCollapsedSubagentRoots((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const row of timelineRows) {
+        if (!row.item.id || row.item.kind !== "tool") {
+          continue;
+        }
+        const childCount = rootChildCount[row.item.id] ?? 0;
+        if (childCount < 1 || !isSubagentToolTitle(row.item.title) || row.item.id in next) {
+          continue;
+        }
+        next[row.item.id] = true;
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [rootChildCount, timelineRows]);
 
   useEffect(() => {
     setDirectoryBrowserPath(activeSession?.workspacePath ?? config?.workspacePath ?? "");
@@ -786,18 +806,21 @@ export default function App() {
           body: stringifyMaybe(update.entries ?? update),
         });
         break;
-      case "current_mode_update":
+      case "current_mode_update": {
+        const nextModeId = String(update.currentModeId ?? "").trim();
         updateSession(clientSessionId, (session) => ({
           ...session,
-          currentModeId: String(update.currentModeId ?? session.currentModeId ?? "default"),
+          currentModeId: nextModeId || session.currentModeId || "default",
+          defaultModeId: nextModeId || session.defaultModeId,
         }));
         appendSessionTimeline(clientSessionId, {
           id: makeId(),
           kind: "system",
           title: "模式切换",
-          body: String(update.currentModeId ?? "unknown"),
+          body: nextModeId || "unknown",
         });
         break;
+      }
       default:
         break;
     }
@@ -1004,7 +1027,7 @@ export default function App() {
             session.clientSessionId === activeSession.clientSessionId
               ? {
                   ...session,
-                  timeline: [...history.items.map(normalizeTimelineItem), ...session.timeline],
+                  timeline: normalizeMergedTimeline([...history.items.map(normalizeTimelineItem), ...session.timeline]),
                   historyStart: history.start,
                   historyTotal: history.total,
                 }
@@ -1286,6 +1309,7 @@ export default function App() {
                           })
                       : undefined
                   }
+                  displayRunningHint={Boolean(activeSession?.busy && row.item.kind === "tool" && childCount > 0 && Boolean(collapsedSubagentRoots[row.item.id]))}
                   onOpen={() => setSelectedItem({ sessionTitle: activeSession ? formatSessionTitleForDisplay(activeSession.title) : "当前会话", item: row.item })}
                 />
               );
@@ -1313,6 +1337,7 @@ export default function App() {
                         permission.toolCall.toolCallId,
                       )}
                     </p>
+                    <pre className="composer-pending-preview">{truncateUnknownText(permission.toolCall.rawInput, 500)}</pre>
                     <div className="composer-pending-actions">
                       {permission.options.map((option) => (
                         <button
@@ -1436,6 +1461,12 @@ export default function App() {
                 </button>
               </div>
             </section>
+            {latestExecutionPlan ? (
+              <section className="details session-meta session-meta-card">
+                <p className="approval-label">执行计划</p>
+                <pre className="session-plan-preview">{latestExecutionPlan}</pre>
+              </section>
+            ) : null}
           </>
         ) : (
           <div className="empty">选择一个会话后再处理确认或关闭会话。</div>
@@ -1495,6 +1526,7 @@ function TimelineRow(props: {
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   onOpen: () => void;
+  displayRunningHint?: boolean;
 }) {
   const kindLabel = labelForKind(props.item.kind, props.item.title);
   const expandedPreview = shouldUseExpandedPreview(props.item);
@@ -1516,7 +1548,7 @@ function TimelineRow(props: {
               props.onToggleCollapse?.();
             }}
           >
-            {props.collapsed ? "▸" : "▾"} 子项 {props.childCount}
+            {props.collapsed ? "▸" : "▾"} 子项 {props.childCount}{props.displayRunningHint ? " · 运行中" : ""}
           </span>
         ) : null}
       </span>
@@ -1925,11 +1957,11 @@ function getSessionSidebarStatus(session: SessionRecord): SessionSidebarStatus |
   if (session.permissions.length > 0) {
     return { label: "待处理", tone: "pending" };
   }
-  if (session.connectionState === "error") {
-    return { label: "异常", tone: "error" };
-  }
   if (session.busy) {
     return { label: "运行中", tone: "running" };
+  }
+  if (shouldShowSessionException(session)) {
+    return { label: "异常", tone: "error" };
   }
   if (hasCompletedPrompt(session)) {
     return { label: "已完成", tone: "completed" };
@@ -1942,6 +1974,36 @@ function getSessionSidebarStatus(session: SessionRecord): SessionSidebarStatus |
 
 function hasCompletedPrompt(session: SessionRecord) {
   return session.timeline.some((item) => item.kind === "system" && item.title === "本轮完成");
+}
+
+function shouldShowSessionException(session: SessionRecord) {
+  if (session.busy || session.connectionState !== "error") {
+    return false;
+  }
+  const lastItem = [...session.timeline].reverse().find((item) => item.kind !== "system" || item.title !== "本轮完成");
+  return Boolean(lastItem && lastItem.kind === "error");
+}
+
+function truncateUnknownText(value: unknown, maxLength = 500) {
+  const raw = typeof value === "string" ? value : stringifyMaybe(value);
+  const normalized = raw.trim();
+  if (!normalized) {
+    return "(空)";
+  }
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength)}...（已截断，原始 ${normalized.length} 字符）`;
+}
+
+function findLatestExecutionPlan(timeline: TimelineItem[]) {
+  for (let index = timeline.length - 1; index >= 0; index -= 1) {
+    const item = timeline[index];
+    if (item?.kind === "system" && item.title === "执行计划") {
+      return truncateUnknownText(item.body, 1800);
+    }
+  }
+  return null;
 }
 
 function formatRelativeUpdatedAt(updatedAt: string, now = Date.now()) {
@@ -2047,10 +2109,48 @@ function normalizeSessionRecord(session: SessionRecord): SessionRecord {
   return {
     ...session,
     title: normalizedTitle,
-    timeline: session.timeline.map(normalizeTimelineItem),
+    timeline: normalizeMergedTimeline(session.timeline.map(normalizeTimelineItem)),
     historyTotal: total,
     historyStart: start,
   };
+}
+
+function normalizeMergedTimeline(items: TimelineItem[]) {
+  const merged: TimelineItem[] = [];
+  for (const item of items) {
+    const normalized = normalizeTimelineItem(item);
+    if (normalized.kind !== "tool") {
+      merged.push(normalized);
+      continue;
+    }
+    if (isSubagentToolTitle(normalized.title)) {
+      merged.push(normalized);
+      continue;
+    }
+    const toolMeta = readToolMeta(normalized);
+    const toolCallId = toolMeta?.toolCallId;
+    if (!toolCallId) {
+      merged.push(normalized);
+      continue;
+    }
+    let existingIndex = -1;
+    for (let index = merged.length - 1; index >= 0; index -= 1) {
+      const existing = merged[index];
+      if (existing?.kind === "system" && existing.title === "本轮完成") {
+        break;
+      }
+      if (canMergeToolTimelineItem(existing, normalized, toolCallId)) {
+        existingIndex = index;
+        break;
+      }
+    }
+    if (existingIndex < 0) {
+      merged.push(normalized);
+      continue;
+    }
+    merged[existingIndex] = mergeToolTimelineItems(merged[existingIndex] ?? normalized, normalized);
+  }
+  return merged;
 }
 
 function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoFixtures | null {
@@ -2840,6 +2940,7 @@ export const appTestables = {
   labelForMode,
   toneForConnectionState,
   getSessionSidebarStatus,
+  shouldShowSessionException,
   hasCompletedPrompt,
   formatRelativeUpdatedAt,
   canNavigateUp,
@@ -2849,6 +2950,7 @@ export const appTestables = {
   toSingleLine,
   toPreviewText,
   normalizeTimelineItem,
+  normalizeMergedTimeline,
   normalizeSessionTitle,
   formatSessionTitleForDisplay,
   formatWorkspacePathForSidebar,
@@ -2867,4 +2969,6 @@ export const appTestables = {
   parseMarkdownTableRow,
   isMarkdownTableSeparator,
   isMarkdownTableRow,
+  findLatestExecutionPlan,
+  truncateUnknownText,
 };
