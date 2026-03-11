@@ -110,6 +110,13 @@ type DemoFixtures = {
   bySessionId: Record<string, DemoSessionFixture>;
 };
 
+type ExecutionPlanStepStatus = "completed" | "in_progress" | "pending" | "unknown";
+
+type ExecutionPlanStep = {
+  content: string;
+  status: ExecutionPlanStepStatus;
+};
+
 type EventMessage =
   | { type: "ready"; payload: { workspacePath: string; agentConnected: boolean; clientSessionId?: string } }
   | {
@@ -225,7 +232,9 @@ export default function App() {
   const globalErrorItems = useMemo(() => globalTimeline.filter((item) => item.kind === "error"), [globalTimeline]);
   const timelineRows = useMemo(() => buildTimelineTreeRows(visibleTimeline), [visibleTimeline]);
   const rootChildCount = useMemo(() => countChildrenByRoot(timelineRows), [timelineRows]);
+  const latestExecutionPlanBody = useMemo(() => findLatestExecutionPlanBody(visibleTimeline), [visibleTimeline]);
   const latestExecutionPlan = useMemo(() => findLatestExecutionPlan(visibleTimeline), [visibleTimeline]);
+  const latestExecutionPlanSteps = useMemo(() => parseExecutionPlanSteps(latestExecutionPlanBody), [latestExecutionPlanBody]);
   const browseRootPath = directoryBrowserPath || activeSession?.workspacePath || config?.workspacePath || "";
   const currentBrowsePath = directoryRootPath || browseRootPath;
   const canBrowseUp = canNavigateUp(currentBrowsePath, config?.allowedRoots ?? []);
@@ -1464,7 +1473,18 @@ export default function App() {
             {latestExecutionPlan ? (
               <section className="details session-meta session-meta-card">
                 <p className="approval-label">执行计划</p>
-                <pre className="session-plan-preview">{latestExecutionPlan}</pre>
+                {latestExecutionPlanSteps.length > 0 ? (
+                  <ol className="session-plan-list">
+                    {latestExecutionPlanSteps.map((step, index) => (
+                      <li key={`${index}-${step.content}`} className="session-plan-list-item">
+                        <span className={`session-plan-status session-plan-status-${step.status}`} aria-hidden="true" />
+                        <span className="session-plan-content">{step.content}</span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <pre className="session-plan-preview">{latestExecutionPlan}</pre>
+                )}
               </section>
             ) : null}
           </>
@@ -1996,14 +2016,60 @@ function truncateUnknownText(value: unknown, maxLength = 500) {
   return `${normalized.slice(0, maxLength)}...（已截断，原始 ${normalized.length} 字符）`;
 }
 
-function findLatestExecutionPlan(timeline: TimelineItem[]) {
+function findLatestExecutionPlanBody(timeline: TimelineItem[]) {
   for (let index = timeline.length - 1; index >= 0; index -= 1) {
     const item = timeline[index];
     if (item?.kind === "system" && item.title === "执行计划") {
-      return truncateUnknownText(item.body, 1800);
+      return item.body;
     }
   }
   return null;
+}
+
+function findLatestExecutionPlan(timeline: TimelineItem[]) {
+  const planBody = findLatestExecutionPlanBody(timeline);
+  if (!planBody) {
+    return null;
+  }
+  return truncateUnknownText(planBody, 1800);
+}
+
+function parseExecutionPlanSteps(planBody: string | null): ExecutionPlanStep[] {
+  const parsed = tryParseJson(planBody);
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+
+  return parsed
+    .map((entry): ExecutionPlanStep | null => {
+      const record = asRecord(entry);
+      if (!record) {
+        return null;
+      }
+      const content = typeof record.content === "string" ? record.content.trim() : "";
+      if (!content) {
+        return null;
+      }
+      return {
+        content,
+        status: normalizeExecutionPlanStepStatus(record.status),
+      };
+    })
+    .filter((step): step is ExecutionPlanStep => Boolean(step));
+}
+
+function normalizeExecutionPlanStepStatus(value: unknown): ExecutionPlanStepStatus {
+  const normalized = typeof value === "string" ? value.toLowerCase() : "";
+  if (normalized === "completed") {
+    return "completed";
+  }
+  if (normalized === "in_progress") {
+    return "in_progress";
+  }
+  if (normalized === "pending") {
+    return "pending";
+  }
+  return "unknown";
 }
 
 function formatRelativeUpdatedAt(updatedAt: string, now = Date.now()) {
@@ -2181,6 +2247,21 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
         body: "请把仓库结构分析一下，并把复杂任务交给 subagent。",
       },
       {
+        id: "demo-plan-1",
+        kind: "system",
+        title: "执行计划",
+        body: JSON.stringify(
+          [
+            { content: "梳理现有 MCP 配置结构", priority: "medium", status: "completed" },
+            { content: "提炼 build_auth_params 公共方法", priority: "medium", status: "completed" },
+            { content: "补齐 api 鉴权端点并联调", priority: "medium", status: "in_progress" },
+            { content: "完善 SDK 认证模式兼容", priority: "medium", status: "pending" },
+          ],
+          null,
+          2,
+        ),
+      },
+      {
         id: "demo-tool-task-start",
         kind: "tool",
         title: "Task",
@@ -2220,7 +2301,7 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
         body: "已汇总 subagent 结果：你可以点击 `Task` 行右侧子项按钮折叠/展开内部输出。",
       },
     ],
-    historyTotal: 7,
+    historyTotal: 8,
     historyStart: 0,
     permissions: [
       {
@@ -2970,5 +3051,7 @@ export const appTestables = {
   isMarkdownTableSeparator,
   isMarkdownTableRow,
   findLatestExecutionPlan,
+  findLatestExecutionPlanBody,
+  parseExecutionPlanSteps,
   truncateUnknownText,
 };

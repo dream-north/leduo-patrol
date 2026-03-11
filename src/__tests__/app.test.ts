@@ -325,8 +325,14 @@ test("app applyDemoPreset injects demo session for subagent tree preview", () =>
   const fixtures = appTestables.buildDemoFixtures("/repo", "subagent-tree");
   const sessions = appTestables.applyDemoPreset([], fixtures);
   assert.equal(sessions[0]?.title, "panshi_wip_dev_20260309_chatops_recommands_buffer_machine_search_pipeline_validation_regression_follow_up");
-  assert.equal(sessions[0]?.timeline[1]?.title, "Task");
-  assert.equal(sessions[0]?.timeline[1]?.meta, "running");
+
+  const taskRow = sessions[0]?.timeline.find((item) => item.kind === "tool" && item.title === "Task");
+  assert.equal(taskRow?.meta, "running");
+
+  const planBody = appTestables.findLatestExecutionPlanBody(sessions[0]?.timeline ?? []);
+  const steps = appTestables.parseExecutionPlanSteps(planBody);
+  assert.equal(steps.length, 4);
+  assert.equal(steps[2]?.status, "in_progress");
 });
 
 
@@ -462,4 +468,34 @@ test("app findLatestExecutionPlan returns latest plan entry", () => {
   ]);
 
   assert.equal(plan, "plan 2");
+});
+
+
+test("app parseExecutionPlanSteps parses known statuses", () => {
+  const steps = appTestables.parseExecutionPlanSteps(
+    JSON.stringify([
+      { content: "step 1", status: "completed" },
+      { content: "step 2", status: "in_progress" },
+      { content: "step 3", status: "pending" },
+      { content: "step 4", status: "mystery" },
+      { content: "   ", status: "pending" },
+    ]),
+  );
+
+  assert.deepEqual(steps, [
+    { content: "step 1", status: "completed" },
+    { content: "step 2", status: "in_progress" },
+    { content: "step 3", status: "pending" },
+    { content: "step 4", status: "unknown" },
+  ]);
+});
+
+test("app findLatestExecutionPlanBody returns untruncated raw body", () => {
+  const rawBody = JSON.stringify([{ content: "x".repeat(200), status: "completed" }]);
+  const body = appTestables.findLatestExecutionPlanBody([
+    { id: "1", kind: "system", title: "执行计划", body: "old" },
+    { id: "2", kind: "system", title: "执行计划", body: rawBody },
+  ]);
+
+  assert.equal(body, rawBody);
 });
