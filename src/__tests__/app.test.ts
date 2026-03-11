@@ -253,7 +253,7 @@ test("app timeline tree helpers support concurrent subagent roots by toolCallId"
 
 
 
-test("app canMergeToolTimelineItem only merges same toolCallId with same title", () => {
+test("app canMergeToolTimelineItem only merges same toolCallId", () => {
   const existing = {
     id: "existing",
     kind: "tool" as const,
@@ -277,7 +277,7 @@ test("app canMergeToolTimelineItem only merges same toolCallId with same title",
   };
 
   assert.equal(appTestables.canMergeToolTimelineItem(existing, incomingSame, "tc-1"), true);
-  assert.equal(appTestables.canMergeToolTimelineItem(existing, incomingChild, "tc-1"), false);
+  assert.equal(appTestables.canMergeToolTimelineItem(existing, incomingChild, "tc-1"), true);
 });
 test("app timeline tree helpers use first child title for Task parent summary when toolCallId matches", () => {
   const rows = appTestables.buildTimelineTreeRows([
@@ -318,7 +318,7 @@ test("app summarizeToolTitle reads subagent description from stringified rawInpu
 test("app applyDemoPreset injects demo session for subagent tree preview", () => {
   const fixtures = appTestables.buildDemoFixtures("/repo", "subagent-tree");
   const sessions = appTestables.applyDemoPreset([], fixtures);
-  assert.equal(sessions[0]?.title, "Demo_山水长卷_青绿千里_云岚叠嶂_溪桥烟雨_丹青工笔设色超长会话名称展示");
+  assert.equal(sessions[0]?.title, "panshi_wip_dev_20260309_chatops_recommands_buffer_machine_search_pipeline_validation_regression_follow_up");
   assert.equal(sessions[0]?.timeline[1]?.title, "Task");
   assert.equal(sessions[0]?.timeline[1]?.meta, "running");
 });
@@ -328,6 +328,71 @@ test("app buildDemoFixtures includes session diff showcase data", () => {
   const session = fixtures?.bySessionId["demo-subagent-tree"];
   assert.equal(session?.sessionDiff.workingTree.length, 2);
   assert.equal(session?.fileDiffs["workingTree:src/App.tsx"]?.category, "workingTree");
+});
+
+
+
+test("app session title helpers normalize and format underscores", () => {
+  assert.equal(appTestables.normalizeSessionTitle("  "), "未命名会话");
+  assert.equal(appTestables.formatSessionTitleForDisplay("abc_def"), "abc_​def");
+});
+
+test("app resolveToolDisplayTitle prefers latest title then toolCallId", () => {
+  assert.equal(
+    appTestables.resolveToolDisplayTitle(
+      [
+        { toolCallId: "tool-1", status: "running" },
+        { toolCallId: "tool-1", title: "", status: "completed" },
+        { toolCallId: "tool-1", title: "final title", status: "completed" },
+      ],
+      "fallback",
+    ),
+    "final title",
+  );
+  assert.equal(
+    appTestables.resolveToolDisplayTitle(
+      [{ toolCallId: "tool-2", status: "completed" }],
+      "fallback",
+    ),
+    "tool-2",
+  );
+});
+
+
+test("app timeline tree exits subagent when terminal tool update shares Task toolCallId", () => {
+  const rows = appTestables.buildTimelineTreeRows([
+    {
+      id: "task-root",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-1", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "task-child",
+      kind: "agent",
+      title: "Claude",
+      body: "inside subagent",
+    },
+    {
+      id: "task-marker",
+      kind: "tool",
+      title: "tool_exec",
+      body: JSON.stringify({ toolCallId: "tc-1", status: "completed" }),
+      meta: "completed",
+    },
+    {
+      id: "main-agent",
+      kind: "agent",
+      title: "Claude",
+      body: "back to main",
+    },
+  ]);
+
+  assert.equal(rows[1]?.item.id, "task-child");
+  assert.equal(rows[1]?.depth, 1);
+  assert.equal(rows[2]?.item.id, "main-agent");
+  assert.equal(rows[2]?.depth, 0);
 });
 
 test("app markdown table helpers parse table syntax", () => {
