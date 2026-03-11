@@ -424,7 +424,7 @@ export default function App() {
           }
           if (existingIndex >= 0) {
             const updatedTimeline = [...session.timeline];
-            updatedTimeline[existingIndex] = { ...nextItem, id: updatedTimeline[existingIndex]?.id ?? nextItem.id };
+            updatedTimeline[existingIndex] = mergeToolTimelineItems(updatedTimeline[existingIndex] ?? nextItem, nextItem);
             return {
               ...session,
               timeline: updatedTimeline,
@@ -527,7 +527,7 @@ export default function App() {
               session.clientSessionId === message.payload.clientSessionId
                 ? {
                     ...session,
-                    title: message.payload.title,
+                    title: normalizeSessionTitle(message.payload.title),
                     workspacePath: message.payload.workspacePath,
                   }
                 : session,
@@ -537,7 +537,7 @@ export default function App() {
             ...current,
             normalizeSessionRecord({
               clientSessionId: message.payload.clientSessionId,
-              title: message.payload.title,
+              title: normalizeSessionTitle(message.payload.title),
               workspacePath: message.payload.workspacePath,
               connectionState: "connecting",
               sessionId: "",
@@ -643,6 +643,29 @@ export default function App() {
         setSessions((current) => current.filter((session) => session.clientSessionId !== message.payload.clientSessionId));
         break;
       case "error":
+        {
+          const structured = parseStructuredLogMessage(message.payload.message);
+          if (structured?.level === "warn") {
+            if (!message.payload.clientSessionId) {
+              appendGlobalTimeline({
+                id: makeId(),
+                kind: "system",
+                title: "提示",
+                body: structured.detail,
+                meta: "warn",
+              });
+              break;
+            }
+            appendSessionTimeline(message.payload.clientSessionId, {
+              id: makeId(),
+              kind: "system",
+              title: "提示",
+              body: structured.detail,
+              meta: "warn",
+            });
+            break;
+          }
+        }
         if (!message.payload.clientSessionId) {
           appendGlobalTimeline({
             id: makeId(),
@@ -1110,7 +1133,7 @@ export default function App() {
                         onClick={() => setActiveSessionId(session.clientSessionId)}
                       >
                         <span className="session-chip-title" title={session.title}>
-                          {session.title}
+                          {formatSessionTitleForDisplay(session.title)}
                         </span>
                         <span className="session-chip-meta">
                           <span className="session-chip-status">
@@ -1141,7 +1164,7 @@ export default function App() {
 
       <main className="panel transcript">
         <div className="transcript-header">
-          <h2>{activeSession?.title ?? "任务流"}</h2>
+          <h2>{activeSession ? formatSessionTitleForDisplay(activeSession.title) : "任务流"}</h2>
           <p>{activeSession?.workspacePath ?? "选择左侧会话后，这里展示该目录的完整执行流。"}</p>
         </div>
         <div className="timeline" ref={timelineViewportRef} onScroll={handleTimelineScroll}>
@@ -1190,7 +1213,7 @@ export default function App() {
                           })
                       : undefined
                   }
-                  onOpen={() => setSelectedItem({ sessionTitle: activeSession?.title ?? "当前会话", item: row.item })}
+                  onOpen={() => setSelectedItem({ sessionTitle: activeSession ? formatSessionTitleForDisplay(activeSession.title) : "当前会话", item: row.item })}
                 />
               );
             })
@@ -1269,7 +1292,7 @@ export default function App() {
               <div className="session-meta-header">
                 <div>
                   <p className="approval-label">会话详情</p>
-                  <h3>{activeSession.title}</h3>
+                  <h3>{formatSessionTitleForDisplay(activeSession.title)}</h3>
                 </div>
               </div>
               <div className="session-meta-grid">
@@ -1340,7 +1363,7 @@ export default function App() {
 
       {sessionDiffOpen ? (
         <SessionDiffModal
-          sessionTitle={activeSession?.title ?? "当前会话"}
+          sessionTitle={activeSession ? formatSessionTitleForDisplay(activeSession.title) : "当前会话"}
           loading={sessionDiffLoading}
           error={sessionDiffError}
           snapshot={sessionDiff}
@@ -1458,16 +1481,19 @@ function canMergeToolTimelineItem(existingItem: TimelineItem, incomingItem: Time
   }
   const existingMeta = readToolMeta(existingItem);
   const incomingMeta = readToolMeta(incomingItem);
-  if (existingMeta?.toolCallId !== toolCallId || incomingMeta?.toolCallId !== toolCallId) {
-    return false;
-  }
+  return existingMeta?.toolCallId === toolCallId && incomingMeta?.toolCallId === toolCallId;
+}
 
-  const existingTitle = (existingMeta?.title ?? existingItem.title ?? "").trim();
-  const incomingTitle = (incomingMeta?.title ?? incomingItem.title ?? "").trim();
-  if (!existingTitle || !incomingTitle) {
-    return true;
-  }
-  return existingTitle === incomingTitle;
+function mergeToolTimelineItems(existingItem: TimelineItem, incomingItem: TimelineItem) {
+  const existingEntries = parseToolTimelineEntries(existingItem.body);
+  const incomingEntries = parseToolTimelineEntries(incomingItem.body);
+  const mergedEntries = [...existingEntries, ...incomingEntries];
+  return {
+    ...incomingItem,
+    id: existingItem.id,
+    title: resolveToolDisplayTitle(mergedEntries, incomingItem.title),
+    body: stringifyMaybe(mergedEntries),
+  } satisfies TimelineItem;
 }
 
 function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
@@ -1489,6 +1515,11 @@ function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
           }
         }
       }
+    }
+
+    const isTerminalByToolCall = Boolean(toolMeta?.toolCallId && isTerminalToolStatus(toolMeta.status));
+    if (isTerminalByToolCall && closeSubagentRoot(activeRoots, toolMeta?.toolCallId ?? null, false)) {
+      continue;
     }
 
     if (!shouldHandleAsSubagent) {
@@ -1530,7 +1561,11 @@ function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
   return rows;
 }
 
-function closeSubagentRoot(activeRoots: Array<{ rootId: string; toolCallId: string | null; rowIndex: number }>, toolCallId: string | null) {
+function closeSubagentRoot(
+  activeRoots: Array<{ rootId: string; toolCallId: string | null; rowIndex: number }>,
+  toolCallId: string | null,
+  allowFallback = true,
+) {
   if (toolCallId) {
     for (let i = activeRoots.length - 1; i >= 0; i -= 1) {
       if (activeRoots[i]?.toolCallId === toolCallId) {
@@ -1540,7 +1575,7 @@ function closeSubagentRoot(activeRoots: Array<{ rootId: string; toolCallId: stri
     }
   }
 
-  if (activeRoots.length > 0) {
+  if (allowFallback && activeRoots.length > 0) {
     activeRoots.pop();
     return true;
   }
@@ -1578,11 +1613,11 @@ function readToolMeta(item: TimelineItem): { title: string | null; status: strin
   if (item.kind !== "tool") {
     return null;
   }
-  const parsed = tryParseJson(item.body);
-  const record = asRecord(parsed);
-  const title = typeof record?.title === "string" ? record.title : item.title;
-  const status = typeof record?.status === "string" ? record.status : item.meta ?? null;
-  const toolCallId = typeof record?.toolCallId === "string" ? record.toolCallId : null;
+  const entries = parseToolTimelineEntries(item.body);
+  const latestRecord = [...entries].reverse().map((entry) => asRecord(entry)).find((entry) => entry !== null) ?? null;
+  const title = resolveToolDisplayTitle(entries, item.title) || item.title;
+  const status = typeof latestRecord?.status === "string" ? latestRecord.status : item.meta ?? null;
+  const toolCallId = typeof latestRecord?.toolCallId === "string" ? latestRecord.toolCallId : null;
   return { title, status, toolCallId };
 }
 
@@ -1713,6 +1748,48 @@ function stringifyMaybe(value: unknown) {
   return JSON.stringify(value, null, 2);
 }
 
+function resolveToolDisplayTitle(entries: unknown[], fallbackTitle: string) {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const record = asRecord(entries[index]);
+    const title = typeof record?.title === "string" ? record.title.trim() : "";
+    if (title) {
+      return title;
+    }
+  }
+
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const record = asRecord(entries[index]);
+    const toolCallId = typeof record?.toolCallId === "string" ? record.toolCallId.trim() : "";
+    if (toolCallId) {
+      return toolCallId;
+    }
+  }
+
+  return fallbackTitle;
+}
+
+function parseToolTimelineEntries(body: string) {
+  const parsed = tryParseJson(body);
+  if (Array.isArray(parsed)) {
+    return parsed;
+  }
+  if (parsed !== null) {
+    return [parsed];
+  }
+  return [body];
+}
+
+function parseStructuredLogMessage(message: string): { level: string | null; detail: string } | null {
+  const parsed = tryParseJson(message);
+  const record = asRecord(parsed);
+  if (!record) {
+    return null;
+  }
+  const level = typeof record.level === "string" ? record.level.toLowerCase() : null;
+  const detail = typeof record.message === "string" ? record.message : message;
+  return { level, detail };
+}
+
 function labelForMode(modeId: string) {
   return MODE_OPTIONS.find((option) => option.id === modeId)?.label ?? modeId;
 }
@@ -1814,12 +1891,22 @@ function toPreviewText(value: string) {
   return value.trim() || "(空)";
 }
 
+function normalizeSessionTitle(title: string) {
+  return title.trim() || "未命名会话";
+}
+
+function formatSessionTitleForDisplay(title: string) {
+  return title.replace(/_/g, "_\u200b");
+}
+
 function normalizeSessionRecord(session: SessionRecord): SessionRecord {
   const total = session.historyTotal ?? session.timeline.length;
   const start = session.historyStart ?? Math.max(0, total - session.timeline.length);
+  const normalizedTitle = normalizeSessionTitle(session.title);
 
   return {
     ...session,
+    title: normalizedTitle,
     timeline: session.timeline.map(normalizeTimelineItem),
     historyTotal: total,
     historyStart: start,
@@ -1832,7 +1919,7 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
   }
 
   const demoLongSessionTitle =
-    "Demo_山水长卷_青绿千里_云岚叠嶂_溪桥烟雨_丹青工笔设色超长会话名称展示";
+    "panshi_wip_dev_20260309_chatops_recommands_buffer_machine_search_pipeline_validation_regression_follow_up";
   const demoLongWorkspacePath =
     "/workspace/leduo-patrol/demo_assets/very_long_gallery_workspace/ink_landscape_collection_archive/seasonal_series_spring_morning_mist_over_mountains_with_boat_and_pines";
 
@@ -2570,6 +2657,9 @@ export const appTestables = {
   toSingleLine,
   toPreviewText,
   normalizeTimelineItem,
+  normalizeSessionTitle,
+  formatSessionTitleForDisplay,
+  resolveToolDisplayTitle,
   extractPlanPreview,
   extractChunkText,
   tryParseJson,
