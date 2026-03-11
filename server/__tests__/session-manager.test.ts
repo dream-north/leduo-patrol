@@ -12,6 +12,12 @@ test("sessionManagerTestables.summarizeToolTitle falls back to tool id", () => {
   assert.equal(result, "tool_exec");
 });
 
+test("sessionManagerTestables.summarizeToolTitle reads subagent description from stringified rawInput", () => {
+  const rawInput = JSON.stringify({ rawInput: { description: "探索当前代码库结构" } });
+  const result = sessionManagerTestables.summarizeToolTitle("Task", rawInput, "tool-9");
+  assert.equal(result, "Task · 探索当前代码库结构");
+});
+
 test("sessionManagerTestables.labelForMode maps known and unknown modes", () => {
   assert.equal(sessionManagerTestables.labelForMode("plan"), "Plan");
   assert.equal(sessionManagerTestables.labelForMode("custom"), "custom");

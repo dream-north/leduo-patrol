@@ -27,6 +27,7 @@ type TimelineTreeRow = {
   item: TimelineItem;
   depth: number;
   rootId: string | null;
+  displayTitle?: string;
 };
 
 type PermissionPayload = {
@@ -400,6 +401,48 @@ export default function App() {
     );
   }
 
+  function upsertToolTimeline(clientSessionId: string, update: SessionUpdate) {
+    const nextItem = buildToolTimelineItem(update);
+    const nextToolCallId = typeof update.toolCallId === "string" ? update.toolCallId : null;
+    setSessions((current) =>
+      current.map((session) => {
+        if (session.clientSessionId !== clientSessionId) {
+          return session;
+        }
+
+        if (nextToolCallId) {
+          let existingIndex = -1;
+          for (let index = session.timeline.length - 1; index >= 0; index -= 1) {
+            const item = session.timeline[index];
+            if (item?.kind !== "tool") {
+              continue;
+            }
+            if (canMergeToolTimelineItem(item, nextItem, nextToolCallId)) {
+              existingIndex = index;
+              break;
+            }
+          }
+          if (existingIndex >= 0) {
+            const updatedTimeline = [...session.timeline];
+            updatedTimeline[existingIndex] = { ...nextItem, id: updatedTimeline[existingIndex]?.id ?? nextItem.id };
+            return {
+              ...session,
+              timeline: updatedTimeline,
+              updatedAt: new Date().toISOString(),
+            };
+          }
+        }
+
+        return {
+          ...session,
+          timeline: [...session.timeline, normalizeTimelineItem(nextItem)],
+          historyTotal: session.historyTotal + 1,
+          updatedAt: new Date().toISOString(),
+        };
+      }),
+    );
+  }
+
   function appendSessionTextChunk(clientSessionId: string, kind: TimelineItem["kind"], title: string, text: string) {
     setSessions((current) =>
       current.map((session) => {
@@ -649,7 +692,7 @@ export default function App() {
       }
       case "tool_call":
       case "tool_call_update":
-        appendSessionTimeline(clientSessionId, buildToolTimelineItem(update));
+        upsertToolTimeline(clientSessionId, update);
         break;
       case "plan":
         appendSessionTimeline(clientSessionId, {
@@ -1126,7 +1169,7 @@ export default function App() {
               return (
                 <TimelineRow
                   key={row.item.id}
-                  item={row.item}
+                  item={row.displayTitle ? { ...row.item, title: row.displayTitle } : row.item}
                   depth={row.depth}
                   childCount={childCount}
                   collapsed={Boolean(collapsedSubagentRoots[row.item.id])}
@@ -1405,49 +1448,115 @@ function shouldUseExpandedPreview(item: TimelineItem) {
   return item.kind === "agent" || item.kind === "plan";
 }
 
+function canMergeToolTimelineItem(existingItem: TimelineItem, incomingItem: TimelineItem, toolCallId: string) {
+  if (existingItem.kind !== "tool" || incomingItem.kind !== "tool") {
+    return false;
+  }
+  const existingMeta = readToolMeta(existingItem);
+  const incomingMeta = readToolMeta(incomingItem);
+  if (existingMeta?.toolCallId !== toolCallId || incomingMeta?.toolCallId !== toolCallId) {
+    return false;
+  }
+
+  const existingTitle = (existingMeta?.title ?? existingItem.title ?? "").trim();
+  const incomingTitle = (incomingMeta?.title ?? incomingItem.title ?? "").trim();
+  if (!existingTitle || !incomingTitle) {
+    return true;
+  }
+  return existingTitle === incomingTitle;
+}
+
 function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
   const rows: TimelineTreeRow[] = [];
-  const activeRoots: Array<{ rootId: string; toolCallId: string | null }> = [];
+  const activeRoots: Array<{ rootId: string; toolCallId: string | null; rowIndex: number }> = [];
 
   for (const item of items) {
     const toolMeta = readToolMeta(item);
-    const activeRootId = activeRoots.at(-1)?.rootId ?? null;
+    const shouldHandleAsSubagent = Boolean(toolMeta && isSubagentToolTitle(toolMeta.title));
 
+    if (toolMeta?.toolCallId) {
+      const candidateSummary = buildSubagentSummaryFromChild(toolMeta.title);
+      if (candidateSummary) {
+        const matchedRoot = [...activeRoots].reverse().find((root) => root.toolCallId === toolMeta.toolCallId);
+        if (matchedRoot) {
+          const row = rows[matchedRoot.rowIndex];
+          if (row && !row.displayTitle) {
+            row.displayTitle = `${row.item.title || "Task"} · ${candidateSummary}`;
+          }
+        }
+      }
+    }
+
+    if (!shouldHandleAsSubagent) {
+      const activeRootId = activeRoots.at(-1)?.rootId ?? null;
+      rows.push({
+        item,
+        depth: activeRootId ? activeRoots.length : 0,
+        rootId: activeRootId,
+      });
+      continue;
+    }
+
+    const subagentToolMeta = toolMeta;
+    if (!subagentToolMeta) {
+      continue;
+    }
+
+    const isTerminal = isTerminalToolStatus(subagentToolMeta.status);
+
+    if (isTerminal) {
+      const closed = closeSubagentRoot(activeRoots, subagentToolMeta.toolCallId ?? null);
+      if (closed) {
+        continue;
+      }
+    }
+
+    const activeRootId = activeRoots.at(-1)?.rootId ?? null;
     rows.push({
       item,
       depth: activeRootId ? activeRoots.length : 0,
       rootId: activeRootId,
     });
 
-    if (!toolMeta || !isSubagentToolTitle(toolMeta.title)) {
-      continue;
-    }
-
-    if (!isTerminalToolStatus(toolMeta.status)) {
-      activeRoots.push({ rootId: item.id, toolCallId: toolMeta.toolCallId });
-      continue;
-    }
-
-    if (toolMeta.toolCallId) {
-      let index = -1;
-      for (let i = activeRoots.length - 1; i >= 0; i -= 1) {
-        if (activeRoots[i]?.toolCallId === toolMeta.toolCallId) {
-          index = i;
-          break;
-        }
-      }
-      if (index >= 0) {
-        activeRoots.splice(index, 1);
-        continue;
-      }
-    }
-
-    if (activeRoots.length > 0) {
-      activeRoots.pop();
+    if (!isTerminal) {
+      activeRoots.push({ rootId: item.id, toolCallId: subagentToolMeta.toolCallId, rowIndex: rows.length - 1 });
     }
   }
 
   return rows;
+}
+
+function closeSubagentRoot(activeRoots: Array<{ rootId: string; toolCallId: string | null; rowIndex: number }>, toolCallId: string | null) {
+  if (toolCallId) {
+    for (let i = activeRoots.length - 1; i >= 0; i -= 1) {
+      if (activeRoots[i]?.toolCallId === toolCallId) {
+        activeRoots.splice(i, 1);
+        return true;
+      }
+    }
+  }
+
+  if (activeRoots.length > 0) {
+    activeRoots.pop();
+    return true;
+  }
+
+  return false;
+}
+
+
+function buildSubagentSummaryFromChild(title: string | null) {
+  const normalized = (title ?? "").trim();
+  if (!normalized) {
+    return null;
+  }
+  if (isSubagentToolTitle(normalized)) {
+    return null;
+  }
+  if (/^工具\s+tool_/.test(normalized) || /^tool_/.test(normalized)) {
+    return null;
+  }
+  return normalized;
 }
 
 function countChildrenByRoot(rows: TimelineTreeRow[]) {
@@ -1485,11 +1594,16 @@ function isTerminalToolStatus(status: string | null) {
 
 function summarizeToolTitle(rawTitle: unknown, rawInput: unknown, rawToolCallId: unknown) {
   const title = typeof rawTitle === "string" ? rawTitle.trim() : "";
+  const record = asRecord(rawInput) ?? asRecord(tryParseJson(rawInput));
+  const subagentTitle = summarizeSubagentToolTitle(title, record);
+  if (subagentTitle) {
+    return subagentTitle;
+  }
+
   if (title && !/^工具\s+tool_/.test(title) && !/^tool_/.test(title)) {
     return title;
   }
 
-  const record = asRecord(rawInput);
   const command =
     typeof record?.command === "string"
       ? record.command
@@ -1515,6 +1629,43 @@ function summarizeToolTitle(rawTitle: unknown, rawInput: unknown, rawToolCallId:
     return title;
   }
   return typeof rawToolCallId === "string" ? `工具 ${rawToolCallId}` : "工具调用";
+}
+
+function summarizeSubagentToolTitle(title: string, record: Record<string, unknown> | null) {
+  if (!isSubagentToolTitle(title)) {
+    return null;
+  }
+  const preferred = readSubagentSummary(record);
+  if (!preferred) {
+    return title || "Task";
+  }
+  return `${title || "Task"} · ${preferred}`;
+}
+
+function readSubagentSummary(record: Record<string, unknown> | null): string | null {
+  if (!record) {
+    return null;
+  }
+
+  for (const key of ["title", "description"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  for (const key of ["rawInput", "input", "args", "payload", "params"]) {
+    if (!(key in record)) {
+      continue;
+    }
+    const nestedRecord = asRecord(record[key]) ?? asRecord(tryParseJson(record[key]));
+    const nested = readSubagentSummary(nestedRecord);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
 }
 
 function formatToolDetails(details: {
@@ -2413,6 +2564,7 @@ export const appTestables = {
   extractPlanPreview,
   extractChunkText,
   tryParseJson,
+  canMergeToolTimelineItem,
   buildTimelineTreeRows,
   countChildrenByRoot,
   isSubagentToolTitle,
