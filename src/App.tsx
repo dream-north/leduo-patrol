@@ -505,7 +505,7 @@ export default function App() {
   }, [accessKey]);
 
   useEffect(() => {
-    if (!terminalOpen || !config?.enableShell) {
+    if (!terminalOpen || !config?.enableShell || !activeSessionId) {
       return;
     }
     const container = terminalContainerRef.current;
@@ -547,7 +547,7 @@ export default function App() {
 
       const socket = socketRef.current;
       if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: "shell_start", payload: { cols: term.cols, rows: term.rows } }));
+        socket.send(JSON.stringify({ type: "shell_start", payload: { clientSessionId: activeSessionId, cols: term.cols, rows: term.rows } }));
       }
 
       term.onData((data: string) => {
@@ -583,7 +583,7 @@ export default function App() {
         sock.send(JSON.stringify({ type: "shell_stop" }));
       }
     };
-  }, [terminalOpen, config?.enableShell]);
+  }, [terminalOpen, config?.enableShell, activeSessionId]);
 
   function appendGlobalTimeline(item: TimelineItem) {
     setGlobalTimeline((current) => [...current, item]);
@@ -1733,7 +1733,7 @@ export default function App() {
               <span>终端</span>
             </button>
             <span className="terminal-drawer-note">
-              限制模式 · 工作目录：{config.workspacePath}
+              限制模式 · 工作目录：{activeSession?.workspacePath ?? config.workspacePath}
             </span>
           </div>
           {terminalOpen ? (
