@@ -232,6 +232,10 @@ export default function App() {
     [activeAvailableCommands, promptText],
   );
   const completionQuery = useMemo(() => extractPromptCommandQuery(promptText), [promptText]);
+  const completionSections = useMemo(
+    () => buildCompletionSections(commandCompletions, completionQuery),
+    [commandCompletions, completionQuery],
+  );
   const capabilityGroups = useMemo(
     () => groupAvailableCapabilities(activeAvailableCommands),
     [activeAvailableCommands],
@@ -1459,7 +1463,10 @@ export default function App() {
             <p className="composer-capability-summary">
               ACP 能力：tools {capabilityGroups.tools.length} · mcp {capabilityGroups.mcp.length} · skills {capabilityGroups.skills.length}
             </p>
-            <div className="composer-input-shell" ref={composerInputShellRef}>
+            <div
+              className={`composer-input-shell ${isCompletionOpen && commandCompletions.length > 0 ? "completion-open" : ""}`}
+              ref={composerInputShellRef}
+            >
             <textarea
               placeholder={activeSession?.busy ? "会话运行中，暂时不能发送新消息。" : "例如：分析这个目录的仓库结构，然后给我一个重构计划。"}
               value={promptText}
@@ -1510,22 +1517,27 @@ export default function App() {
             />
               {isCompletionOpen && commandCompletions.length > 0 ? (
                 <div className="composer-completions" role="listbox" aria-label="命令补全">
-                  {commandCompletions.map((command, index) => (
-                    <button
-                      key={command.name}
-                      type="button"
-                      className={`composer-completion-item ${index === commandSuggestionIndex ? "active" : ""}`}
-                      onMouseDown={(event) => {
-                        event.preventDefault();
-                        applyCommandSuggestion(command.name);
-                        setIsCompletionOpen(false);
-                      }}
-                    >
-                      <span>
-                        {renderCompletionLabel(command.name, completionQuery)}
-                      </span>
-                      <small>{command.description || "命令"}</small>
-                    </button>
+                  {completionSections.map((section) => (
+                    <div key={section.key} className="composer-completion-section">
+                      {section.title ? <p className="composer-completion-section-title">{section.title}</p> : null}
+                      {section.items.map(({ command, index }) => (
+                        <button
+                          key={command.name}
+                          type="button"
+                          className={`composer-completion-item ${index === commandSuggestionIndex ? "active" : ""}`}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            applyCommandSuggestion(command.name);
+                            setIsCompletionOpen(false);
+                          }}
+                        >
+                          <span>
+                            {renderCompletionLabel(command.name, completionQuery)}
+                          </span>
+                          <small>{command.description || "命令"}</small>
+                        </button>
+                      ))}
+                    </div>
                   ))}
                 </div>
               ) : null}
@@ -2189,6 +2201,29 @@ function renderCompletionLabel(commandName: string, query: string | null) {
       <span className="composer-completion-rest">{parts.rest}</span>
     </>
   );
+}
+
+function buildCompletionSections(commands: AvailableCommand[], query: string | null) {
+  const indexed = commands.map((command, index) => ({ command, index }));
+  if (query !== "/") {
+    return [{ key: "all", title: null, items: indexed }];
+  }
+
+  const groups = {
+    tools: indexed.filter((item) => classifyCommandKind(item.command.name) === "tools"),
+    mcp: indexed.filter((item) => classifyCommandKind(item.command.name) === "mcp"),
+    skills: indexed.filter((item) => classifyCommandKind(item.command.name) === "skills"),
+    other: indexed.filter((item) => classifyCommandKind(item.command.name) === "other"),
+  };
+
+  const sections = [
+    { key: "tools", title: "tools", items: groups.tools },
+    { key: "mcp", title: "mcp", items: groups.mcp },
+    { key: "skills", title: "skills", items: groups.skills },
+    { key: "other", title: "other", items: groups.other },
+  ].filter((section) => section.items.length > 0);
+
+  return sections.length > 0 ? sections : [{ key: "all", title: null, items: indexed }];
 }
 
 function parseToolTimelineEntries(body: string) {
@@ -3240,6 +3275,7 @@ export const appTestables = {
   applyPromptCommandCompletion,
   extractPromptCommandQuery,
   splitCompletionLabel,
+  buildCompletionSections,
   canMergeToolTimelineItem,
   buildTimelineTreeRows,
   countChildrenByRoot,
