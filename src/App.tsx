@@ -8,6 +8,7 @@ type AppConfig = {
   sshHost: string;
   sshPath: string;
   vscodeRemoteUri: string;
+  enableShell: boolean;
 };
 
 type SessionUpdate = {
@@ -148,7 +149,9 @@ type EventMessage =
   | { type: "permission_requested"; payload: PermissionPayload }
   | { type: "permission_resolved"; payload: { clientSessionId: string; requestId: string; optionId: string } }
   | { type: "session_closed"; payload: { clientSessionId: string } }
-  | { type: "error"; payload: { message: string; clientSessionId?: string } };
+  | { type: "error"; payload: { message: string; clientSessionId?: string } }
+  | { type: "shell_output"; payload: { data: string } }
+  | { type: "shell_exited"; payload: { exitCode: number } };
 
 const MODE_OPTIONS = [
   { id: "default", label: "Default" },
@@ -223,6 +226,7 @@ export default function App() {
   const [historyLoadingSessionId, setHistoryLoadingSessionId] = useState("");
   const [collapsedSubagentRoots, setCollapsedSubagentRoots] = useState<Record<string, boolean>>({});
   const [demoFixtures, setDemoFixtures] = useState<DemoFixtures | null>(null);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const demoPreset = useMemo(() => readDemoPresetFromUrl(), []);
   const socketRef = useRef<WebSocket | null>(null);
   const composerContainerRef = useRef<HTMLDivElement | null>(null);
@@ -230,6 +234,11 @@ export default function App() {
   const shouldStickToBottomRef = useRef(true);
   const notifiedPermissionRequestIdsRef = useRef<Record<string, true>>({});
   const notifiedCompletionIdsRef = useRef<Record<string, true>>({});
+  const terminalContainerRef = useRef<HTMLDivElement | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const xtermRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fitAddonRef = useRef<any>(null);
 
   const activeSession = sessions.find((session) => session.clientSessionId === activeSessionId) ?? null;
   const activeAvailableCommands = activeSession?.availableCommands ?? [];
@@ -494,6 +503,87 @@ export default function App() {
       }
     };
   }, [accessKey]);
+
+  useEffect(() => {
+    if (!terminalOpen || !config?.enableShell) {
+      return;
+    }
+    const container = terminalContainerRef.current;
+    if (!container) {
+      return;
+    }
+
+    let disposed = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let term: any = null;
+    let resizeObserver: ResizeObserver | null = null;
+
+    void Promise.all([
+      import("@xterm/xterm"),
+      import("@xterm/addon-fit"),
+    ]).then(([{ Terminal }, { FitAddon }]) => {
+      if (disposed) return;
+
+      term = new Terminal({
+        theme: {
+          background: "#1a1a1a",
+          foreground: "#e8e8e8",
+          cursor: "#d85b34",
+          selectionBackground: "rgba(216, 91, 52, 0.3)",
+        },
+        fontFamily: '"IBM Plex Mono", "SFMono-Regular", monospace',
+        fontSize: 13,
+        cursorBlink: true,
+        allowTransparency: false,
+        scrollback: 1000,
+      });
+      const fitAddon = new FitAddon();
+      term.loadAddon(fitAddon);
+      term.open(container);
+      fitAddon.fit();
+
+      xtermRef.current = term;
+      fitAddonRef.current = fitAddon;
+
+      const socket = socketRef.current;
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "shell_start", payload: { cols: term.cols, rows: term.rows } }));
+      }
+
+      term.onData((data: string) => {
+        const sock = socketRef.current;
+        if (sock && sock.readyState === WebSocket.OPEN) {
+          sock.send(JSON.stringify({ type: "shell_input", payload: { data } }));
+        }
+      });
+
+      term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
+        const sock = socketRef.current;
+        if (sock && sock.readyState === WebSocket.OPEN) {
+          sock.send(JSON.stringify({ type: "shell_resize", payload: { cols, rows } }));
+        }
+      });
+
+      resizeObserver = new ResizeObserver(() => {
+        fitAddon.fit();
+      });
+      resizeObserver.observe(container);
+    });
+
+    return () => {
+      disposed = true;
+      resizeObserver?.disconnect();
+      if (term) {
+        term.dispose();
+      }
+      xtermRef.current = null;
+      fitAddonRef.current = null;
+      const sock = socketRef.current;
+      if (sock && sock.readyState === WebSocket.OPEN) {
+        sock.send(JSON.stringify({ type: "shell_stop" }));
+      }
+    };
+  }, [terminalOpen, config?.enableShell]);
 
   function appendGlobalTimeline(item: TimelineItem) {
     setGlobalTimeline((current) => [...current, item]);
@@ -823,6 +913,12 @@ export default function App() {
           title: "错误",
           body: message.payload.message,
         });
+        break;
+      case "shell_output":
+        xtermRef.current?.write(message.payload.data);
+        break;
+      case "shell_exited":
+        xtermRef.current?.write(`\r\n\x1b[33m[终端已退出，退出码 ${message.payload.exitCode}]\x1b[0m\r\n`);
         break;
     }
   }
@@ -1621,6 +1717,29 @@ export default function App() {
           onClose={() => setSessionDiffOpen(false)}
           onRefresh={openSessionDiff}
         />
+      ) : null}
+
+      {config?.enableShell ? (
+        <div className={`terminal-drawer ${terminalOpen ? "terminal-drawer-open" : ""}`}>
+          <div className="terminal-drawer-header">
+            <button
+              className="terminal-drawer-toggle"
+              type="button"
+              onClick={() => setTerminalOpen((v) => !v)}
+              aria-expanded={terminalOpen}
+              title={terminalOpen ? "收起终端" : "展开终端"}
+            >
+              <span className="terminal-drawer-icon" aria-hidden="true">{terminalOpen ? "▼" : "▲"}</span>
+              <span>终端</span>
+            </button>
+            <span className="terminal-drawer-note">
+              限制模式 · 工作目录：{config.workspacePath}
+            </span>
+          </div>
+          {terminalOpen ? (
+            <div className="terminal-viewport" ref={terminalContainerRef} />
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
