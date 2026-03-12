@@ -1721,7 +1721,7 @@ export default function App() {
                       title="移除图片"
                       onClick={() => setPendingImages((prev) => prev.filter((i) => i.id !== img.id))}
                     >
-                      ×
+                      移除
                     </button>
                   </div>
                 ))}

@@ -827,27 +827,24 @@ h1 {
 }
 
 .composer-image-preview-remove {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  border: 1px solid rgba(58, 45, 33, 0.2);
-  background: rgba(58, 45, 33, 0.06);
-  color: rgba(58, 45, 33, 0.65);
-  font-size: 14px;
-  line-height: 1;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
   flex-shrink: 0;
-  transition: background 0.12s, color 0.12s;
+  flex-grow: 0;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(58, 45, 33, 0.25);
+  background: transparent;
+  color: rgba(58, 45, 33, 0.6);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
 
 .composer-image-preview-remove:hover {
-  background: rgba(200, 55, 20, 0.12);
-  color: rgba(200, 55, 20, 0.9);
-  border-color: rgba(200, 55, 20, 0.3);
+  background: rgba(200, 55, 20, 0.08);
+  color: rgba(200, 55, 20, 0.85);
+  border-color: rgba(200, 55, 20, 0.35);
 }
 
 .composer-pending-queue-images {
