@@ -321,6 +321,31 @@ test("app summarizeToolTitle reads subagent description from stringified rawInpu
   assert.equal(appTestables.summarizeToolTitle("Task", rawInput, "tc-2"), "Task · 探索当前代码库结构");
 });
 
+test("app available command helpers normalize group and complete", () => {
+  const normalized = appTestables.normalizeAvailableCommands([
+    { name: " mcp.list ", description: "list mcp" },
+    { name: "/skill.search", description: "search skill" },
+    { command: "tool.run", title: "run tool" },
+    { name: "/tool.run", description: "duplicate" },
+    { name: "", description: "invalid" },
+  ]);
+
+  assert.deepEqual(normalized.map((item) => item.name), ["/mcp.list", "/skill.search", "/tool.run"]);
+  assert.equal(appTestables.classifyCommandKind("/mcp.list"), "mcp");
+  assert.equal(appTestables.classifyCommandKind("/skill.search"), "skills");
+  assert.equal(appTestables.classifyCommandKind("/tool.run"), "tools");
+
+  const groups = appTestables.groupAvailableCapabilities(normalized);
+  assert.equal(groups.mcp.length, 1);
+  assert.equal(groups.skills.length, 1);
+  assert.equal(groups.tools.length, 1);
+
+  const completions = appTestables.getPromptCommandCompletions("请执行 /to", normalized);
+  assert.deepEqual(completions.map((item) => item.name), ["/tool.run"]);
+  assert.equal(appTestables.extractPromptCommandQuery("/mc"), "/mc");
+  assert.equal(appTestables.applyPromptCommandCompletion("先试试 /to", "/tool.run"), "先试试 /tool.run ");
+});
+
 test("app applyDemoPreset injects demo session for subagent tree preview", () => {
   const fixtures = appTestables.buildDemoFixtures("/repo", "subagent-tree");
   const sessions = appTestables.applyDemoPreset([], fixtures);

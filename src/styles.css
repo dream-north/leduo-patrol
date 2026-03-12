@@ -575,6 +575,65 @@ h1 {
   line-height: 1.4;
 }
 
+.composer-capability-summary {
+  margin: 6px 0 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.composer-input-shell {
+  position: relative;
+}
+
+.composer-completions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 8px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 168px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.96);
+  padding: 6px;
+  box-shadow: 0 10px 26px rgba(20, 18, 15, 0.12);
+}
+
+.composer-completion-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text);
+  text-align: left;
+}
+
+.composer-completion-item span {
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-size: 11px;
+}
+
+.composer-completion-item small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: right;
+}
+
+.composer-completion-item.active {
+  border-color: rgba(216, 91, 52, 0.4);
+  background: rgba(216, 91, 52, 0.12);
+}
+
 .composer button {
   margin-top: 8px;
   width: 100%;

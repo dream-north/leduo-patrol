@@ -78,6 +78,7 @@ test("SessionManager.getSessionHistory returns bounded page", () => {
       historyTotal: 0,
       historyStart: 0,
       permissions: [],
+      availableCommands: [],
       updatedAt: new Date().toISOString(),
     },
     acpSession: null,
@@ -114,6 +115,7 @@ test("SessionManager.setSessionMode updates default and current mode together", 
       historyTotal: 0,
       historyStart: 0,
       permissions: [],
+      availableCommands: [],
       updatedAt: new Date().toISOString(),
     },
     acpSession: {
@@ -149,4 +151,17 @@ test("sessionManagerTestables.enrichPromptWithToolHints appends routing hint onc
 
   const untouched = sessionManagerTestables.enrichPromptWithToolHints("请使用 mcp_acp_Read 读取文件");
   assert.equal(untouched, "请使用 mcp_acp_Read 读取文件");
+});
+
+test("sessionManagerTestables.normalizeAvailableCommandsSnapshot keeps slash names", () => {
+  const normalized = sessionManagerTestables.normalizeAvailableCommandsSnapshot([
+    { name: "help", description: "h" },
+    { command: "mcp.list", title: "list" },
+    "/help",
+  ]);
+
+  assert.deepEqual(
+    normalized.map((item: { name: string }) => item.name),
+    ["/help", "/mcp.list"],
+  );
 });

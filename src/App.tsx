@@ -15,6 +15,12 @@ type SessionUpdate = {
   [key: string]: unknown;
 };
 
+type AvailableCommand = {
+  name: string;
+  description: string;
+  inputType: "unstructured";
+};
+
 type TimelineItem = {
   id: string;
   kind: "system" | "user" | "agent" | "thought" | "tool" | "plan" | "error";
@@ -51,6 +57,7 @@ type SessionRecord = {
   historyTotal: number;
   historyStart: number;
   permissions: PermissionPayload[];
+  availableCommands?: AvailableCommand[];
   updatedAt: string;
 };
 
@@ -189,6 +196,7 @@ export default function App() {
   const [sidebarTab, setSidebarTab] = useState<"sessions" | "create">("sessions");
   const [connectionState, setConnectionState] = useState("connecting");
   const [promptText, setPromptText] = useState("");
+  const [commandSuggestionIndex, setCommandSuggestionIndex] = useState(0);
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");
   const [directoryBrowserPath, setDirectoryBrowserPath] = useState("");
@@ -216,6 +224,15 @@ export default function App() {
   const notifiedCompletionIdsRef = useRef<Record<string, true>>({});
 
   const activeSession = sessions.find((session) => session.clientSessionId === activeSessionId) ?? null;
+  const activeAvailableCommands = activeSession?.availableCommands ?? [];
+  const commandCompletions = useMemo(
+    () => getPromptCommandCompletions(promptText, activeAvailableCommands),
+    [activeAvailableCommands, promptText],
+  );
+  const capabilityGroups = useMemo(
+    () => groupAvailableCapabilities(activeAvailableCommands),
+    [activeAvailableCommands],
+  );
   const activeSessionHasPendingPermission = Boolean(activeSession && activeSession.permissions.length > 0);
   const activeSessionModeOptions =
     activeSession?.modes.length && activeSession.modes.length > 0
@@ -251,6 +268,10 @@ export default function App() {
       setSidebarTab("sessions");
     }
   }, [activeSessionId, sessions.length]);
+
+  useEffect(() => {
+    setCommandSuggestionIndex(0);
+  }, [activeSessionId, promptText, commandCompletions.length]);
 
   useEffect(() => {
     setCollapsedSubagentRoots((current) => {
@@ -622,6 +643,7 @@ export default function App() {
               historyTotal: 0,
               historyStart: 0,
               permissions: [],
+              availableCommands: [],
               updatedAt: new Date().toISOString(),
             }),
           ];
@@ -773,6 +795,16 @@ export default function App() {
 
   function consumeSessionUpdate(clientSessionId: string, update: SessionUpdate) {
     switch (update.sessionUpdate) {
+      case "available_commands_update": {
+        const nextCommands = normalizeAvailableCommands(
+          update.availableCommands ?? update.supportedCommands ?? update.commands,
+        );
+        updateSession(clientSessionId, (session) => ({
+          ...session,
+          availableCommands: nextCommands,
+        }));
+        break;
+      }
       case "agent_message_chunk": {
         const chunkText = extractChunkText(update.content);
         if (chunkText) {
@@ -861,6 +893,10 @@ export default function App() {
       return;
     }
     setPromptText("");
+  }
+
+  function applyCommandSuggestion(commandName: string) {
+    setPromptText((current) => applyPromptCommandCompletion(current, commandName));
   }
 
   function cancelActiveSession() {
@@ -1394,6 +1430,10 @@ export default function App() {
                 ))}
               </select>
             </div>
+            <p className="composer-capability-summary">
+              ACP 能力：tools {capabilityGroups.tools.length} · mcp {capabilityGroups.mcp.length} · skills {capabilityGroups.skills.length}
+            </p>
+            <div className="composer-input-shell">
             <textarea
               placeholder={activeSession?.busy ? "会话运行中，暂时不能发送新消息。" : "例如：分析这个目录的仓库结构，然后给我一个重构计划。"}
               value={promptText}
@@ -1402,9 +1442,49 @@ export default function App() {
               onKeyDown={(event) => {
                 if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
                   submitPrompt();
+                  return;
+                }
+                if (commandCompletions.length < 1) {
+                  return;
+                }
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setCommandSuggestionIndex((current) => (current + 1) % commandCompletions.length);
+                  return;
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setCommandSuggestionIndex((current) => (current - 1 + commandCompletions.length) % commandCompletions.length);
+                  return;
+                }
+                if (event.key === "Tab") {
+                  event.preventDefault();
+                  const selected = commandCompletions[commandSuggestionIndex] ?? commandCompletions[0];
+                  if (selected) {
+                    applyCommandSuggestion(selected.name);
+                  }
                 }
               }}
             />
+              {commandCompletions.length > 0 ? (
+                <div className="composer-completions" role="listbox" aria-label="命令补全">
+                  {commandCompletions.map((command, index) => (
+                    <button
+                      key={command.name}
+                      type="button"
+                      className={`composer-completion-item ${index === commandSuggestionIndex ? "active" : ""}`}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        applyCommandSuggestion(command.name);
+                      }}
+                    >
+                      <span>{command.name}</span>
+                      <small>{command.description || "命令"}</small>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
             <div className="composer-actions">
               <button className="primary" onClick={submitPrompt} disabled={!promptText.trim() || !activeSession || activeSession.busy}>
                 发送到当前会话
@@ -1917,6 +1997,123 @@ function resolveToolDisplayTitle(entries: unknown[], fallbackTitle: string) {
   return fallbackTitle;
 }
 
+function normalizeAvailableCommands(rawValue: unknown): AvailableCommand[] {
+  if (!Array.isArray(rawValue)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const normalized: AvailableCommand[] = [];
+
+  for (const item of rawValue) {
+    const record = asRecord(item);
+    const rawName =
+      typeof item === "string"
+        ? item.trim()
+        : typeof record?.name === "string"
+          ? record.name.trim()
+          : typeof record?.command === "string"
+            ? record.command.trim()
+            : "";
+    const name = normalizeCommandName(rawName);
+    if (!name || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    normalized.push({
+      name,
+      description:
+        typeof record?.description === "string"
+          ? record.description.trim()
+          : typeof record?.title === "string"
+            ? record.title.trim()
+            : "",
+      inputType: "unstructured",
+    });
+  }
+
+  return normalized.sort((left, right) => left.name.localeCompare(right.name, "zh-Hans-CN"));
+}
+
+function normalizeCommandName(rawName: string) {
+  const trimmed = rawName.trim();
+  if (!trimmed) {
+    return "";
+  }
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+}
+
+function classifyCommandKind(commandName: string): "tools" | "mcp" | "skills" | "other" {
+  const normalized = commandName.toLowerCase();
+  if (normalized.includes("mcp")) {
+    return "mcp";
+  }
+  if (normalized.includes("skill")) {
+    return "skills";
+  }
+  if (normalized.startsWith("/")) {
+    return "tools";
+  }
+  return "other";
+}
+
+function groupAvailableCapabilities(commands: AvailableCommand[]) {
+  const groups: {
+    tools: AvailableCommand[];
+    mcp: AvailableCommand[];
+    skills: AvailableCommand[];
+    other: AvailableCommand[];
+  } = {
+    tools: [],
+    mcp: [],
+    skills: [],
+    other: [],
+  };
+
+  for (const command of commands) {
+    groups[classifyCommandKind(command.name)].push(command);
+  }
+
+  return groups;
+}
+
+function getPromptCommandCompletions(prompt: string, commands: AvailableCommand[]) {
+  const query = extractPromptCommandQuery(prompt);
+  if (!query) {
+    return [];
+  }
+  const normalizedQuery = query.toLowerCase();
+  return commands
+    .filter((command) => command.name.toLowerCase().startsWith(normalizedQuery))
+    .slice(0, 8);
+}
+
+function extractPromptCommandQuery(prompt: string) {
+  const match = prompt.match(/(^|\s)(\/[^\s]*)$/);
+  if (!match) {
+    return null;
+  }
+  return match[2] ?? null;
+}
+
+function applyPromptCommandCompletion(prompt: string, commandName: string) {
+  const trimmedName = commandName.trim();
+  if (!trimmedName) {
+    return prompt;
+  }
+  if (!prompt.trim()) {
+    return `${trimmedName} `;
+  }
+
+  const replaced = prompt.replace(/(^|\s)\/[^\s]*$/, (_match, prefix: string) => `${prefix}${trimmedName} `);
+  if (replaced !== prompt) {
+    return replaced;
+  }
+
+  const suffix = prompt.endsWith(" ") || prompt.endsWith("\n") ? "" : " ";
+  return `${prompt}${suffix}${trimmedName} `;
+}
+
 function parseToolTimelineEntries(body: string) {
   const parsed = tryParseJson(body);
   if (Array.isArray(parsed)) {
@@ -2112,6 +2309,7 @@ function normalizeSessionRecord(session: SessionRecord): SessionRecord {
     timeline: normalizeMergedTimeline(session.timeline.map(normalizeTimelineItem)),
     historyTotal: total,
     historyStart: start,
+    availableCommands: normalizeAvailableCommands(session.availableCommands),
   };
 }
 
@@ -2958,6 +3156,12 @@ export const appTestables = {
   extractPlanPreview,
   extractChunkText,
   tryParseJson,
+  normalizeAvailableCommands,
+  classifyCommandKind,
+  groupAvailableCapabilities,
+  getPromptCommandCompletions,
+  applyPromptCommandCompletion,
+  extractPromptCommandQuery,
   canMergeToolTimelineItem,
   buildTimelineTreeRows,
   countChildrenByRoot,

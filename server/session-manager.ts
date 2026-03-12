@@ -19,6 +19,12 @@ export type PermissionSnapshot = {
   options: Array<{ optionId: string; name: string; kind: string }>;
 };
 
+export type AvailableCommandSnapshot = {
+  name: string;
+  description: string;
+  inputType: "unstructured";
+};
+
 export type SessionSnapshot = {
   clientSessionId: string;
   title: string;
@@ -33,12 +39,13 @@ export type SessionSnapshot = {
   historyTotal: number;
   historyStart: number;
   permissions: PermissionSnapshot[];
+  availableCommands: AvailableCommandSnapshot[];
   updatedAt: string;
 };
 
 type PersistedSession = Pick<
   SessionSnapshot,
-  "clientSessionId" | "title" | "workspacePath" | "sessionId" | "defaultModeId" | "currentModeId" | "updatedAt"
+  "clientSessionId" | "title" | "workspacePath" | "sessionId" | "defaultModeId" | "currentModeId" | "availableCommands" | "updatedAt"
 >;
 
 export type SocketEvent =
@@ -119,6 +126,7 @@ export class SessionManager {
         historyTotal: 0,
         historyStart: 0,
         permissions: [],
+        availableCommands: normalizeAvailableCommandsSnapshot(snapshot.availableCommands),
       };
       this.sessions.set(restoredSnapshot.clientSessionId, {
         snapshot: restoredSnapshot,
@@ -201,6 +209,7 @@ export class SessionManager {
       historyTotal: 0,
       historyStart: 0,
       permissions: [],
+      availableCommands: [],
       updatedAt: new Date().toISOString(),
     };
 
@@ -465,6 +474,11 @@ export class SessionManager {
   ) {
     const snapshot = entry.snapshot;
     switch (update.sessionUpdate) {
+      case "available_commands_update":
+        snapshot.availableCommands = normalizeAvailableCommandsSnapshot(
+          update.availableCommands ?? (update as Record<string, unknown>).supportedCommands ?? (update as Record<string, unknown>).commands,
+        );
+        break;
       case "agent_message_chunk": {
         const chunkText = extractChunkText(update.content);
         if (chunkText) {
@@ -586,6 +600,7 @@ export class SessionManager {
       sessionId: session.sessionId,
       defaultModeId: session.defaultModeId,
       currentModeId: session.currentModeId,
+      availableCommands: normalizeAvailableCommandsSnapshot(session.availableCommands),
       updatedAt: session.updatedAt,
     }));
     await mkdir(path.dirname(this.stateFilePath), { recursive: true });
@@ -845,6 +860,60 @@ function extractChunkText(content: unknown): string | null {
   return null;
 }
 
+function normalizeAvailableCommandsSnapshot(rawValue: unknown): AvailableCommandSnapshot[] {
+  if (!Array.isArray(rawValue)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const normalized: AvailableCommandSnapshot[] = [];
+
+  for (const item of rawValue) {
+    if (typeof item === "string") {
+      const name = normalizeCommandName(item);
+      if (!name || seen.has(name)) {
+        continue;
+      }
+      seen.add(name);
+      normalized.push({ name, description: "", inputType: "unstructured" });
+      continue;
+    }
+
+    const record = asRecord(item);
+    const rawName =
+      typeof record?.name === "string"
+        ? record.name
+        : typeof record?.command === "string"
+          ? record.command
+          : "";
+    const name = normalizeCommandName(rawName);
+    if (!name || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    normalized.push({
+      name,
+      description:
+        typeof record?.description === "string"
+          ? record.description.trim()
+          : typeof record?.title === "string"
+            ? record.title.trim()
+            : "",
+      inputType: "unstructured",
+    });
+  }
+
+  return normalized.sort((left, right) => left.name.localeCompare(right.name, "zh-Hans-CN"));
+}
+
+function normalizeCommandName(rawName: string) {
+  const trimmed = rawName.trim();
+  if (!trimmed) {
+    return "";
+  }
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+}
+
 
 export const sessionManagerTestables = {
   stringifyMaybe,
@@ -852,6 +921,7 @@ export const sessionManagerTestables = {
   summarizeToolTitle,
   asRecord,
   extractChunkText,
+  normalizeAvailableCommandsSnapshot,
   enrichPromptWithToolHints,
   labelForMode,
   formatError,
