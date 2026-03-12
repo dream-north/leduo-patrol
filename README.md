@@ -4,17 +4,51 @@
 
 ## Showcase
 
-| 整体控制台布局 | 侧边栏：会话切换与新建 |
-|:---:|:---:|
-| ![整体控制台布局](docs/screenshots/01-overview.png) | ![侧边栏](docs/screenshots/11-sidebar-full.png) |
+### Walkthrough
 
-| 当前会话 tab（激活态） | + 新建会话 tab |
-|:---:|:---:|
-| ![当前会话 tab](docs/screenshots/02-sessions-tab-active.png) | ![新建会话表单](docs/screenshots/03-create-tab.png) |
+**1. 进入控制台：整体布局**
 
-| tab 对比（激活 vs 非激活） | 时间线（SubAgent 展开） |
-|:---:|:---:|
-| ![tab 对比](docs/screenshots/04-tabs-compare-sessions.png) | ![时间线](docs/screenshots/08-timeline-expanded.png) |
+![整体控制台布局](docs/screenshots/01-overview.png)
+
+**2. 当前会话 tab（激活态）**
+
+![当前会话 tab（激活态）](docs/screenshots/02-sessions-tab-active.png)
+
+**3. 切换到新建会话 tab**
+
+![新建会话 tab](docs/screenshots/03-create-tab.png)
+
+**4. 对比两个 tab 状态（session）**
+
+![tab 对比（session）](docs/screenshots/04-tabs-compare-sessions.png)
+
+**5. 对比两个 tab 状态（create）**
+
+![tab 对比（create）](docs/screenshots/05-tabs-compare-create.png)
+
+**6. 选择会话卡片**
+
+![会话卡片选中态](docs/screenshots/06-session-chip-active.png)
+
+**7. 查看新建会话表单**
+
+![新建会话表单](docs/screenshots/07-create-form.png)
+
+**8. 时间线（SubAgent）展开态**
+
+![时间线 SubAgent 树（展开）](docs/screenshots/08-timeline-expanded.png)
+
+**9. 时间线（SubAgent）折叠态**
+
+![时间线 SubAgent 树（折叠）](docs/screenshots/09-timeline-collapsed.png)
+
+**10. 右侧审批 + 状态面板**
+
+![右侧审批 + 状态面板](docs/screenshots/10-approvals-panel.png)
+
+**11. 侧边栏完整视图**
+
+![侧边栏完整视图](docs/screenshots/11-sidebar-full.png)
 
 ## 功能列表
 
