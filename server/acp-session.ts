@@ -251,6 +251,8 @@ export class ClaudeAcpSession {
     this.onEvent({ type: "prompt_started", payload: { promptId, text } });
 
     try {
+      // Images first, then text — mirrors the convention used by Claude's own clients
+      // (vision context before the instruction yields better results).
       const promptContent: schema.ContentBlock[] = [];
       if (images && images.length > 0) {
         for (const img of images) {
