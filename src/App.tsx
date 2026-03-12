@@ -64,6 +64,12 @@ type SessionRecord = {
   updatedAt: string;
 };
 
+type PendingImage = {
+  id: string;
+  dataUrl: string;
+  mimeType: string;
+};
+
 type SessionSidebarStatusTone = "pending" | "running" | "completed" | "error" | "connecting";
 
 type SessionSidebarStatus = {
@@ -237,7 +243,8 @@ export default function App() {
   const [collapsedSubagentRoots, setCollapsedSubagentRoots] = useState<Record<string, boolean>>({});
   const [demoFixtures, setDemoFixtures] = useState<DemoFixtures | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(false);
-  const [pendingQueue, setPendingQueue] = useState<Array<{ id: string; text: string }>>([]);
+  const [pendingQueue, setPendingQueue] = useState<Array<{ id: string; text: string; images?: Array<{ data: string; mimeType: string }> }>>([]);
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);;
   const demoPreset = useMemo(() => readDemoPresetFromUrl(), []);
   const socketRef = useRef<WebSocket | null>(null);
   const pendingQueueRef = useRef(pendingQueue);
@@ -313,6 +320,7 @@ export default function App() {
 
   useEffect(() => {
     setPendingQueue([]);
+    setPendingImages([]);
   }, [activeSessionId]);
 
   useEffect(() => {
@@ -323,6 +331,7 @@ export default function App() {
         payload: {
           clientSessionId: activeSession.clientSessionId,
           text: first.text,
+          images: first.images,
         },
       });
       if (sent) {
@@ -1072,12 +1081,20 @@ export default function App() {
 
   function submitPrompt() {
     const text = promptText.trim();
-    if (!text || !activeSession) {
+    if (!text && pendingImages.length === 0) {
       return;
     }
+    if (!activeSession) {
+      return;
+    }
+    const images = pendingImages.map((img) => ({
+      data: img.dataUrl.split(",")[1] ?? "",
+      mimeType: img.mimeType,
+    }));
     if (isSessionRunning(activeSession)) {
-      setPendingQueue((q) => [...q, { id: makeId(), text }]);
+      setPendingQueue((q) => [...q, { id: makeId(), text, images: images.length > 0 ? images : undefined }]);
       setPromptText("");
+      setPendingImages([]);
       return;
     }
     if (
@@ -1086,12 +1103,14 @@ export default function App() {
         payload: {
           clientSessionId: activeSession.clientSessionId,
           text,
+          images: images.length > 0 ? images : undefined,
         },
       })
     ) {
       return;
     }
     setPromptText("");
+    setPendingImages([]);
   }
 
   function applyCommandSuggestion(commandName: string) {
@@ -1649,6 +1668,18 @@ export default function App() {
                 <div className="composer-pending-queue-list">
                   {pendingQueue.map((item) => (
                     <div key={item.id} className="composer-pending-queue-item">
+                      {item.images && item.images.length > 0 ? (
+                        <div className="composer-pending-queue-images">
+                          {item.images.map((img, idx) => (
+                            <img
+                              key={idx}
+                              src={`data:${img.mimeType};base64,${img.data}`}
+                              alt="图片"
+                              className="composer-pending-queue-img"
+                            />
+                          ))}
+                        </div>
+                      ) : null}
                       <p className="composer-pending-queue-text">{item.text}</p>
                       <div className="composer-pending-queue-actions">
                         <button
@@ -1674,6 +1705,23 @@ export default function App() {
               </div>
             ) : null}
             <div className="composer-input-shell">
+            {pendingImages.length > 0 ? (
+              <div className="composer-image-previews">
+                {pendingImages.map((img) => (
+                  <div key={img.id} className="composer-image-preview">
+                    <img src={img.dataUrl} alt="待发送图片" />
+                    <button
+                      type="button"
+                      className="composer-image-preview-remove"
+                      title="移除图片"
+                      onClick={() => setPendingImages((prev) => prev.filter((i) => i.id !== img.id))}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <textarea
               placeholder={activeSessionIsRunning ? "输入消息，将加入待发送队列…" : "例如：分析这个目录的仓库结构，然后给我一个重构计划。"}
               value={promptText}
@@ -1686,6 +1734,25 @@ export default function App() {
                 const nextValue = event.target.value;
                 setPromptText(nextValue);
                 setIsCompletionOpen(Boolean(extractPromptCommandQuery(nextValue)));
+              }}
+              onPaste={(event) => {
+                const items = event.clipboardData?.items;
+                if (!items) return;
+                const imageItems = Array.from(items).filter((item) => item.type.startsWith("image/"));
+                if (imageItems.length === 0) return;
+                event.preventDefault();
+                for (const item of imageItems) {
+                  const blob = item.getAsFile();
+                  if (!blob) continue;
+                  const mimeType = item.type;
+                  const reader = new FileReader();
+                  reader.onload = (e) => {
+                    const dataUrl = e.target?.result;
+                    if (typeof dataUrl !== "string") return;
+                    setPendingImages((prev) => [...prev, { id: makeId(), dataUrl, mimeType }]);
+                  };
+                  reader.readAsDataURL(blob);
+                }
               }}
               onKeyDown={(event) => {
                 if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -1723,7 +1790,7 @@ export default function App() {
             />
             </div>
             <div className="composer-actions">
-              <button className="primary" onClick={submitPrompt} disabled={!promptText.trim() || !activeSession}>
+              <button className="primary" onClick={submitPrompt} disabled={(!promptText.trim() && pendingImages.length === 0) || !activeSession}>
                 {activeSessionIsRunning ? "加入队列" : "发送到当前会话"}
               </button>
               <button className="secondary composer-cancel" onClick={cancelActiveSession} disabled={!activeSessionIsRunning}>

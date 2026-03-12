@@ -765,6 +765,68 @@ h1 {
   position: relative;
 }
 
+.composer-image-previews {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 0 4px;
+}
+
+.composer-image-preview {
+  position: relative;
+  display: inline-flex;
+}
+
+.composer-image-preview img {
+  display: block;
+  max-width: 80px;
+  max-height: 80px;
+  border-radius: 6px;
+  border: 1px solid rgba(58, 45, 33, 0.16);
+  object-fit: cover;
+}
+
+.composer-image-preview-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid rgba(58, 45, 33, 0.2);
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.12s, color 0.12s;
+}
+
+.composer-image-preview-remove:hover {
+  background: rgba(216, 91, 52, 0.1);
+  color: var(--brand-dark);
+}
+
+.composer-pending-queue-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.composer-pending-queue-img {
+  display: block;
+  max-width: 48px;
+  max-height: 48px;
+  border-radius: 4px;
+  border: 1px solid rgba(58, 45, 33, 0.16);
+  object-fit: cover;
+}
+
 .composer-completions {
   margin: 0 0 8px;
   display: flex;
