@@ -21,7 +21,7 @@ type ClientCommand =
   | { type: "cancel"; payload: { clientSessionId: string } }
   | { type: "permission"; payload: { clientSessionId: string; requestId: string; optionId: string; note?: string } }
   | { type: "close_session"; payload: { clientSessionId: string } }
-  | { type: "shell_start"; payload: { cols: number; rows: number } }
+  | { type: "shell_start"; payload: { clientSessionId: string; cols: number; rows: number } }
   | { type: "shell_input"; payload: { data: string } }
   | { type: "shell_resize"; payload: { cols: number; rows: number } }
   | { type: "shell_stop" };
@@ -46,7 +46,7 @@ const devWebPort = Number(process.env.LEDUO_PATROL_WEB_PORT ?? 5173);
 const isDevServer = process.env.npm_lifecycle_event === "dev:server";
 const agentBinPath = resolveAgentBinPath();
 const accessKey = process.env.LEDUO_PATROL_ACCESS_KEY?.trim() || createAccessKey();
-const enableShell = process.env.ENABLE_SHELL === "true";
+const enableShell = process.env.LEDUO_ENABLE_SHELL === "true";
 
 const app = express();
 const server = createServer(app);
@@ -260,13 +260,14 @@ wss.on("connection", (socket, request) => {
           break;
         case "shell_start": {
           if (!enableShell) {
-            throw new Error("Shell feature is disabled. Set ENABLE_SHELL=true to enable it.");
+            throw new Error("Shell feature is disabled. Set LEDUO_ENABLE_SHELL=true to enable it.");
           }
           shellSession?.kill();
           shellSession = null;
           const cols = Math.max(2, message.payload.cols);
           const rows = Math.max(2, message.payload.rows);
-          const newShell = new ShellSession(defaultWorkspacePath, cols, rows);
+          const shellWorkspacePath = sessionManager.getSessionWorkspacePath(message.payload.clientSessionId);
+          const newShell = new ShellSession(shellWorkspacePath, cols, rows);
           shellSession = newShell;
           newShell.on("output", (data: string) => {
             if (socket.readyState === WebSocket.OPEN) {
