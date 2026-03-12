@@ -244,7 +244,7 @@ export default function App() {
   const [demoFixtures, setDemoFixtures] = useState<DemoFixtures | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [pendingQueue, setPendingQueue] = useState<Array<{ id: string; text: string; images?: Array<{ data: string; mimeType: string }> }>>([]);
-  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);;
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const demoPreset = useMemo(() => readDemoPresetFromUrl(), []);
   const socketRef = useRef<WebSocket | null>(null);
   const pendingQueueRef = useRef(pendingQueue);
@@ -1081,16 +1081,14 @@ export default function App() {
 
   function submitPrompt() {
     const text = promptText.trim();
-    if (!text && pendingImages.length === 0) {
+    if ((!text && pendingImages.length === 0) || !activeSession) {
       return;
     }
-    if (!activeSession) {
-      return;
-    }
-    const images = pendingImages.map((img) => ({
-      data: img.dataUrl.split(",")[1] ?? "",
-      mimeType: img.mimeType,
-    }));
+    const images = pendingImages.flatMap((img) => {
+      const commaIndex = img.dataUrl.indexOf(",");
+      if (commaIndex === -1) return [];
+      return [{ data: img.dataUrl.slice(commaIndex + 1), mimeType: img.mimeType }];
+    });
     if (isSessionRunning(activeSession)) {
       setPendingQueue((q) => [...q, { id: makeId(), text, images: images.length > 0 ? images : undefined }]);
       setPromptText("");
@@ -1674,7 +1672,7 @@ export default function App() {
                             <img
                               key={idx}
                               src={`data:${img.mimeType};base64,${img.data}`}
-                              alt="图片"
+                              alt={`图片 ${idx + 1}`}
                               className="composer-pending-queue-img"
                             />
                           ))}
@@ -1707,9 +1705,9 @@ export default function App() {
             <div className="composer-input-shell">
             {pendingImages.length > 0 ? (
               <div className="composer-image-previews">
-                {pendingImages.map((img) => (
+                {pendingImages.map((img, index) => (
                   <div key={img.id} className="composer-image-preview">
-                    <img src={img.dataUrl} alt="待发送图片" />
+                    <img src={img.dataUrl} alt={`待发送图片 ${index + 1}`} />
                     <button
                       type="button"
                       className="composer-image-preview-remove"
