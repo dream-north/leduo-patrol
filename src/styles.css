@@ -1838,3 +1838,27 @@ h1 {
     transform: translateX(0);
   }
 }
+
+/* --- message history image attachments --- */
+
+.modal-attached-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 16px 0;
+}
+
+.modal-attached-image {
+  max-width: 240px;
+  max-height: 180px;
+  border-radius: 6px;
+  border: 1px solid rgba(58, 45, 33, 0.16);
+  object-fit: contain;
+  background: rgba(58, 45, 33, 0.04);
+}
+
+.timeline-image-badge {
+  margin-left: 4px;
+  font-size: 11px;
+  opacity: 0.65;
+}

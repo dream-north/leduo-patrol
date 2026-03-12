@@ -30,6 +30,7 @@ type TimelineItem = {
   title: string;
   body: string;
   meta?: string;
+  images?: Array<{ data: string; mimeType: string }>;
 };
 
 type TimelineTreeRow = {
@@ -248,6 +249,7 @@ export default function App() {
   const demoPreset = useMemo(() => readDemoPresetFromUrl(), []);
   const socketRef = useRef<WebSocket | null>(null);
   const pendingQueueRef = useRef(pendingQueue);
+  const pendingPromptImagesRef = useRef<Map<string, Array<{ data: string; mimeType: string }>>>(new Map());
   const composerContainerRef = useRef<HTMLDivElement | null>(null);
   const timelineViewportRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -326,6 +328,9 @@ export default function App() {
   useEffect(() => {
     if (!activeSessionIsRunning && pendingQueueRef.current.length > 0 && activeSession) {
       const [first, ...rest] = pendingQueueRef.current;
+      if (first.images && first.images.length > 0) {
+        pendingPromptImagesRef.current.set(activeSession.clientSessionId, first.images);
+      }
       const sent = sendCommand({
         type: "prompt",
         payload: {
@@ -336,6 +341,8 @@ export default function App() {
       });
       if (sent) {
         setPendingQueue(rest);
+      } else {
+        pendingPromptImagesRef.current.delete(activeSession.clientSessionId);
       }
     }
   }, [activeSessionIsRunning]);
@@ -880,15 +887,19 @@ export default function App() {
           body: message.payload.sessionId,
         });
         break;
-      case "prompt_started":
+      case "prompt_started": {
+        const promptImages = pendingPromptImagesRef.current.get(message.payload.clientSessionId);
+        pendingPromptImagesRef.current.delete(message.payload.clientSessionId);
         updateSession(message.payload.clientSessionId, (session) => ({ ...session, busy: true }));
         appendSessionTimeline(message.payload.clientSessionId, {
           id: message.payload.promptId,
           kind: "user",
           title: "你",
           body: message.payload.text,
+          images: promptImages && promptImages.length > 0 ? promptImages : undefined,
         });
         break;
+      }
       case "prompt_finished":
         {
           const keepRunning = shouldKeepSessionRunningAfterPromptFinished(message.payload.stopReason);
@@ -1095,6 +1106,9 @@ export default function App() {
       setPendingImages([]);
       return;
     }
+    if (images.length > 0) {
+      pendingPromptImagesRef.current.set(activeSession.clientSessionId, images);
+    }
     if (
       !sendCommand({
         type: "prompt",
@@ -1105,6 +1119,7 @@ export default function App() {
         },
       })
     ) {
+      pendingPromptImagesRef.current.delete(activeSession.clientSessionId);
       return;
     }
     setPromptText("");
@@ -2012,7 +2027,12 @@ function TimelineRow(props: {
           </span>
         ) : null}
       </span>
-      <span className={`timeline-body ${expandedPreview ? "multiline" : ""}`}>{summary}</span>
+      <span className={`timeline-body ${expandedPreview ? "multiline" : ""}`}>
+        {summary}
+        {props.item.images && props.item.images.length > 0 ? (
+          <span className="timeline-image-badge"> 🖼 {props.item.images.length}</span>
+        ) : null}
+      </span>
       <span className="timeline-meta">{props.item.meta ?? "查看"}</span>
     </button>
   );
@@ -3494,6 +3514,18 @@ function MessageModal(props: {
           </button>
         </div>
         <p className="modal-meta">{props.item.meta ?? "详细内容"}</p>
+        {props.item.images && props.item.images.length > 0 ? (
+          <div className="modal-attached-images">
+            {props.item.images.map((img, idx) => (
+              <img
+                key={idx}
+                src={`data:${img.mimeType};base64,${img.data}`}
+                alt={`附件图片 ${idx + 1}`}
+                className="modal-attached-image"
+              />
+            ))}
+          </div>
+        ) : null}
         {shouldRenderMarkdown(props.item) ? (
           <div className="modal-body markdown-body">{renderMarkdownBlocks(props.item.body)}</div>
         ) : (
