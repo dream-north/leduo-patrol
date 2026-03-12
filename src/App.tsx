@@ -229,8 +229,10 @@ export default function App() {
   const [collapsedSubagentRoots, setCollapsedSubagentRoots] = useState<Record<string, boolean>>({});
   const [demoFixtures, setDemoFixtures] = useState<DemoFixtures | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(false);
+  const [pendingQueue, setPendingQueue] = useState<Array<{ id: string; text: string }>>([]);
   const demoPreset = useMemo(() => readDemoPresetFromUrl(), []);
   const socketRef = useRef<WebSocket | null>(null);
+  const pendingQueueRef = useRef(pendingQueue);
   const composerContainerRef = useRef<HTMLDivElement | null>(null);
   const timelineViewportRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -241,6 +243,7 @@ export default function App() {
   const fitAddonRef = useRef<FitAddon | null>(null);
 
   const activeSession = sessions.find((session) => session.clientSessionId === activeSessionId) ?? null;
+  pendingQueueRef.current = pendingQueue;
   const activeAvailableCommands = activeSession?.availableCommands ?? [];
   const commandCompletions = useMemo(
     () => getPromptCommandCompletions(promptText, activeAvailableCommands),
@@ -297,6 +300,26 @@ export default function App() {
   useEffect(() => {
     setCommandSuggestionIndex(0);
   }, [activeSessionId, promptText, commandCompletions.length]);
+
+  useEffect(() => {
+    setPendingQueue([]);
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    if (!activeSessionIsRunning && pendingQueueRef.current.length > 0 && activeSession) {
+      const [first, ...rest] = pendingQueueRef.current;
+      const sent = sendCommand({
+        type: "prompt",
+        payload: {
+          clientSessionId: activeSession.clientSessionId,
+          text: first.text,
+        },
+      });
+      if (sent) {
+        setPendingQueue(rest);
+      }
+    }
+  }, [activeSessionIsRunning]);
 
   useEffect(() => {
     if (commandCompletions.length < 1) {
@@ -1008,7 +1031,12 @@ export default function App() {
 
   function submitPrompt() {
     const text = promptText.trim();
-    if (!text || !activeSession || isSessionRunning(activeSession)) {
+    if (!text || !activeSession) {
+      return;
+    }
+    if (isSessionRunning(activeSession)) {
+      setPendingQueue((q) => [...q, { id: makeId(), text }]);
+      setPromptText("");
       return;
     }
     if (
@@ -1556,11 +1584,40 @@ export default function App() {
                 ))}
               </div>
             ) : null}
+            {pendingQueue.length > 0 ? (
+              <div className="composer-pending-queue">
+                <p className="composer-pending-queue-title">待发送队列 ({pendingQueue.length})</p>
+                <div className="composer-pending-queue-list">
+                  {pendingQueue.map((item) => (
+                    <div key={item.id} className="composer-pending-queue-item">
+                      <p className="composer-pending-queue-text">{item.text}</p>
+                      <div className="composer-pending-queue-actions">
+                        <button
+                          type="button"
+                          className="composer-pending-queue-btn"
+                          title="复制"
+                          onClick={() => { navigator.clipboard.writeText(item.text).catch(() => {}); }}
+                        >
+                          复制
+                        </button>
+                        <button
+                          type="button"
+                          className="composer-pending-queue-btn composer-pending-queue-btn-delete"
+                          title="删除"
+                          onClick={() => setPendingQueue((q) => q.filter((m) => m.id !== item.id))}
+                        >
+                          删除
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <div className="composer-input-shell">
             <textarea
-              placeholder={activeSessionIsRunning ? "会话运行中，暂时不能发送新消息。" : "例如：分析这个目录的仓库结构，然后给我一个重构计划。"}
+              placeholder={activeSessionIsRunning ? "输入消息，将加入待发送队列…" : "例如：分析这个目录的仓库结构，然后给我一个重构计划。"}
               value={promptText}
-              disabled={activeSessionIsRunning}
               onFocus={() => {
                 if (commandCompletions.length > 0) {
                   setIsCompletionOpen(true);
@@ -1607,8 +1664,8 @@ export default function App() {
             />
             </div>
             <div className="composer-actions">
-              <button className="primary" onClick={submitPrompt} disabled={!promptText.trim() || !activeSession || activeSessionIsRunning}>
-                发送到当前会话
+              <button className="primary" onClick={submitPrompt} disabled={!promptText.trim() || !activeSession}>
+                {activeSessionIsRunning ? "加入队列" : "发送到当前会话"}
               </button>
               <button className="secondary composer-cancel" onClick={cancelActiveSession} disabled={!activeSessionIsRunning}>
                 <span aria-hidden="true">⏹</span>
