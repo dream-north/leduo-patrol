@@ -1369,7 +1369,7 @@ export default function App() {
             <div id="panel-create" className="tab-panel create-panel" role="tabpanel" aria-label="新建会话">
               <div className="details">
                 <label htmlFor="create-workspace-path">会话目录</label>
-                <input id="create-workspace-path" value={workspacePath} onChange={(event) => setWorkspacePath(event.target.value)} />
+                <input id="create-workspace-path" value={workspacePath} placeholder="请输入绝对路径，例如 /home/user/project" onChange={(event) => setWorkspacePath(event.target.value)} />
                 <label htmlFor="create-session-title">会话名</label>
                 <input
                   id="create-session-title"
@@ -1446,7 +1446,7 @@ export default function App() {
                   className="secondary"
                   onClick={openVscodeRemote}
                   disabled={!config?.vscodeRemoteUri}
-                  title={config?.vscodeRemoteUri ? "在 VS Code Remote SSH 中打开工作目录" : "未配置 LEDUO_PATROL_SSH_HOST 或 LEDUO_PATROL_VSCODE_URI"}
+                  title={config?.vscodeRemoteUri ? "在 VS Code Remote SSH 中打开工作目录" : "需要配置 LEDUO_PATROL_SSH_HOST 环境变量"}
                 >
                   打开 VS Code Remote SSH
                 </button>
