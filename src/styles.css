@@ -629,6 +629,14 @@ h1 {
   text-align: right;
 }
 
+.composer-completion-match {
+  color: var(--brand-dark);
+}
+
+.composer-completion-rest {
+  color: var(--text);
+}
+
 .composer-completion-item.active {
   border-color: rgba(216, 91, 52, 0.4);
   background: rgba(216, 91, 52, 0.12);

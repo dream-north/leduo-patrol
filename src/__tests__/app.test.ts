@@ -344,6 +344,10 @@ test("app available command helpers normalize group and complete", () => {
   assert.deepEqual(completions.map((item) => item.name), ["/tool.run"]);
   assert.equal(appTestables.extractPromptCommandQuery("/mc"), "/mc");
   assert.equal(appTestables.applyPromptCommandCompletion("先试试 /to", "/tool.run"), "先试试 /tool.run ");
+  assert.deepEqual(appTestables.splitCompletionLabel("/tool.run", "/to"), {
+    matched: "/to",
+    rest: "ol.run",
+  });
 });
 
 test("app applyDemoPreset injects demo session for subagent tree preview", () => {

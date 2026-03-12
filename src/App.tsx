@@ -197,6 +197,7 @@ export default function App() {
   const [connectionState, setConnectionState] = useState("connecting");
   const [promptText, setPromptText] = useState("");
   const [commandSuggestionIndex, setCommandSuggestionIndex] = useState(0);
+  const [isCompletionOpen, setIsCompletionOpen] = useState(false);
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");
   const [directoryBrowserPath, setDirectoryBrowserPath] = useState("");
@@ -218,6 +219,7 @@ export default function App() {
   const [demoFixtures, setDemoFixtures] = useState<DemoFixtures | null>(null);
   const demoPreset = useMemo(() => readDemoPresetFromUrl(), []);
   const socketRef = useRef<WebSocket | null>(null);
+  const composerInputShellRef = useRef<HTMLDivElement | null>(null);
   const timelineViewportRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const notifiedPermissionRequestIdsRef = useRef<Record<string, true>>({});
@@ -229,6 +231,7 @@ export default function App() {
     () => getPromptCommandCompletions(promptText, activeAvailableCommands),
     [activeAvailableCommands, promptText],
   );
+  const completionQuery = useMemo(() => extractPromptCommandQuery(promptText), [promptText]);
   const capabilityGroups = useMemo(
     () => groupAvailableCapabilities(activeAvailableCommands),
     [activeAvailableCommands],
@@ -272,6 +275,29 @@ export default function App() {
   useEffect(() => {
     setCommandSuggestionIndex(0);
   }, [activeSessionId, promptText, commandCompletions.length]);
+
+  useEffect(() => {
+    if (commandCompletions.length < 1) {
+      setIsCompletionOpen(false);
+    }
+  }, [commandCompletions.length]);
+
+  useEffect(() => {
+    const onPointerDown = (event: MouseEvent) => {
+      const root = composerInputShellRef.current;
+      if (!root) {
+        return;
+      }
+      if (event.target instanceof Node && root.contains(event.target)) {
+        return;
+      }
+      setIsCompletionOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+    };
+  }, []);
 
   useEffect(() => {
     setCollapsedSubagentRoots((current) => {
@@ -1433,15 +1459,28 @@ export default function App() {
             <p className="composer-capability-summary">
               ACP 能力：tools {capabilityGroups.tools.length} · mcp {capabilityGroups.mcp.length} · skills {capabilityGroups.skills.length}
             </p>
-            <div className="composer-input-shell">
+            <div className="composer-input-shell" ref={composerInputShellRef}>
             <textarea
               placeholder={activeSession?.busy ? "会话运行中，暂时不能发送新消息。" : "例如：分析这个目录的仓库结构，然后给我一个重构计划。"}
               value={promptText}
               disabled={activeSession?.busy}
-              onChange={(event) => setPromptText(event.target.value)}
+              onFocus={() => {
+                if (commandCompletions.length > 0) {
+                  setIsCompletionOpen(true);
+                }
+              }}
+              onChange={(event) => {
+                const nextValue = event.target.value;
+                setPromptText(nextValue);
+                setIsCompletionOpen(Boolean(extractPromptCommandQuery(nextValue)));
+              }}
               onKeyDown={(event) => {
                 if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
                   submitPrompt();
+                  return;
+                }
+                if (event.key === "Escape") {
+                  setIsCompletionOpen(false);
                   return;
                 }
                 if (commandCompletions.length < 1) {
@@ -1449,11 +1488,13 @@ export default function App() {
                 }
                 if (event.key === "ArrowDown") {
                   event.preventDefault();
+                  setIsCompletionOpen(true);
                   setCommandSuggestionIndex((current) => (current + 1) % commandCompletions.length);
                   return;
                 }
                 if (event.key === "ArrowUp") {
                   event.preventDefault();
+                  setIsCompletionOpen(true);
                   setCommandSuggestionIndex((current) => (current - 1 + commandCompletions.length) % commandCompletions.length);
                   return;
                 }
@@ -1462,11 +1503,12 @@ export default function App() {
                   const selected = commandCompletions[commandSuggestionIndex] ?? commandCompletions[0];
                   if (selected) {
                     applyCommandSuggestion(selected.name);
+                    setIsCompletionOpen(false);
                   }
                 }
               }}
             />
-              {commandCompletions.length > 0 ? (
+              {isCompletionOpen && commandCompletions.length > 0 ? (
                 <div className="composer-completions" role="listbox" aria-label="命令补全">
                   {commandCompletions.map((command, index) => (
                     <button
@@ -1476,9 +1518,12 @@ export default function App() {
                       onMouseDown={(event) => {
                         event.preventDefault();
                         applyCommandSuggestion(command.name);
+                        setIsCompletionOpen(false);
                       }}
                     >
-                      <span>{command.name}</span>
+                      <span>
+                        {renderCompletionLabel(command.name, completionQuery)}
+                      </span>
                       <small>{command.description || "命令"}</small>
                     </button>
                   ))}
@@ -2112,6 +2157,33 @@ function applyPromptCommandCompletion(prompt: string, commandName: string) {
 
   const suffix = prompt.endsWith(" ") || prompt.endsWith("\n") ? "" : " ";
   return `${prompt}${suffix}${trimmedName} `;
+}
+
+function splitCompletionLabel(commandName: string, query: string | null) {
+  const normalizedQuery = (query ?? "").trim();
+  if (!normalizedQuery) {
+    return { matched: "", rest: commandName };
+  }
+  if (!commandName.toLowerCase().startsWith(normalizedQuery.toLowerCase())) {
+    return { matched: "", rest: commandName };
+  }
+  return {
+    matched: commandName.slice(0, normalizedQuery.length),
+    rest: commandName.slice(normalizedQuery.length),
+  };
+}
+
+function renderCompletionLabel(commandName: string, query: string | null) {
+  const parts = splitCompletionLabel(commandName, query);
+  if (!parts.matched) {
+    return commandName;
+  }
+  return (
+    <>
+      <strong className="composer-completion-match">{parts.matched}</strong>
+      <span className="composer-completion-rest">{parts.rest}</span>
+    </>
+  );
 }
 
 function parseToolTimelineEntries(body: string) {
@@ -3162,6 +3234,7 @@ export const appTestables = {
   getPromptCommandCompletions,
   applyPromptCommandCompletion,
   extractPromptCommandQuery,
+  splitCompletionLabel,
   canMergeToolTimelineItem,
   buildTimelineTreeRows,
   countChildrenByRoot,
