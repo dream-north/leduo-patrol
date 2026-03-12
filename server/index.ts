@@ -8,6 +8,7 @@ import { createServer } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import { SessionManager, type SocketEvent } from "./session-manager.js";
 import { formatError, resolveAllowedPath } from "./server-helpers.js";
+import { ShellSession } from "./shell-session.js";
 import { buildSingleFileDiff, buildWorkspaceDiffFilesSnapshot, type DiffCategory } from "./git-diff.js";
 import { buildAccessCookie, createAccessKey, hasAuthorizedAccessCookie, isAccessKeyAuthorized } from "./access-key.js";
 import { findAvailablePort, pickPreferredLanIp } from "./network.js";
@@ -19,7 +20,11 @@ type ClientCommand =
   | { type: "set_mode"; payload: { clientSessionId: string; modeId: string } }
   | { type: "cancel"; payload: { clientSessionId: string } }
   | { type: "permission"; payload: { clientSessionId: string; requestId: string; optionId: string; note?: string } }
-  | { type: "close_session"; payload: { clientSessionId: string } };
+  | { type: "close_session"; payload: { clientSessionId: string } }
+  | { type: "shell_start"; payload: { cols: number; rows: number } }
+  | { type: "shell_input"; payload: { data: string } }
+  | { type: "shell_resize"; payload: { cols: number; rows: number } }
+  | { type: "shell_stop" };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const launchCwd = process.cwd();
@@ -41,6 +46,7 @@ const devWebPort = Number(process.env.LEDUO_PATROL_WEB_PORT ?? 5173);
 const isDevServer = process.env.npm_lifecycle_event === "dev:server";
 const agentBinPath = resolveAgentBinPath();
 const accessKey = process.env.LEDUO_PATROL_ACCESS_KEY?.trim() || createAccessKey();
+const enableShell = process.env.ENABLE_SHELL === "true";
 
 const app = express();
 const server = createServer(app);
@@ -93,6 +99,7 @@ app.get("/api/config", (_req, res) => {
     sshHost,
     sshPath,
     vscodeRemoteUri,
+    enableShell,
   });
 });
 
@@ -208,6 +215,7 @@ wss.on("connection", (socket, request) => {
   }
 
   const unsubscribe = sessionManager.subscribe((event) => sendEvent(socket, event));
+  let shellSession: ShellSession | null = null;
 
   socket.on("message", async (raw) => {
     try {
@@ -250,6 +258,44 @@ wss.on("connection", (socket, request) => {
         case "close_session":
           await sessionManager.closeSession(message.payload.clientSessionId);
           break;
+        case "shell_start": {
+          if (!enableShell) {
+            throw new Error("Shell feature is disabled. Set ENABLE_SHELL=true to enable it.");
+          }
+          shellSession?.kill();
+          shellSession = null;
+          const cols = Math.max(2, message.payload.cols);
+          const rows = Math.max(2, message.payload.rows);
+          const newShell = new ShellSession(defaultWorkspacePath, cols, rows);
+          shellSession = newShell;
+          newShell.on("output", (data: string) => {
+            if (socket.readyState === WebSocket.OPEN) {
+              socket.send(JSON.stringify({ type: "shell_output", payload: { data } }));
+            }
+          });
+          newShell.on("exit", (exitCode: number) => {
+            if (shellSession === newShell) {
+              shellSession = null;
+            }
+            if (socket.readyState === WebSocket.OPEN) {
+              socket.send(JSON.stringify({ type: "shell_exited", payload: { exitCode } }));
+            }
+          });
+          break;
+        }
+        case "shell_input":
+          if (!shellSession?.alive) {
+            throw new Error("Shell is not running");
+          }
+          shellSession.write(message.payload.data);
+          break;
+        case "shell_resize":
+          shellSession?.resize(message.payload.cols, message.payload.rows);
+          break;
+        case "shell_stop":
+          shellSession?.kill();
+          shellSession = null;
+          break;
       }
     } catch (error) {
       sendEvent(socket, {
@@ -261,6 +307,8 @@ wss.on("connection", (socket, request) => {
 
   socket.on("close", () => {
     unsubscribe();
+    shellSession?.kill();
+    shellSession = null;
   });
 });
 

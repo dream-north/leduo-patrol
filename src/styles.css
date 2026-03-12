@@ -1429,3 +1429,89 @@ h1 {
     overflow: auto;
   }
 }
+
+/* ── Terminal Drawer ─────────────────────────────────── */
+
+.terminal-drawer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 200;
+  border-top: 1px solid var(--line);
+  background: #1a1a1a;
+  color: #e8e8e8;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.25);
+  transition: height 0.2s ease;
+  height: 36px;
+}
+
+.terminal-drawer-open {
+  height: 320px;
+}
+
+.terminal-drawer-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  height: 36px;
+  flex-shrink: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.terminal-drawer-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  color: #e8e8e8;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  transition: background 0.15s;
+}
+
+.terminal-drawer-toggle:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.terminal-drawer-icon {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.terminal-drawer-note {
+  font-size: 11px;
+  color: rgba(232, 232, 232, 0.5);
+  font-family: "IBM Plex Mono", monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.terminal-viewport {
+  flex: 1;
+  overflow: hidden;
+  padding: 4px 8px;
+  min-height: 0;
+}
+
+/* xterm.js overrides */
+.terminal-viewport .xterm {
+  height: 100%;
+}
+
+.terminal-viewport .xterm-viewport {
+  overflow-y: auto !important;
+}
+
+/* Pad the bottom of the page so content doesn't hide under the drawer */
+.shell.multi-session {
+  padding-bottom: 48px;
+}
