@@ -1712,7 +1712,9 @@ export default function App() {
               <div className="composer-image-previews">
                 {pendingImages.map((img, index) => (
                   <div key={img.id} className="composer-image-preview">
-                    <img src={img.dataUrl} alt={`待发送图片 ${index + 1}`} />
+                    <div className="composer-image-preview-thumb">
+                      <img src={img.dataUrl} alt={`待发送图片 ${index + 1}`} />
+                    </div>
                     <button
                       type="button"
                       className="composer-image-preview-remove"
