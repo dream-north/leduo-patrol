@@ -1,6 +1,22 @@
 import { spawn } from "node-pty";
 import type { IPty } from "node-pty";
 import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
+
+// Resolve bash path; prefer the user's login shell if it is bash, then common locations
+function resolveBashPath(): string {
+  const loginShell = process.env.SHELL ?? "";
+  if (loginShell && /bash$/i.test(loginShell) && existsSync(loginShell)) {
+    return loginShell;
+  }
+  for (const candidate of ["/bin/bash", "/usr/bin/bash", "/usr/local/bin/bash"]) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  // Fall back to plain "bash" and let the OS resolve it via PATH
+  return "bash";
+}
 
 /**
  * A restricted interactive shell session backed by a PTY.
@@ -37,7 +53,7 @@ export class ShellSession extends EventEmitter {
       ...(process.env.GIT_COMMITTER_EMAIL ? { GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL } : {}),
     };
 
-    this.pty = spawn("/bin/bash", ["--restricted", "--norc", "--noprofile"], {
+    this.pty = spawn(resolveBashPath(), ["--restricted", "--norc", "--noprofile"], {
       name: "xterm-256color",
       cols,
       rows,

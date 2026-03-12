@@ -1,5 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import type { Terminal } from "@xterm/xterm";
+import type { FitAddon } from "@xterm/addon-fit";
 
 type AppConfig = {
   appName: string;
@@ -235,10 +237,8 @@ export default function App() {
   const notifiedPermissionRequestIdsRef = useRef<Record<string, true>>({});
   const notifiedCompletionIdsRef = useRef<Record<string, true>>({});
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const xtermRef = useRef<any>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const fitAddonRef = useRef<any>(null);
+  const xtermRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
 
   const activeSession = sessions.find((session) => session.clientSessionId === activeSessionId) ?? null;
   const activeAvailableCommands = activeSession?.availableCommands ?? [];
