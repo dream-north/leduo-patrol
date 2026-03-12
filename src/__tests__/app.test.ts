@@ -109,6 +109,12 @@ test("app relative updatedAt formatter uses minute hour and day buckets", () => 
   assert.equal(appTestables.formatRelativeUpdatedAt("2026-03-08T12:00:00.000Z", now), "3 天前");
 });
 
+test("app prompt finished keep-running helper handles permission stop reasons", () => {
+  assert.equal(appTestables.shouldKeepSessionRunningAfterPromptFinished("pause_turn"), true);
+  assert.equal(appTestables.shouldKeepSessionRunningAfterPromptFinished("permission_required"), true);
+  assert.equal(appTestables.shouldKeepSessionRunningAfterPromptFinished("end_turn"), false);
+});
+
 test("app completed prompt helper checks completion marker", () => {
   assert.equal(
     appTestables.hasCompletedPrompt(

@@ -213,7 +213,6 @@ export default function App() {
   const [sessionFileDiffCache, setSessionFileDiffCache] = useState<Record<string, SessionFileDiffResponse>>({});
   const [historyLoadingSessionId, setHistoryLoadingSessionId] = useState("");
   const [collapsedSubagentRoots, setCollapsedSubagentRoots] = useState<Record<string, boolean>>({});
-  const [permissionNotes, setPermissionNotes] = useState<Record<string, string>>({});
   const [demoFixtures, setDemoFixtures] = useState<DemoFixtures | null>(null);
   const demoPreset = useMemo(() => readDemoPresetFromUrl(), []);
   const socketRef = useRef<WebSocket | null>(null);
@@ -224,6 +223,7 @@ export default function App() {
 
   const activeSession = sessions.find((session) => session.clientSessionId === activeSessionId) ?? null;
   const activeSessionHasPendingPermission = Boolean(activeSession && activeSession.permissions.length > 0);
+  const activeSessionIsRunning = Boolean(activeSession && isSessionRunning(activeSession));
   const activeSessionModeOptions =
     activeSession?.modes.length && activeSession.modes.length > 0
       ? activeSession.modes.map((modeId) => ({ id: modeId, label: labelForMode(modeId) }))
@@ -675,13 +675,16 @@ export default function App() {
         });
         break;
       case "prompt_finished":
-        updateSession(message.payload.clientSessionId, (session) => ({ ...session, busy: false }));
-        appendSessionTimeline(message.payload.clientSessionId, {
-          id: makeId(),
-          kind: "system",
-          title: "本轮完成",
-          body: message.payload.stopReason,
-        });
+        {
+          const keepRunning = shouldKeepSessionRunningAfterPromptFinished(message.payload.stopReason);
+          updateSession(message.payload.clientSessionId, (session) => ({ ...session, busy: keepRunning }));
+          appendSessionTimeline(message.payload.clientSessionId, {
+            id: makeId(),
+            kind: "system",
+            title: keepRunning ? "等待待处理中" : "本轮完成",
+            body: message.payload.stopReason,
+          });
+        }
         break;
       case "session_mode_changed":
         updateSession(message.payload.clientSessionId, (session) => ({
@@ -720,14 +723,6 @@ export default function App() {
           ...session,
           permissions: session.permissions.filter((permission) => permission.requestId !== message.payload.requestId),
         }));
-        setPermissionNotes((current) => {
-          if (!current[message.payload.requestId]) {
-            return current;
-          }
-          const next = { ...current };
-          delete next[message.payload.requestId];
-          return next;
-        });
         break;
       case "session_closed":
         setSessions((current) => current.filter((session) => session.clientSessionId !== message.payload.clientSessionId));
@@ -855,7 +850,7 @@ export default function App() {
 
   function submitPrompt() {
     const text = promptText.trim();
-    if (!text || !activeSession || activeSession.busy) {
+    if (!text || !activeSession || isSessionRunning(activeSession)) {
       return;
     }
     if (
@@ -896,27 +891,15 @@ export default function App() {
     });
   }
 
-  function resolvePermission(permission: PermissionPayload, optionId: string, note?: string) {
-    const normalizedNote = note?.trim();
-    const didSend = sendCommand({
+  function resolvePermission(permission: PermissionPayload, optionId: string) {
+    sendCommand({
       type: "permission",
       payload: {
         clientSessionId: permission.clientSessionId,
         requestId: permission.requestId,
         optionId,
-        note: normalizedNote || undefined,
       },
     });
-    if (didSend) {
-      setPermissionNotes((current) => {
-        if (!current[permission.requestId]) {
-          return current;
-        }
-        const next = { ...current };
-        delete next[permission.requestId];
-        return next;
-      });
-    }
   }
 
   function openVscodeRemote() {
@@ -1318,16 +1301,16 @@ export default function App() {
                           })
                       : undefined
                   }
-                  displayRunningHint={Boolean(activeSession?.busy && row.item.kind === "tool" && childCount > 0 && Boolean(collapsedSubagentRoots[row.item.id]))}
+                  displayRunningHint={Boolean(activeSessionIsRunning && row.item.kind === "tool" && childCount > 0 && Boolean(collapsedSubagentRoots[row.item.id]))}
                   onOpen={() => setSelectedItem({ sessionTitle: activeSession ? formatSessionTitleForDisplay(activeSession.title) : "当前会话", item: row.item })}
                 />
               );
             })
           )}
-          {activeSession?.busy ? (
+          {activeSessionIsRunning ? (
             <div className="timeline-running-indicator" aria-live="polite">
               <span className="timeline-running-dot" aria-hidden="true" />
-              正在运行中...
+              {activeSessionHasPendingPermission ? "等待待处理中..." : "正在运行中..."}
             </div>
           ) : null}
         </div>
@@ -1336,7 +1319,6 @@ export default function App() {
             <p className="composer-pending-title">待处理确认</p>
             <div className="composer-pending-list">
               {activeSession?.permissions.map((permission) => {
-                const denyOption = permission.options.find((option) => option.kind === "deny") ?? permission.options[0];
                 return (
                   <section className="composer-pending-item" key={permission.requestId}>
                     <p className="composer-pending-tool">
@@ -1358,26 +1340,6 @@ export default function App() {
                         </button>
                       ))}
                     </div>
-                    {denyOption ? (
-                      <div className="composer-pending-note-row">
-                        <input
-                          value={permissionNotes[permission.requestId] ?? ""}
-                          onChange={(event) =>
-                            setPermissionNotes((current) => ({
-                              ...current,
-                              [permission.requestId]: event.target.value,
-                            }))
-                          }
-                          placeholder="补充说明给 Claude（可选）"
-                        />
-                        <button
-                          className="secondary"
-                          onClick={() => resolvePermission(permission, denyOption.optionId, permissionNotes[permission.requestId])}
-                        >
-                          拒绝并附言
-                        </button>
-                      </div>
-                    ) : null}
                   </section>
                 );
               })}
@@ -1389,7 +1351,7 @@ export default function App() {
               <span>会话模式</span>
               <select
                 value={activeSession?.defaultModeId ?? "default"}
-                disabled={!activeSession?.sessionId || activeSession?.busy}
+                disabled={!activeSession?.sessionId || activeSessionIsRunning}
                 onChange={(event) => {
                   if (activeSession) {
                     changeSessionMode(activeSession.clientSessionId, event.target.value);
@@ -1404,9 +1366,9 @@ export default function App() {
               </select>
             </div>
             <textarea
-              placeholder={activeSession?.busy ? "会话运行中，暂时不能发送新消息。" : "例如：分析这个目录的仓库结构，然后给我一个重构计划。"}
+              placeholder={activeSessionIsRunning ? "会话运行中，暂时不能发送新消息。" : "例如：分析这个目录的仓库结构，然后给我一个重构计划。"}
               value={promptText}
-              disabled={activeSession?.busy}
+              disabled={activeSessionIsRunning}
               onChange={(event) => setPromptText(event.target.value)}
               onKeyDown={(event) => {
                 if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -1415,10 +1377,10 @@ export default function App() {
               }}
             />
             <div className="composer-actions">
-              <button className="primary" onClick={submitPrompt} disabled={!promptText.trim() || !activeSession || activeSession.busy}>
+              <button className="primary" onClick={submitPrompt} disabled={!promptText.trim() || !activeSession || activeSessionIsRunning}>
                 发送到当前会话
               </button>
-              <button className="secondary composer-cancel" onClick={cancelActiveSession} disabled={!activeSession?.busy}>
+              <button className="secondary composer-cancel" onClick={cancelActiveSession} disabled={!activeSessionIsRunning}>
                 <span aria-hidden="true">⏹</span>
                 停止
               </button>
@@ -1973,11 +1935,20 @@ function toneForConnectionState(connectionState: string): "positive" | "negative
   return "neutral";
 }
 
+function isSessionRunning(session: SessionRecord) {
+  return session.busy || session.permissions.length > 0;
+}
+
+function shouldKeepSessionRunningAfterPromptFinished(stopReason: string) {
+  const normalized = stopReason.trim().toLowerCase();
+  return normalized === "pause_turn" || normalized === "pause-turn" || normalized.includes("permission");
+}
+
 function getSessionSidebarStatus(session: SessionRecord): SessionSidebarStatus | null {
   if (session.permissions.length > 0) {
     return { label: "待处理", tone: "pending" };
   }
-  if (session.busy) {
+  if (isSessionRunning(session)) {
     return { label: "运行中", tone: "running" };
   }
   if (shouldShowSessionException(session)) {
@@ -1997,7 +1968,7 @@ function hasCompletedPrompt(session: SessionRecord) {
 }
 
 function shouldShowSessionException(session: SessionRecord) {
-  if (session.busy || session.connectionState !== "error") {
+  if (isSessionRunning(session) || session.connectionState !== "error") {
     return false;
   }
   const lastItem = [...session.timeline].reverse().find((item) => item.kind !== "system" || item.title !== "本轮完成");
@@ -3054,4 +3025,5 @@ export const appTestables = {
   findLatestExecutionPlanBody,
   parseExecutionPlanSteps,
   truncateUnknownText,
+  shouldKeepSessionRunningAfterPromptFinished,
 };
