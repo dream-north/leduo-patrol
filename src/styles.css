@@ -637,6 +637,90 @@ h1 {
   padding: 6px 10px;
 }
 
+.composer-pending-queue {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(58, 45, 33, 0.16);
+  border-radius: 10px;
+  background: rgba(255, 250, 242, 0.92);
+  font-size: 11px;
+}
+
+.composer-pending-queue-title {
+  margin: 0 0 6px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.composer-pending-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.composer-pending-queue-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid rgba(58, 45, 33, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.composer-pending-queue-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.composer-pending-queue-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.composer-pending-queue-btn {
+  padding: 3px 7px;
+  border-radius: 6px;
+  border: 1px solid rgba(58, 45, 33, 0.2);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+  line-height: 1.4;
+  transition: background 0.12s, color 0.12s;
+}
+
+.composer-pending-queue-btn:hover {
+  background: rgba(58, 45, 33, 0.08);
+  color: var(--text);
+}
+
+.composer-pending-queue-btn-delete {
+  border-color: rgba(216, 91, 52, 0.3);
+  color: var(--brand);
+}
+
+.composer-pending-queue-btn-delete:hover {
+  background: rgba(216, 91, 52, 0.1);
+  color: var(--brand-dark);
+}
+
+
 .composer textarea {
   width: 100%;
   min-height: 72px;
