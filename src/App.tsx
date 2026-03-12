@@ -1332,10 +1332,15 @@ export default function App() {
       <div className="shell multi-session">
       <aside className="panel masthead">
         <div className="masthead-intro">
-          <div>
-            <p className="eyebrow">leduo-patrol</p>
-            <h1>{config?.appName ?? "乐汪队"}</h1>
-            <p className="lede">欢迎来到 leduo-patrol：在一个控制台里并行查看多会话进展、差异和执行结果。</p>
+          <div className="brand-stack">
+            <div className="brand-lockup">
+              <img className="brand-icon" src="/assets/brand-icon.png" alt="" aria-hidden="true" />
+              <div className="brand-copy">
+                <p className="eyebrow">leduo-patrol</p>
+                <h1>{config?.appName ?? "LEDUO-PATROL 乐多汪汪队"}</h1>
+              </div>
+            </div>
+            <p className="lede masthead-lede">欢迎来到 leduo-patrol：在一个控制台里并行查看多会话进展、差异和执行结果。</p>
           </div>
           {globalErrorItems.length > 0 ? (
             <button
