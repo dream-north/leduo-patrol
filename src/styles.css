@@ -649,6 +649,83 @@ h1 {
   line-height: 1.4;
 }
 
+.composer-capability-summary {
+  margin: 6px 0 6px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.composer-input-shell {
+  position: relative;
+}
+
+.composer-completions {
+  margin: 0 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.95);
+  padding: 6px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+.composer-completion-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.composer-completion-section-title {
+  margin: 2px 4px;
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.composer-completion-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text);
+  text-align: left;
+}
+
+.composer-completion-item span {
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-size: 11px;
+}
+
+.composer-completion-item small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: right;
+}
+
+.composer-completion-match {
+  color: var(--brand-dark);
+}
+
+.composer-completion-rest {
+  color: var(--text);
+}
+
+.composer-completion-item.active {
+  border-color: rgba(216, 91, 52, 0.4);
+  background: rgba(216, 91, 52, 0.12);
+}
+
 .composer button {
   margin-top: 8px;
   width: 100%;

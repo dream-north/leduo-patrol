@@ -15,6 +15,12 @@ type SessionUpdate = {
   [key: string]: unknown;
 };
 
+type AvailableCommand = {
+  name: string;
+  description: string;
+  inputType: "unstructured";
+};
+
 type TimelineItem = {
   id: string;
   kind: "system" | "user" | "agent" | "thought" | "tool" | "plan" | "error";
@@ -51,6 +57,7 @@ type SessionRecord = {
   historyTotal: number;
   historyStart: number;
   permissions: PermissionPayload[];
+  availableCommands?: AvailableCommand[];
   updatedAt: string;
 };
 
@@ -196,6 +203,8 @@ export default function App() {
   const [sidebarTab, setSidebarTab] = useState<"sessions" | "create">("sessions");
   const [connectionState, setConnectionState] = useState("connecting");
   const [promptText, setPromptText] = useState("");
+  const [commandSuggestionIndex, setCommandSuggestionIndex] = useState(0);
+  const [isCompletionOpen, setIsCompletionOpen] = useState(false);
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");
   const [directoryBrowserPath, setDirectoryBrowserPath] = useState("");
@@ -216,12 +225,27 @@ export default function App() {
   const [demoFixtures, setDemoFixtures] = useState<DemoFixtures | null>(null);
   const demoPreset = useMemo(() => readDemoPresetFromUrl(), []);
   const socketRef = useRef<WebSocket | null>(null);
+  const composerContainerRef = useRef<HTMLDivElement | null>(null);
   const timelineViewportRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const notifiedPermissionRequestIdsRef = useRef<Record<string, true>>({});
   const notifiedCompletionIdsRef = useRef<Record<string, true>>({});
 
   const activeSession = sessions.find((session) => session.clientSessionId === activeSessionId) ?? null;
+  const activeAvailableCommands = activeSession?.availableCommands ?? [];
+  const commandCompletions = useMemo(
+    () => getPromptCommandCompletions(promptText, activeAvailableCommands),
+    [activeAvailableCommands, promptText],
+  );
+  const completionQuery = useMemo(() => extractPromptCommandQuery(promptText), [promptText]);
+  const completionSections = useMemo(
+    () => buildCompletionSections(commandCompletions, completionQuery),
+    [commandCompletions, completionQuery],
+  );
+  const capabilityGroups = useMemo(
+    () => groupAvailableCapabilities(activeAvailableCommands),
+    [activeAvailableCommands],
+  );
   const activeSessionHasPendingPermission = Boolean(activeSession && activeSession.permissions.length > 0);
   const activeSessionIsRunning = Boolean(activeSession && isSessionRunning(activeSession));
   const activeSessionModeOptions =
@@ -260,6 +284,33 @@ export default function App() {
       setSidebarTab("sessions");
     }
   }, [activeSessionId, sessions.length]);
+
+  useEffect(() => {
+    setCommandSuggestionIndex(0);
+  }, [activeSessionId, promptText, commandCompletions.length]);
+
+  useEffect(() => {
+    if (commandCompletions.length < 1) {
+      setIsCompletionOpen(false);
+    }
+  }, [commandCompletions.length]);
+
+  useEffect(() => {
+    const onPointerDown = (event: MouseEvent) => {
+      const root = composerContainerRef.current;
+      if (!root) {
+        return;
+      }
+      if (event.target instanceof Node && root.contains(event.target)) {
+        return;
+      }
+      setIsCompletionOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+    };
+  }, []);
 
   useEffect(() => {
     setCollapsedSubagentRoots((current) => {
@@ -631,6 +682,7 @@ export default function App() {
               historyTotal: 0,
               historyStart: 0,
               permissions: [],
+              availableCommands: [],
               updatedAt: new Date().toISOString(),
             }),
           ];
@@ -777,6 +829,16 @@ export default function App() {
 
   function consumeSessionUpdate(clientSessionId: string, update: SessionUpdate) {
     switch (update.sessionUpdate) {
+      case "available_commands_update": {
+        const nextCommands = normalizeAvailableCommands(
+          update.availableCommands ?? update.supportedCommands ?? update.commands,
+        );
+        updateSession(clientSessionId, (session) => ({
+          ...session,
+          availableCommands: nextCommands,
+        }));
+        break;
+      }
       case "agent_message_chunk": {
         const chunkText = extractChunkText(update.content);
         if (chunkText) {
@@ -865,6 +927,10 @@ export default function App() {
       return;
     }
     setPromptText("");
+  }
+
+  function applyCommandSuggestion(commandName: string) {
+    setPromptText((current) => applyPromptCommandCompletion(current, commandName));
   }
 
   function cancelActiveSession() {
@@ -1346,7 +1412,7 @@ export default function App() {
             </div>
           </div>
         ) : (
-          <div className="composer">
+          <div className="composer" ref={composerContainerRef}>
             <div className="composer-mode-row">
               <span>会话模式</span>
               <select
@@ -1365,17 +1431,85 @@ export default function App() {
                 ))}
               </select>
             </div>
+            <p className="composer-capability-summary">
+              ACP 能力：tools {capabilityGroups.tools.length} · mcp {capabilityGroups.mcp.length} · skills {capabilityGroups.skills.length}
+            </p>
+            {isCompletionOpen && commandCompletions.length > 0 ? (
+              <div className="composer-completions" role="listbox" aria-label="命令补全">
+                {completionSections.map((section) => (
+                  <div key={section.key} className="composer-completion-section">
+                    {section.title ? <p className="composer-completion-section-title">{section.title}</p> : null}
+                    {section.items.map(({ command, index }) => (
+                      <button
+                        key={command.name}
+                        type="button"
+                        className={`composer-completion-item ${index === commandSuggestionIndex ? "active" : ""}`}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          applyCommandSuggestion(command.name);
+                          setIsCompletionOpen(false);
+                        }}
+                      >
+                        <span>
+                          {renderCompletionLabel(command.name, completionQuery)}
+                        </span>
+                        <small>{command.description || "命令"}</small>
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <div className="composer-input-shell">
             <textarea
               placeholder={activeSessionIsRunning ? "会话运行中，暂时不能发送新消息。" : "例如：分析这个目录的仓库结构，然后给我一个重构计划。"}
               value={promptText}
               disabled={activeSessionIsRunning}
-              onChange={(event) => setPromptText(event.target.value)}
+              onFocus={() => {
+                if (commandCompletions.length > 0) {
+                  setIsCompletionOpen(true);
+                }
+              }}
+              onChange={(event) => {
+                const nextValue = event.target.value;
+                setPromptText(nextValue);
+                setIsCompletionOpen(Boolean(extractPromptCommandQuery(nextValue)));
+              }}
               onKeyDown={(event) => {
                 if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
                   submitPrompt();
+                  return;
+                }
+                if (event.key === "Escape") {
+                  setIsCompletionOpen(false);
+                  return;
+                }
+                if (commandCompletions.length < 1) {
+                  return;
+                }
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setIsCompletionOpen(true);
+                  setCommandSuggestionIndex((current) => (current + 1) % commandCompletions.length);
+                  return;
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setIsCompletionOpen(true);
+                  setCommandSuggestionIndex((current) => (current - 1 + commandCompletions.length) % commandCompletions.length);
+                  return;
+                }
+                if (event.key === "Tab") {
+                  event.preventDefault();
+                  const selected = commandCompletions[commandSuggestionIndex] ?? commandCompletions[0];
+                  if (selected) {
+                    applyCommandSuggestion(selected.name);
+                    setIsCompletionOpen(false);
+                  }
                 }
               }}
             />
+            </div>
             <div className="composer-actions">
               <button className="primary" onClick={submitPrompt} disabled={!promptText.trim() || !activeSession || activeSessionIsRunning}>
                 发送到当前会话
@@ -1899,6 +2033,178 @@ function resolveToolDisplayTitle(entries: unknown[], fallbackTitle: string) {
   return fallbackTitle;
 }
 
+function normalizeAvailableCommands(rawValue: unknown): AvailableCommand[] {
+  if (!Array.isArray(rawValue)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const normalized: AvailableCommand[] = [];
+
+  for (const item of rawValue) {
+    const record = asRecord(item);
+    const rawName =
+      typeof item === "string"
+        ? item.trim()
+        : typeof record?.name === "string"
+          ? record.name.trim()
+          : typeof record?.command === "string"
+            ? record.command.trim()
+            : "";
+    const name = normalizeCommandName(rawName);
+    if (!name || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    normalized.push({
+      name,
+      description:
+        typeof record?.description === "string"
+          ? record.description.trim()
+          : typeof record?.title === "string"
+            ? record.title.trim()
+            : "",
+      inputType: "unstructured",
+    });
+  }
+
+  return normalized.sort((left, right) => left.name.localeCompare(right.name, "zh-Hans-CN"));
+}
+
+function normalizeCommandName(rawName: string) {
+  const trimmed = rawName.trim();
+  if (!trimmed) {
+    return "";
+  }
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+}
+
+function classifyCommandKind(commandName: string): "tools" | "mcp" | "skills" | "other" {
+  const normalized = commandName.toLowerCase();
+  if (normalized.includes("mcp")) {
+    return "mcp";
+  }
+  if (normalized.includes("skill")) {
+    return "skills";
+  }
+  if (normalized.startsWith("/")) {
+    return "tools";
+  }
+  return "other";
+}
+
+function groupAvailableCapabilities(commands: AvailableCommand[]) {
+  const groups: {
+    tools: AvailableCommand[];
+    mcp: AvailableCommand[];
+    skills: AvailableCommand[];
+    other: AvailableCommand[];
+  } = {
+    tools: [],
+    mcp: [],
+    skills: [],
+    other: [],
+  };
+
+  for (const command of commands) {
+    groups[classifyCommandKind(command.name)].push(command);
+  }
+
+  return groups;
+}
+
+function getPromptCommandCompletions(prompt: string, commands: AvailableCommand[]) {
+  const query = extractPromptCommandQuery(prompt);
+  if (!query) {
+    return [];
+  }
+
+  if (query === "/") {
+    return commands;
+  }
+
+  const normalizedQuery = query.toLowerCase();
+  return commands
+    .filter((command) => command.name.toLowerCase().startsWith(normalizedQuery))
+    .slice(0, 50);
+}
+
+function extractPromptCommandQuery(prompt: string) {
+  const match = prompt.match(/(^|\s)(\/[^\s]*)$/);
+  if (!match) {
+    return null;
+  }
+  return match[2] ?? null;
+}
+
+function applyPromptCommandCompletion(prompt: string, commandName: string) {
+  const trimmedName = commandName.trim();
+  if (!trimmedName) {
+    return prompt;
+  }
+  if (!prompt.trim()) {
+    return `${trimmedName} `;
+  }
+
+  const replaced = prompt.replace(/(^|\s)\/[^\s]*$/, (_match, prefix: string) => `${prefix}${trimmedName} `);
+  if (replaced !== prompt) {
+    return replaced;
+  }
+
+  const suffix = prompt.endsWith(" ") || prompt.endsWith("\n") ? "" : " ";
+  return `${prompt}${suffix}${trimmedName} `;
+}
+
+function splitCompletionLabel(commandName: string, query: string | null) {
+  const normalizedQuery = (query ?? "").trim();
+  if (!normalizedQuery) {
+    return { matched: "", rest: commandName };
+  }
+  if (!commandName.toLowerCase().startsWith(normalizedQuery.toLowerCase())) {
+    return { matched: "", rest: commandName };
+  }
+  return {
+    matched: commandName.slice(0, normalizedQuery.length),
+    rest: commandName.slice(normalizedQuery.length),
+  };
+}
+
+function renderCompletionLabel(commandName: string, query: string | null) {
+  const parts = splitCompletionLabel(commandName, query);
+  if (!parts.matched) {
+    return commandName;
+  }
+  return (
+    <>
+      <strong className="composer-completion-match">{parts.matched}</strong>
+      <span className="composer-completion-rest">{parts.rest}</span>
+    </>
+  );
+}
+
+function buildCompletionSections(commands: AvailableCommand[], query: string | null) {
+  const indexed = commands.map((command, index) => ({ command, index }));
+  if (query !== "/") {
+    return [{ key: "all", title: null, items: indexed }];
+  }
+
+  const groups = {
+    tools: indexed.filter((item) => classifyCommandKind(item.command.name) === "tools"),
+    mcp: indexed.filter((item) => classifyCommandKind(item.command.name) === "mcp"),
+    skills: indexed.filter((item) => classifyCommandKind(item.command.name) === "skills"),
+    other: indexed.filter((item) => classifyCommandKind(item.command.name) === "other"),
+  };
+
+  const sections = [
+    { key: "tools", title: "tools", items: groups.tools },
+    { key: "mcp", title: "mcp", items: groups.mcp },
+    { key: "skills", title: "skills", items: groups.skills },
+    { key: "other", title: "other", items: groups.other },
+  ].filter((section) => section.items.length > 0);
+
+  return sections.length > 0 ? sections : [{ key: "all", title: null, items: indexed }];
+}
+
 function parseToolTimelineEntries(body: string) {
   const parsed = tryParseJson(body);
   if (Array.isArray(parsed)) {
@@ -2149,6 +2455,7 @@ function normalizeSessionRecord(session: SessionRecord): SessionRecord {
     timeline: normalizeMergedTimeline(session.timeline.map(normalizeTimelineItem)),
     historyTotal: total,
     historyStart: start,
+    availableCommands: normalizeAvailableCommands(session.availableCommands),
   };
 }
 
@@ -3010,6 +3317,14 @@ export const appTestables = {
   extractPlanPreview,
   extractChunkText,
   tryParseJson,
+  normalizeAvailableCommands,
+  classifyCommandKind,
+  groupAvailableCapabilities,
+  getPromptCommandCompletions,
+  applyPromptCommandCompletion,
+  extractPromptCommandQuery,
+  splitCompletionLabel,
+  buildCompletionSections,
   canMergeToolTimelineItem,
   buildTimelineTreeRows,
   countChildrenByRoot,

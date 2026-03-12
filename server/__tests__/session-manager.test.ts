@@ -78,6 +78,7 @@ test("SessionManager.getSessionHistory returns bounded page", () => {
       historyTotal: 0,
       historyStart: 0,
       permissions: [],
+      availableCommands: [],
       updatedAt: new Date().toISOString(),
     },
     acpSession: null,
@@ -114,6 +115,7 @@ test("SessionManager.setSessionMode updates default and current mode together", 
       historyTotal: 0,
       historyStart: 0,
       permissions: [],
+      availableCommands: [],
       updatedAt: new Date().toISOString(),
     },
     acpSession: {
@@ -169,4 +171,17 @@ test("sessionManagerTestables.formatEditToolChangeMessage summarizes edit diff p
     title: "Edit 已修改 2 个文件",
     body: "Edit 工具已更新以下文件：\n- /tmp/a.ts（1 处修改）\n- /tmp/b.ts",
   });
+});
+
+test("sessionManagerTestables.normalizeAvailableCommandsSnapshot keeps slash names", () => {
+  const normalized = sessionManagerTestables.normalizeAvailableCommandsSnapshot([
+    { name: "help", description: "h" },
+    { command: "mcp.list", title: "list" },
+    "/help",
+  ]);
+
+  assert.deepEqual(
+    normalized.map((item: { name: string }) => item.name),
+    ["/help", "/mcp.list"],
+  );
 });
