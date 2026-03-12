@@ -1344,6 +1344,10 @@ export default function App() {
             className={`sidebar-tab ${sidebarTab === "sessions" ? "active" : ""}`}
             onClick={() => setSidebarTab("sessions")}
             type="button"
+            role="tab"
+            aria-selected={sidebarTab === "sessions"}
+            aria-controls="panel-sessions"
+            title="查看并切换当前会话"
           >
             当前会话
           </button>
@@ -1351,33 +1355,38 @@ export default function App() {
             className={`sidebar-tab ${sidebarTab === "create" ? "active" : ""}`}
             onClick={() => setSidebarTab("create")}
             type="button"
+            role="tab"
+            aria-selected={sidebarTab === "create"}
+            aria-controls="panel-create"
+            title="新建一个 Claude Code 会话"
           >
-            新建会话
+            + 新建会话
           </button>
         </div>
 
         <div className="sidebar-body">
           {sidebarTab === "create" ? (
-            <div className="tab-panel create-panel">
+            <div id="panel-create" className="tab-panel create-panel" role="tabpanel" aria-label="新建会话">
               <div className="details">
-                <p>会话目录</p>
-                <input value={workspacePath} onChange={(event) => setWorkspacePath(event.target.value)} />
-                <p>会话名</p>
+                <label htmlFor="create-workspace-path">会话目录</label>
+                <input id="create-workspace-path" value={workspacePath} placeholder="请输入绝对路径，例如 /home/user/project" onChange={(event) => setWorkspacePath(event.target.value)} />
+                <label htmlFor="create-session-title">会话名</label>
                 <input
-                  value={newSessionTitle}
+                  id="create-session-title"
                   placeholder="可选，例如 leduo-api"
                   onChange={(event) => setNewSessionTitle(event.target.value)}
                 />
-                <p>默认模式</p>
-                <select value={newSessionModeId} onChange={(event) => setNewSessionModeId(event.target.value)}>
+                <label htmlFor="create-session-mode">默认模式</label>
+                <select id="create-session-mode" value={newSessionModeId} onChange={(event) => setNewSessionModeId(event.target.value)}>
                   {MODE_OPTIONS.map((option) => (
                     <option key={option.id} value={option.id}>
                       {option.label}
                     </option>
                   ))}
                 </select>
-                <p>当前目录的子目录</p>
+                <label htmlFor="create-subdir">当前目录的子目录</label>
                 <select
+                  id="create-subdir"
                   value=""
                   disabled={directoryLoading || directoryOptions.length === 0}
                   onChange={(event) => {
@@ -1431,26 +1440,34 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <div className="tab-panel fill">
+            <div id="panel-sessions" className="tab-panel fill" role="tabpanel" aria-label="当前会话">
               <div className="actions compact">
-                <button className="secondary" onClick={openVscodeRemote} disabled={!config?.vscodeRemoteUri}>
+                <button
+                  className="secondary"
+                  onClick={openVscodeRemote}
+                  disabled={!config?.vscodeRemoteUri}
+                  title={config?.vscodeRemoteUri ? "在 VS Code Remote SSH 中打开工作目录" : "需要配置 LEDUO_PATROL_SSH_HOST 环境变量"}
+                >
                   打开 VS Code Remote SSH
                 </button>
               </div>
               <div className="session-list">
                 {sessions.length === 0 ? (
-                  <div className="empty">还没有会话。切到“新建会话”创建一个。</div>
+                  <div className="empty">还没有会话。点击「+ 新建会话」创建一个。</div>
                 ) : (
                   sessions.map((session) => {
                     const sidebarStatus = getSessionSidebarStatus(session);
                     const updatedAtLabel = formatRelativeUpdatedAt(session.updatedAt);
                     const sessionModeLabel = labelForMode(session.defaultModeId);
                     const sidebarWorkspacePath = formatWorkspacePathForSidebar(session.workspacePath, config?.allowedRoots ?? []);
+                    const isActive = session.clientSessionId === activeSessionId;
                     return (
                       <button
                         key={session.clientSessionId}
-                        className={`session-chip ${session.clientSessionId === activeSessionId ? "active" : ""}`}
+                        className={`session-chip ${isActive ? "active" : ""}`}
                         onClick={() => setActiveSessionId(session.clientSessionId)}
+                        aria-current={isActive ? "true" : undefined}
+                        title={session.title || session.workspacePath}
                       >
                         <span className="session-chip-title" title={session.title}>
                           {formatSessionTitleForDisplay(session.title)}
