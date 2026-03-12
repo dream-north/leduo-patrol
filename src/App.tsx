@@ -2127,10 +2127,15 @@ function getPromptCommandCompletions(prompt: string, commands: AvailableCommand[
   if (!query) {
     return [];
   }
+
+  if (query === "/") {
+    return commands;
+  }
+
   const normalizedQuery = query.toLowerCase();
   return commands
     .filter((command) => command.name.toLowerCase().startsWith(normalizedQuery))
-    .slice(0, 8);
+    .slice(0, 50);
 }
 
 function extractPromptCommandQuery(prompt: string) {

@@ -342,6 +342,8 @@ test("app available command helpers normalize group and complete", () => {
 
   const completions = appTestables.getPromptCommandCompletions("请执行 /to", normalized);
   assert.deepEqual(completions.map((item) => item.name), ["/tool.run"]);
+  const allCompletions = appTestables.getPromptCommandCompletions("/", normalized);
+  assert.deepEqual(allCompletions.map((item) => item.name), ["/mcp.list", "/skill.search", "/tool.run"]);
   assert.equal(appTestables.extractPromptCommandQuery("/mc"), "/mc");
   assert.equal(appTestables.applyPromptCommandCompletion("先试试 /to", "/tool.run"), "先试试 /tool.run ");
   assert.deepEqual(appTestables.splitCompletionLabel("/tool.run", "/to"), {
