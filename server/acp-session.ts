@@ -237,7 +237,7 @@ export class ClaudeAcpSession {
     return response.sessions[0]?.sessionId ?? null;
   }
 
-  async prompt(text: string) {
+  async prompt(text: string, images?: Array<{ data: string; mimeType: string }>) {
     const sessionId = await this.ensureSession();
     if (!this.connection || !sessionId) {
       throw new Error("ACP session is not available.");
@@ -251,10 +251,19 @@ export class ClaudeAcpSession {
     this.onEvent({ type: "prompt_started", payload: { promptId, text } });
 
     try {
+      // Images first, then text — mirrors the convention used by Claude's own clients
+      // (vision context before the instruction yields better results).
+      const promptContent: schema.ContentBlock[] = [];
+      if (images && images.length > 0) {
+        for (const img of images) {
+          promptContent.push({ type: "image", data: img.data, mimeType: img.mimeType });
+        }
+      }
+      promptContent.push({ type: "text", text });
       const response = await this.connection.prompt({
         sessionId,
         messageId: randomUUID(),
-        prompt: [{ type: "text", text }],
+        prompt: promptContent,
       });
       this.onEvent({
         type: "prompt_finished",

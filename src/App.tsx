@@ -30,6 +30,7 @@ type TimelineItem = {
   title: string;
   body: string;
   meta?: string;
+  images?: Array<{ data: string; mimeType: string }>;
 };
 
 type TimelineTreeRow = {
@@ -62,6 +63,12 @@ type SessionRecord = {
   permissions: PermissionPayload[];
   availableCommands?: AvailableCommand[];
   updatedAt: string;
+};
+
+type PendingImage = {
+  id: string;
+  dataUrl: string;
+  mimeType: string;
 };
 
 type SessionSidebarStatusTone = "pending" | "running" | "completed" | "error" | "connecting";
@@ -237,10 +244,12 @@ export default function App() {
   const [collapsedSubagentRoots, setCollapsedSubagentRoots] = useState<Record<string, boolean>>({});
   const [demoFixtures, setDemoFixtures] = useState<DemoFixtures | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(false);
-  const [pendingQueue, setPendingQueue] = useState<Array<{ id: string; text: string }>>([]);
+  const [pendingQueue, setPendingQueue] = useState<Array<{ id: string; text: string; images?: Array<{ data: string; mimeType: string }> }>>([]);
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const demoPreset = useMemo(() => readDemoPresetFromUrl(), []);
   const socketRef = useRef<WebSocket | null>(null);
   const pendingQueueRef = useRef(pendingQueue);
+  const pendingPromptImagesRef = useRef<Map<string, Array<{ data: string; mimeType: string }>>>(new Map());
   const composerContainerRef = useRef<HTMLDivElement | null>(null);
   const timelineViewportRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -313,20 +322,27 @@ export default function App() {
 
   useEffect(() => {
     setPendingQueue([]);
+    setPendingImages([]);
   }, [activeSessionId]);
 
   useEffect(() => {
     if (!activeSessionIsRunning && pendingQueueRef.current.length > 0 && activeSession) {
       const [first, ...rest] = pendingQueueRef.current;
+      if (first.images && first.images.length > 0) {
+        pendingPromptImagesRef.current.set(activeSession.clientSessionId, first.images);
+      }
       const sent = sendCommand({
         type: "prompt",
         payload: {
           clientSessionId: activeSession.clientSessionId,
           text: first.text,
+          images: first.images,
         },
       });
       if (sent) {
         setPendingQueue(rest);
+      } else {
+        pendingPromptImagesRef.current.delete(activeSession.clientSessionId);
       }
     }
   }, [activeSessionIsRunning]);
@@ -871,15 +887,19 @@ export default function App() {
           body: message.payload.sessionId,
         });
         break;
-      case "prompt_started":
+      case "prompt_started": {
+        const promptImages = pendingPromptImagesRef.current.get(message.payload.clientSessionId);
+        pendingPromptImagesRef.current.delete(message.payload.clientSessionId);
         updateSession(message.payload.clientSessionId, (session) => ({ ...session, busy: true }));
         appendSessionTimeline(message.payload.clientSessionId, {
           id: message.payload.promptId,
           kind: "user",
           title: "你",
           body: message.payload.text,
+          images: promptImages && promptImages.length > 0 ? promptImages : undefined,
         });
         break;
+      }
       case "prompt_finished":
         {
           const keepRunning = shouldKeepSessionRunningAfterPromptFinished(message.payload.stopReason);
@@ -1072,13 +1092,22 @@ export default function App() {
 
   function submitPrompt() {
     const text = promptText.trim();
-    if (!text || !activeSession) {
+    if ((!text && pendingImages.length === 0) || !activeSession) {
       return;
     }
+    const images = pendingImages.flatMap((img) => {
+      const commaIndex = img.dataUrl.indexOf(",");
+      if (commaIndex === -1) return [];
+      return [{ data: img.dataUrl.slice(commaIndex + 1), mimeType: img.mimeType }];
+    });
     if (isSessionRunning(activeSession)) {
-      setPendingQueue((q) => [...q, { id: makeId(), text }]);
+      setPendingQueue((q) => [...q, { id: makeId(), text, images: images.length > 0 ? images : undefined }]);
       setPromptText("");
+      setPendingImages([]);
       return;
+    }
+    if (images.length > 0) {
+      pendingPromptImagesRef.current.set(activeSession.clientSessionId, images);
     }
     if (
       !sendCommand({
@@ -1086,12 +1115,15 @@ export default function App() {
         payload: {
           clientSessionId: activeSession.clientSessionId,
           text,
+          images: images.length > 0 ? images : undefined,
         },
       })
     ) {
+      pendingPromptImagesRef.current.delete(activeSession.clientSessionId);
       return;
     }
     setPromptText("");
+    setPendingImages([]);
   }
 
   function applyCommandSuggestion(commandName: string) {
@@ -1654,6 +1686,18 @@ export default function App() {
                 <div className="composer-pending-queue-list">
                   {pendingQueue.map((item) => (
                     <div key={item.id} className="composer-pending-queue-item">
+                      {item.images && item.images.length > 0 ? (
+                        <div className="composer-pending-queue-images">
+                          {item.images.map((img, idx) => (
+                            <img
+                              key={idx}
+                              src={`data:${img.mimeType};base64,${img.data}`}
+                              alt={`图片 ${idx + 1}`}
+                              className="composer-pending-queue-img"
+                            />
+                          ))}
+                        </div>
+                      ) : null}
                       <p className="composer-pending-queue-text">{item.text}</p>
                       <div className="composer-pending-queue-actions">
                         <button
@@ -1679,6 +1723,25 @@ export default function App() {
               </div>
             ) : null}
             <div className="composer-input-shell">
+            {pendingImages.length > 0 ? (
+              <div className="composer-image-previews">
+                {pendingImages.map((img, index) => (
+                  <div key={img.id} className="composer-image-preview">
+                    <div className="composer-image-preview-thumb">
+                      <img src={img.dataUrl} alt={`待发送图片 ${index + 1}`} />
+                    </div>
+                    <button
+                      type="button"
+                      className="composer-image-preview-remove"
+                      title="移除图片"
+                      onClick={() => setPendingImages((prev) => prev.filter((i) => i.id !== img.id))}
+                    >
+                      移除
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <textarea
               placeholder={activeSessionIsRunning ? "输入消息，将加入待发送队列…" : "例如：分析这个目录的仓库结构，然后给我一个重构计划。"}
               value={promptText}
@@ -1691,6 +1754,25 @@ export default function App() {
                 const nextValue = event.target.value;
                 setPromptText(nextValue);
                 setIsCompletionOpen(Boolean(extractPromptCommandQuery(nextValue)));
+              }}
+              onPaste={(event) => {
+                const items = event.clipboardData?.items;
+                if (!items) return;
+                const imageItems = Array.from(items).filter((item) => item.type.startsWith("image/"));
+                if (imageItems.length === 0) return;
+                event.preventDefault();
+                for (const item of imageItems) {
+                  const blob = item.getAsFile();
+                  if (!blob) continue;
+                  const mimeType = item.type;
+                  const reader = new FileReader();
+                  reader.onload = (e) => {
+                    const dataUrl = e.target?.result;
+                    if (typeof dataUrl !== "string") return;
+                    setPendingImages((prev) => [...prev, { id: makeId(), dataUrl, mimeType }]);
+                  };
+                  reader.readAsDataURL(blob);
+                }
               }}
               onKeyDown={(event) => {
                 if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -1728,7 +1810,7 @@ export default function App() {
             />
             </div>
             <div className="composer-actions">
-              <button className="primary" onClick={submitPrompt} disabled={!promptText.trim() || !activeSession}>
+              <button className="primary" onClick={submitPrompt} disabled={(!promptText.trim() && pendingImages.length === 0) || !activeSession}>
                 {activeSessionIsRunning ? "加入队列" : "发送到当前会话"}
               </button>
               <button className="secondary composer-cancel" onClick={cancelActiveSession} disabled={!activeSessionIsRunning}>
@@ -1945,7 +2027,12 @@ function TimelineRow(props: {
           </span>
         ) : null}
       </span>
-      <span className={`timeline-body ${expandedPreview ? "multiline" : ""}`}>{summary}</span>
+      <span className={`timeline-body ${expandedPreview ? "multiline" : ""}`}>
+        {summary}
+        {props.item.images && props.item.images.length > 0 ? (
+          <span className="timeline-image-badge"> 🖼 {props.item.images.length}</span>
+        ) : null}
+      </span>
       <span className="timeline-meta">{props.item.meta ?? "查看"}</span>
     </button>
   );
@@ -3427,6 +3514,18 @@ function MessageModal(props: {
           </button>
         </div>
         <p className="modal-meta">{props.item.meta ?? "详细内容"}</p>
+        {props.item.images && props.item.images.length > 0 ? (
+          <div className="modal-attached-images">
+            {props.item.images.map((img, idx) => (
+              <img
+                key={idx}
+                src={`data:${img.mimeType};base64,${img.data}`}
+                alt={`附件图片 ${idx + 1}`}
+                className="modal-attached-image"
+              />
+            ))}
+          </div>
+        ) : null}
         {shouldRenderMarkdown(props.item) ? (
           <div className="modal-body markdown-body">{renderMarkdownBlocks(props.item.body)}</div>
         ) : (

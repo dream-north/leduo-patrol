@@ -16,7 +16,7 @@ import { findAvailablePort, pickPreferredLanIp } from "./network.js";
 type ClientCommand =
   | { type: "hello" }
   | { type: "create_session"; payload: { workspacePath: string; title?: string; modeId?: string } }
-  | { type: "prompt"; payload: { clientSessionId: string; text: string; modeId?: string } }
+  | { type: "prompt"; payload: { clientSessionId: string; text: string; modeId?: string; images?: Array<{ data: string; mimeType: string }> } }
   | { type: "set_mode"; payload: { clientSessionId: string; modeId: string } }
   | { type: "cancel"; payload: { clientSessionId: string } }
   | { type: "permission"; payload: { clientSessionId: string; requestId: string; optionId: string; note?: string } }
@@ -239,6 +239,7 @@ wss.on("connection", (socket, request) => {
             message.payload.clientSessionId,
             message.payload.text,
             message.payload.modeId,
+            message.payload.images,
           );
           break;
         case "set_mode":

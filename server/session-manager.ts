@@ -234,7 +234,7 @@ export class SessionManager {
     return snapshot;
   }
 
-  async prompt(clientSessionId: string, text: string, modeId?: string) {
+  async prompt(clientSessionId: string, text: string, modeId?: string, images?: Array<{ data: string; mimeType: string }>) {
     const entry = this.getEntry(clientSessionId);
     await this.connectSession(entry);
     const effectiveModeId = modeId || entry.snapshot.defaultModeId;
@@ -244,7 +244,7 @@ export class SessionManager {
     }
     entry.snapshot.updatedAt = new Date().toISOString();
     this.schedulePersist();
-    await entry.acpSession?.prompt(enrichPromptWithToolHints(text));
+    await entry.acpSession?.prompt(enrichPromptWithToolHints(text), images);
   }
 
   async setSessionMode(clientSessionId: string, modeId: string) {
