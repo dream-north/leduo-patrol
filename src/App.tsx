@@ -219,7 +219,7 @@ export default function App() {
   const [demoFixtures, setDemoFixtures] = useState<DemoFixtures | null>(null);
   const demoPreset = useMemo(() => readDemoPresetFromUrl(), []);
   const socketRef = useRef<WebSocket | null>(null);
-  const composerInputShellRef = useRef<HTMLDivElement | null>(null);
+  const composerContainerRef = useRef<HTMLDivElement | null>(null);
   const timelineViewportRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const notifiedPermissionRequestIdsRef = useRef<Record<string, true>>({});
@@ -288,7 +288,7 @@ export default function App() {
 
   useEffect(() => {
     const onPointerDown = (event: MouseEvent) => {
-      const root = composerInputShellRef.current;
+      const root = composerContainerRef.current;
       if (!root) {
         return;
       }
@@ -1441,7 +1441,7 @@ export default function App() {
             </div>
           </div>
         ) : (
-          <div className="composer">
+          <div className="composer" ref={composerContainerRef}>
             <div className="composer-mode-row">
               <span>会话模式</span>
               <select
@@ -1463,10 +1463,33 @@ export default function App() {
             <p className="composer-capability-summary">
               ACP 能力：tools {capabilityGroups.tools.length} · mcp {capabilityGroups.mcp.length} · skills {capabilityGroups.skills.length}
             </p>
-            <div
-              className={`composer-input-shell ${isCompletionOpen && commandCompletions.length > 0 ? "completion-open" : ""}`}
-              ref={composerInputShellRef}
-            >
+            {isCompletionOpen && commandCompletions.length > 0 ? (
+              <div className="composer-completions" role="listbox" aria-label="命令补全">
+                {completionSections.map((section) => (
+                  <div key={section.key} className="composer-completion-section">
+                    {section.title ? <p className="composer-completion-section-title">{section.title}</p> : null}
+                    {section.items.map(({ command, index }) => (
+                      <button
+                        key={command.name}
+                        type="button"
+                        className={`composer-completion-item ${index === commandSuggestionIndex ? "active" : ""}`}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          applyCommandSuggestion(command.name);
+                          setIsCompletionOpen(false);
+                        }}
+                      >
+                        <span>
+                          {renderCompletionLabel(command.name, completionQuery)}
+                        </span>
+                        <small>{command.description || "命令"}</small>
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <div className="composer-input-shell">
             <textarea
               placeholder={activeSession?.busy ? "会话运行中，暂时不能发送新消息。" : "例如：分析这个目录的仓库结构，然后给我一个重构计划。"}
               value={promptText}
@@ -1515,32 +1538,6 @@ export default function App() {
                 }
               }}
             />
-              {isCompletionOpen && commandCompletions.length > 0 ? (
-                <div className="composer-completions" role="listbox" aria-label="命令补全">
-                  {completionSections.map((section) => (
-                    <div key={section.key} className="composer-completion-section">
-                      {section.title ? <p className="composer-completion-section-title">{section.title}</p> : null}
-                      {section.items.map(({ command, index }) => (
-                        <button
-                          key={command.name}
-                          type="button"
-                          className={`composer-completion-item ${index === commandSuggestionIndex ? "active" : ""}`}
-                          onMouseDown={(event) => {
-                            event.preventDefault();
-                            applyCommandSuggestion(command.name);
-                            setIsCompletionOpen(false);
-                          }}
-                        >
-                          <span>
-                            {renderCompletionLabel(command.name, completionQuery)}
-                          </span>
-                          <small>{command.description || "命令"}</small>
-                        </button>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              ) : null}
             </div>
             <div className="composer-actions">
               <button className="primary" onClick={submitPrompt} disabled={!promptText.trim() || !activeSession || activeSession.busy}>
