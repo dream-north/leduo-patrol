@@ -221,9 +221,15 @@ h1 {
   min-height: 0;
 }
 
-.details p {
+.details p,
+.details label {
   color: var(--muted);
   margin-bottom: 6px;
+}
+
+.details label {
+  display: block;
+  cursor: default;
 }
 
 .details code {
@@ -280,12 +286,27 @@ h1 {
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.62);
   color: var(--muted);
+  font-weight: 400;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+
+.sidebar-tab:not(.active):hover {
+  background: rgba(255, 255, 255, 0.88);
+  border-color: rgba(58, 45, 33, 0.22);
+  color: var(--text);
+}
+
+.sidebar-tab:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 
 .sidebar-tab.active {
-  background: rgba(216, 91, 52, 0.12);
-  border-color: rgba(216, 91, 52, 0.4);
+  background: rgba(216, 91, 52, 0.2);
+  border-color: rgba(216, 91, 52, 0.55);
   color: var(--brand-dark);
+  font-weight: 600;
+  box-shadow: 0 1px 6px rgba(216, 91, 52, 0.14);
 }
 
 .sidebar-body {
@@ -311,7 +332,8 @@ h1 {
   padding: 10px;
 }
 
-.create-panel .details p {
+.create-panel .details p,
+.create-panel .details label {
   margin-bottom: 4px;
   font-size: 10px;
 }
@@ -869,6 +891,19 @@ h1 {
   color: var(--text);
   min-width: 0;
   overflow: hidden;
+  transition: background 150ms ease, border-color 150ms ease, transform 100ms ease, box-shadow 150ms ease;
+}
+
+.session-chip:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(58, 45, 33, 0.22);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(64, 41, 19, 0.08);
+}
+
+.session-chip:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 
 .session-chip-title {
@@ -886,8 +921,9 @@ h1 {
 }
 
 .session-chip.active {
-  background: rgba(216, 91, 52, 0.14);
-  border-color: rgba(216, 91, 52, 0.45);
+  background: rgba(216, 91, 52, 0.16);
+  border-color: rgba(216, 91, 52, 0.52);
+  box-shadow: inset 3px 0 0 var(--brand);
 }
 
 .session-chip-meta {
