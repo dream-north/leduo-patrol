@@ -144,13 +144,33 @@ test("SessionManager.setSessionMode updates default and current mode together", 
 });
 
 
-test("sessionManagerTestables.enrichPromptWithToolHints appends routing hint once", () => {
-  const enriched = sessionManagerTestables.enrichPromptWithToolHints("请读取配置并写回");
-  assert.match(enriched, /mcp_acp_Read/);
-  assert.match(enriched, /mcp_acp_Write/);
+test("sessionManagerTestables.enrichPromptWithToolHints does not append routing hint", () => {
+  const untouched = sessionManagerTestables.enrichPromptWithToolHints("请读取配置并写回");
+  assert.equal(untouched, "请读取配置并写回");
 
-  const untouched = sessionManagerTestables.enrichPromptWithToolHints("请使用 mcp_acp_Read 读取文件");
-  assert.equal(untouched, "请使用 mcp_acp_Read 读取文件");
+  const trimmed = sessionManagerTestables.enrichPromptWithToolHints("  请使用 mcp_acp_Read 读取文件  ");
+  assert.equal(trimmed, "请使用 mcp_acp_Read 读取文件");
+});
+
+test("sessionManagerTestables.formatEditToolChangeMessage summarizes edit diff payload", () => {
+  const formatted = sessionManagerTestables.formatEditToolChangeMessage(
+    JSON.stringify([
+      {
+        oldFileName: "/tmp/a.ts",
+        newFileName: "/tmp/a.ts",
+        hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, lines: ["-x", "+y"] }],
+      },
+      {
+        index: "/tmp/b.ts",
+        hunks: [],
+      },
+    ]),
+  );
+
+  assert.deepEqual(formatted, {
+    title: "Edit 已修改 2 个文件",
+    body: "Edit 工具已更新以下文件：\n- /tmp/a.ts（1 处修改）\n- /tmp/b.ts",
+  });
 });
 
 test("sessionManagerTestables.normalizeAvailableCommandsSnapshot keeps slash names", () => {

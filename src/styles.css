@@ -551,6 +551,80 @@ h1 {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+.session-plan-list {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.86);
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.session-plan-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.session-plan-content {
+  flex: 1;
+  word-break: break-word;
+}
+
+.session-plan-status {
+  margin-top: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 1.5px solid rgba(58, 45, 33, 0.45);
+  flex: 0 0 14px;
+  position: relative;
+}
+
+.session-plan-status-completed {
+  background: rgba(74, 171, 112, 0.16);
+  border-color: rgba(52, 135, 86, 0.9);
+}
+
+.session-plan-status-completed::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  width: 4px;
+  height: 7px;
+  border: solid rgba(52, 135, 86, 0.95);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.session-plan-status-in_progress {
+  border-color: rgba(43, 96, 165, 0.9);
+  border-top-color: rgba(43, 96, 165, 0.2);
+  animation: session-plan-spin 0.9s linear infinite;
+}
+
+.session-plan-status-pending,
+.session-plan-status-unknown {
+  background: transparent;
+}
+
+@keyframes session-plan-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
 .composer-pending-actions {
   display: flex;
   flex-wrap: wrap;

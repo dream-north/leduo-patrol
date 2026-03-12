@@ -117,6 +117,13 @@ type DemoFixtures = {
   bySessionId: Record<string, DemoSessionFixture>;
 };
 
+type ExecutionPlanStepStatus = "completed" | "in_progress" | "pending" | "unknown";
+
+type ExecutionPlanStep = {
+  content: string;
+  status: ExecutionPlanStepStatus;
+};
+
 type EventMessage =
   | { type: "ready"; payload: { workspacePath: string; agentConnected: boolean; clientSessionId?: string } }
   | {
@@ -215,7 +222,6 @@ export default function App() {
   const [sessionFileDiffCache, setSessionFileDiffCache] = useState<Record<string, SessionFileDiffResponse>>({});
   const [historyLoadingSessionId, setHistoryLoadingSessionId] = useState("");
   const [collapsedSubagentRoots, setCollapsedSubagentRoots] = useState<Record<string, boolean>>({});
-  const [permissionNotes, setPermissionNotes] = useState<Record<string, string>>({});
   const [demoFixtures, setDemoFixtures] = useState<DemoFixtures | null>(null);
   const demoPreset = useMemo(() => readDemoPresetFromUrl(), []);
   const socketRef = useRef<WebSocket | null>(null);
@@ -241,6 +247,7 @@ export default function App() {
     [activeAvailableCommands],
   );
   const activeSessionHasPendingPermission = Boolean(activeSession && activeSession.permissions.length > 0);
+  const activeSessionIsRunning = Boolean(activeSession && isSessionRunning(activeSession));
   const activeSessionModeOptions =
     activeSession?.modes.length && activeSession.modes.length > 0
       ? activeSession.modes.map((modeId) => ({ id: modeId, label: labelForMode(modeId) }))
@@ -249,7 +256,9 @@ export default function App() {
   const globalErrorItems = useMemo(() => globalTimeline.filter((item) => item.kind === "error"), [globalTimeline]);
   const timelineRows = useMemo(() => buildTimelineTreeRows(visibleTimeline), [visibleTimeline]);
   const rootChildCount = useMemo(() => countChildrenByRoot(timelineRows), [timelineRows]);
+  const latestExecutionPlanBody = useMemo(() => findLatestExecutionPlanBody(visibleTimeline), [visibleTimeline]);
   const latestExecutionPlan = useMemo(() => findLatestExecutionPlan(visibleTimeline), [visibleTimeline]);
+  const latestExecutionPlanSteps = useMemo(() => parseExecutionPlanSteps(latestExecutionPlanBody), [latestExecutionPlanBody]);
   const browseRootPath = directoryBrowserPath || activeSession?.workspacePath || config?.workspacePath || "";
   const currentBrowsePath = directoryRootPath || browseRootPath;
   const canBrowseUp = canNavigateUp(currentBrowsePath, config?.allowedRoots ?? []);
@@ -718,13 +727,16 @@ export default function App() {
         });
         break;
       case "prompt_finished":
-        updateSession(message.payload.clientSessionId, (session) => ({ ...session, busy: false }));
-        appendSessionTimeline(message.payload.clientSessionId, {
-          id: makeId(),
-          kind: "system",
-          title: "本轮完成",
-          body: message.payload.stopReason,
-        });
+        {
+          const keepRunning = shouldKeepSessionRunningAfterPromptFinished(message.payload.stopReason);
+          updateSession(message.payload.clientSessionId, (session) => ({ ...session, busy: keepRunning }));
+          appendSessionTimeline(message.payload.clientSessionId, {
+            id: makeId(),
+            kind: "system",
+            title: keepRunning ? "等待待处理中" : "本轮完成",
+            body: message.payload.stopReason,
+          });
+        }
         break;
       case "session_mode_changed":
         updateSession(message.payload.clientSessionId, (session) => ({
@@ -763,14 +775,6 @@ export default function App() {
           ...session,
           permissions: session.permissions.filter((permission) => permission.requestId !== message.payload.requestId),
         }));
-        setPermissionNotes((current) => {
-          if (!current[message.payload.requestId]) {
-            return current;
-          }
-          const next = { ...current };
-          delete next[message.payload.requestId];
-          return next;
-        });
         break;
       case "session_closed":
         setSessions((current) => current.filter((session) => session.clientSessionId !== message.payload.clientSessionId));
@@ -908,7 +912,7 @@ export default function App() {
 
   function submitPrompt() {
     const text = promptText.trim();
-    if (!text || !activeSession || activeSession.busy) {
+    if (!text || !activeSession || isSessionRunning(activeSession)) {
       return;
     }
     if (
@@ -953,27 +957,15 @@ export default function App() {
     });
   }
 
-  function resolvePermission(permission: PermissionPayload, optionId: string, note?: string) {
-    const normalizedNote = note?.trim();
-    const didSend = sendCommand({
+  function resolvePermission(permission: PermissionPayload, optionId: string) {
+    sendCommand({
       type: "permission",
       payload: {
         clientSessionId: permission.clientSessionId,
         requestId: permission.requestId,
         optionId,
-        note: normalizedNote || undefined,
       },
     });
-    if (didSend) {
-      setPermissionNotes((current) => {
-        if (!current[permission.requestId]) {
-          return current;
-        }
-        const next = { ...current };
-        delete next[permission.requestId];
-        return next;
-      });
-    }
   }
 
   function openVscodeRemote() {
@@ -1375,16 +1367,16 @@ export default function App() {
                           })
                       : undefined
                   }
-                  displayRunningHint={Boolean(activeSession?.busy && row.item.kind === "tool" && childCount > 0 && Boolean(collapsedSubagentRoots[row.item.id]))}
+                  displayRunningHint={Boolean(activeSessionIsRunning && row.item.kind === "tool" && childCount > 0 && Boolean(collapsedSubagentRoots[row.item.id]))}
                   onOpen={() => setSelectedItem({ sessionTitle: activeSession ? formatSessionTitleForDisplay(activeSession.title) : "当前会话", item: row.item })}
                 />
               );
             })
           )}
-          {activeSession?.busy ? (
+          {activeSessionIsRunning ? (
             <div className="timeline-running-indicator" aria-live="polite">
               <span className="timeline-running-dot" aria-hidden="true" />
-              正在运行中...
+              {activeSessionHasPendingPermission ? "等待待处理中..." : "正在运行中..."}
             </div>
           ) : null}
         </div>
@@ -1393,7 +1385,6 @@ export default function App() {
             <p className="composer-pending-title">待处理确认</p>
             <div className="composer-pending-list">
               {activeSession?.permissions.map((permission) => {
-                const denyOption = permission.options.find((option) => option.kind === "deny") ?? permission.options[0];
                 return (
                   <section className="composer-pending-item" key={permission.requestId}>
                     <p className="composer-pending-tool">
@@ -1415,26 +1406,6 @@ export default function App() {
                         </button>
                       ))}
                     </div>
-                    {denyOption ? (
-                      <div className="composer-pending-note-row">
-                        <input
-                          value={permissionNotes[permission.requestId] ?? ""}
-                          onChange={(event) =>
-                            setPermissionNotes((current) => ({
-                              ...current,
-                              [permission.requestId]: event.target.value,
-                            }))
-                          }
-                          placeholder="补充说明给 Claude（可选）"
-                        />
-                        <button
-                          className="secondary"
-                          onClick={() => resolvePermission(permission, denyOption.optionId, permissionNotes[permission.requestId])}
-                        >
-                          拒绝并附言
-                        </button>
-                      </div>
-                    ) : null}
                   </section>
                 );
               })}
@@ -1446,7 +1417,7 @@ export default function App() {
               <span>会话模式</span>
               <select
                 value={activeSession?.defaultModeId ?? "default"}
-                disabled={!activeSession?.sessionId || activeSession?.busy}
+                disabled={!activeSession?.sessionId || activeSessionIsRunning}
                 onChange={(event) => {
                   if (activeSession) {
                     changeSessionMode(activeSession.clientSessionId, event.target.value);
@@ -1491,9 +1462,9 @@ export default function App() {
             ) : null}
             <div className="composer-input-shell">
             <textarea
-              placeholder={activeSession?.busy ? "会话运行中，暂时不能发送新消息。" : "例如：分析这个目录的仓库结构，然后给我一个重构计划。"}
+              placeholder={activeSessionIsRunning ? "会话运行中，暂时不能发送新消息。" : "例如：分析这个目录的仓库结构，然后给我一个重构计划。"}
               value={promptText}
-              disabled={activeSession?.busy}
+              disabled={activeSessionIsRunning}
               onFocus={() => {
                 if (commandCompletions.length > 0) {
                   setIsCompletionOpen(true);
@@ -1540,10 +1511,10 @@ export default function App() {
             />
             </div>
             <div className="composer-actions">
-              <button className="primary" onClick={submitPrompt} disabled={!promptText.trim() || !activeSession || activeSession.busy}>
+              <button className="primary" onClick={submitPrompt} disabled={!promptText.trim() || !activeSession || activeSessionIsRunning}>
                 发送到当前会话
               </button>
-              <button className="secondary composer-cancel" onClick={cancelActiveSession} disabled={!activeSession?.busy}>
+              <button className="secondary composer-cancel" onClick={cancelActiveSession} disabled={!activeSessionIsRunning}>
                 <span aria-hidden="true">⏹</span>
                 停止
               </button>
@@ -1598,7 +1569,18 @@ export default function App() {
             {latestExecutionPlan ? (
               <section className="details session-meta session-meta-card">
                 <p className="approval-label">执行计划</p>
-                <pre className="session-plan-preview">{latestExecutionPlan}</pre>
+                {latestExecutionPlanSteps.length > 0 ? (
+                  <ol className="session-plan-list">
+                    {latestExecutionPlanSteps.map((step, index) => (
+                      <li key={`${index}-${step.content}`} className="session-plan-list-item">
+                        <span className={`session-plan-status session-plan-status-${step.status}`} aria-hidden="true" />
+                        <span className="session-plan-content">{step.content}</span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <pre className="session-plan-preview">{latestExecutionPlan}</pre>
+                )}
               </section>
             ) : null}
           </>
@@ -2259,11 +2241,20 @@ function toneForConnectionState(connectionState: string): "positive" | "negative
   return "neutral";
 }
 
+function isSessionRunning(session: SessionRecord) {
+  return session.busy || session.permissions.length > 0;
+}
+
+function shouldKeepSessionRunningAfterPromptFinished(stopReason: string) {
+  const normalized = stopReason.trim().toLowerCase();
+  return normalized === "pause_turn" || normalized === "pause-turn" || normalized.includes("permission");
+}
+
 function getSessionSidebarStatus(session: SessionRecord): SessionSidebarStatus | null {
   if (session.permissions.length > 0) {
     return { label: "待处理", tone: "pending" };
   }
-  if (session.busy) {
+  if (isSessionRunning(session)) {
     return { label: "运行中", tone: "running" };
   }
   if (shouldShowSessionException(session)) {
@@ -2283,7 +2274,7 @@ function hasCompletedPrompt(session: SessionRecord) {
 }
 
 function shouldShowSessionException(session: SessionRecord) {
-  if (session.busy || session.connectionState !== "error") {
+  if (isSessionRunning(session) || session.connectionState !== "error") {
     return false;
   }
   const lastItem = [...session.timeline].reverse().find((item) => item.kind !== "system" || item.title !== "本轮完成");
@@ -2302,14 +2293,60 @@ function truncateUnknownText(value: unknown, maxLength = 500) {
   return `${normalized.slice(0, maxLength)}...（已截断，原始 ${normalized.length} 字符）`;
 }
 
-function findLatestExecutionPlan(timeline: TimelineItem[]) {
+function findLatestExecutionPlanBody(timeline: TimelineItem[]) {
   for (let index = timeline.length - 1; index >= 0; index -= 1) {
     const item = timeline[index];
     if (item?.kind === "system" && item.title === "执行计划") {
-      return truncateUnknownText(item.body, 1800);
+      return item.body;
     }
   }
   return null;
+}
+
+function findLatestExecutionPlan(timeline: TimelineItem[]) {
+  const planBody = findLatestExecutionPlanBody(timeline);
+  if (!planBody) {
+    return null;
+  }
+  return truncateUnknownText(planBody, 1800);
+}
+
+function parseExecutionPlanSteps(planBody: string | null): ExecutionPlanStep[] {
+  const parsed = tryParseJson(planBody);
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+
+  return parsed
+    .map((entry): ExecutionPlanStep | null => {
+      const record = asRecord(entry);
+      if (!record) {
+        return null;
+      }
+      const content = typeof record.content === "string" ? record.content.trim() : "";
+      if (!content) {
+        return null;
+      }
+      return {
+        content,
+        status: normalizeExecutionPlanStepStatus(record.status),
+      };
+    })
+    .filter((step): step is ExecutionPlanStep => Boolean(step));
+}
+
+function normalizeExecutionPlanStepStatus(value: unknown): ExecutionPlanStepStatus {
+  const normalized = typeof value === "string" ? value.toLowerCase() : "";
+  if (normalized === "completed") {
+    return "completed";
+  }
+  if (normalized === "in_progress") {
+    return "in_progress";
+  }
+  if (normalized === "pending") {
+    return "pending";
+  }
+  return "unknown";
 }
 
 function formatRelativeUpdatedAt(updatedAt: string, now = Date.now()) {
@@ -2488,6 +2525,21 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
         body: "请把仓库结构分析一下，并把复杂任务交给 subagent。",
       },
       {
+        id: "demo-plan-1",
+        kind: "system",
+        title: "执行计划",
+        body: JSON.stringify(
+          [
+            { content: "梳理现有 MCP 配置结构", priority: "medium", status: "completed" },
+            { content: "提炼 build_auth_params 公共方法", priority: "medium", status: "completed" },
+            { content: "补齐 api 鉴权端点并联调", priority: "medium", status: "in_progress" },
+            { content: "完善 SDK 认证模式兼容", priority: "medium", status: "pending" },
+          ],
+          null,
+          2,
+        ),
+      },
+      {
         id: "demo-tool-task-start",
         kind: "tool",
         title: "Task",
@@ -2527,7 +2579,7 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
         body: "已汇总 subagent 结果：你可以点击 `Task` 行右侧子项按钮折叠/展开内部输出。",
       },
     ],
-    historyTotal: 7,
+    historyTotal: 8,
     historyStart: 0,
     permissions: [
       {
@@ -3285,5 +3337,8 @@ export const appTestables = {
   isMarkdownTableSeparator,
   isMarkdownTableRow,
   findLatestExecutionPlan,
+  findLatestExecutionPlanBody,
+  parseExecutionPlanSteps,
   truncateUnknownText,
+  shouldKeepSessionRunningAfterPromptFinished,
 };

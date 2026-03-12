@@ -447,6 +447,19 @@ export class SessionManager {
         break;
       case "error":
         entry.snapshot.busy = false;
+        {
+          const editChangeMessage = formatEditToolChangeMessage(event.payload.message);
+          if (editChangeMessage) {
+            this.appendTimeline(entry, {
+              id: randomUUID(),
+              kind: "tool",
+              title: editChangeMessage.title,
+              body: editChangeMessage.body,
+              meta: "completed",
+            });
+            break;
+          }
+        }
         entry.snapshot.connectionState = "error";
         this.appendTimeline(entry, {
           id: randomUUID(),
@@ -788,14 +801,41 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function enrichPromptWithToolHints(text: string) {
   const normalized = text.trim();
-  if (!normalized) {
-    return text;
+  return normalized || text;
+}
+
+function formatEditToolChangeMessage(message: string) {
+  const parsed = tryParseJson(message);
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    return null;
   }
-  const hint = `\n\n[Tool routing hint]\n如果要读写工作区文件，请优先直接调用 mcp_acp_Read / mcp_acp_Write；只有在工具名未知时再调用 ToolSearch。`;
-  if (normalized.includes("mcp_acp_Read") || normalized.includes("mcp_acp_Write")) {
-    return normalized;
+
+  const files = parsed
+    .map((entry) => asRecord(entry))
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+    .map((entry) => {
+      const filePath =
+        typeof entry.newFileName === "string"
+          ? entry.newFileName
+          : typeof entry.oldFileName === "string"
+            ? entry.oldFileName
+            : typeof entry.index === "string"
+              ? entry.index
+              : "";
+      const hunks = Array.isArray(entry.hunks) ? entry.hunks.length : 0;
+      return { filePath, hunks };
+    })
+    .filter((entry) => entry.filePath);
+
+  if (files.length === 0) {
+    return null;
   }
-  return `${normalized}${hint}`;
+
+  const lines = files.map((entry) => `- ${entry.filePath}${entry.hunks > 0 ? `（${entry.hunks} 处修改）` : ""}`);
+  return {
+    title: `Edit 已修改 ${files.length} 个文件`,
+    body: `Edit 工具已更新以下文件：\n${lines.join("\n")}`,
+  };
 }
 
 function labelForMode(modeId?: string) {
@@ -923,6 +963,7 @@ export const sessionManagerTestables = {
   extractChunkText,
   normalizeAvailableCommandsSnapshot,
   enrichPromptWithToolHints,
+  formatEditToolChangeMessage,
   labelForMode,
   formatError,
 };
