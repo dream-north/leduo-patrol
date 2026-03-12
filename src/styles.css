@@ -134,6 +134,36 @@ h1 {
   flex-shrink: 0;
 }
 
+.brand-lockup {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.brand-stack {
+  min-width: 0;
+}
+
+.brand-copy {
+  min-width: 0;
+}
+
+.masthead-lede {
+  margin-top: 8px;
+}
+
+.brand-icon {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.95);
+  object-fit: cover;
+  box-shadow: 0 8px 18px rgba(45, 26, 11, 0.16);
+}
+
 .error-indicator {
   flex: 0 0 auto;
   min-width: 24px;
