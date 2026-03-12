@@ -167,6 +167,14 @@ const EMPTY_TIMELINE: TimelineItem[] = [];
 
 type DemoPreset = "subagent-tree" | null;
 
+type ToastNotification = {
+  id: string;
+  title: string;
+  body: string;
+  sessionId?: string;
+  kind: "permission" | "completion";
+};
+
 function readAccessKeyFromUrl() {
   if (typeof window === "undefined") {
     return "";
@@ -238,6 +246,8 @@ export default function App() {
   const notifiedCompletionIdsRef = useRef<Record<string, true>>({});
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
   const xtermRef = useRef<Terminal | null>(null);
+  const [toasts, setToasts] = useState<ToastNotification[]>([]);
+  const toastTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const fitAddonRef = useRef<FitAddon | null>(null);
 
   const activeSession = sessions.find((session) => session.clientSessionId === activeSessionId) ?? null;
@@ -447,7 +457,10 @@ export default function App() {
           continue;
         }
         notifiedPermissionRequestIdsRef.current[permission.requestId] = true;
-        pushBrowserNotification("待处理确认", `${formatSessionTitleForDisplay(session.title)}: ${summarizeToolTitle(permission.toolCall.title, permission.toolCall.rawInput, permission.toolCall.toolCallId)}`);
+        const title = "待处理确认";
+        const body = `${formatSessionTitleForDisplay(session.title)}: ${summarizeToolTitle(permission.toolCall.title, permission.toolCall.rawInput, permission.toolCall.toolCallId)}`;
+        pushBrowserNotification(title, body);
+        pushInAppToast(permission.requestId, title, body, session.clientSessionId, "permission");
       }
 
       for (const item of session.timeline) {
@@ -458,10 +471,19 @@ export default function App() {
           continue;
         }
         notifiedCompletionIdsRef.current[item.id] = true;
-        pushBrowserNotification("任务已完成", `${formatSessionTitleForDisplay(session.title)}: ${item.body || "本轮执行完成"}`);
+        const title = "任务已完成";
+        const body = `${formatSessionTitleForDisplay(session.title)}: ${item.body || "本轮执行完成"}`;
+        pushBrowserNotification(title, body);
+        pushInAppToast(item.id, title, body, session.clientSessionId, "completion");
       }
     }
   }, [sessions]);
+
+  useEffect(() => {
+    const pendingCount = sessions.reduce((sum, s) => sum + s.permissions.length, 0);
+    const appName = config?.appName ?? "乐汪队";
+    document.title = pendingCount > 0 ? `[${pendingCount} 待确认] ${appName}` : appName;
+  }, [sessions, config?.appName]);
 
   useEffect(() => {
     if (!accessKey) {
@@ -597,6 +619,25 @@ export default function App() {
       new Notification(title, { body });
     } catch {
       // no-op
+    }
+  }
+
+  function pushInAppToast(id: string, title: string, body: string, sessionId: string | undefined, kind: ToastNotification["kind"]) {
+    setToasts((current) => {
+      if (current.some((t) => t.id === id)) return current;
+      return [...current, { id, title, body, sessionId, kind }];
+    });
+    toastTimeoutsRef.current[id] = setTimeout(() => {
+      dismissToast(id);
+    }, 6000);
+  }
+
+  function dismissToast(id: string) {
+    setToasts((current) => current.filter((t) => t.id !== id));
+    const timeout = toastTimeoutsRef.current[id];
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+      delete toastTimeoutsRef.current[id];
     }
   }
 
@@ -1242,7 +1283,8 @@ export default function App() {
   }
 
   return (
-    <div className="shell multi-session">
+    <>
+      <div className="shell multi-session">
       <aside className="panel masthead">
         <div className="masthead-intro">
           <div>
@@ -1742,6 +1784,8 @@ export default function App() {
         </div>
       ) : null}
     </div>
+    <ToastContainer toasts={toasts} onDismiss={dismissToast} onNavigate={(sessionId) => setActiveSessionId(sessionId)} />
+    </>
   );
 }
 
@@ -1750,6 +1794,41 @@ function StatusCard(props: { label: string; value: string; tone?: "positive" | "
     <div className={`status-card ${props.tone ? `status-card-${props.tone}` : ""}`}>
       <span>{props.label}</span>
       <strong>{props.value}</strong>
+    </div>
+  );
+}
+
+function ToastContainer(props: {
+  toasts: ToastNotification[];
+  onDismiss: (id: string) => void;
+  onNavigate: (sessionId: string) => void;
+}) {
+  if (props.toasts.length === 0) return null;
+  return (
+    <div className="toast-container" aria-live="polite" aria-atomic="false">
+      {props.toasts.map((toast) => (
+        <div key={toast.id} className={`toast-item toast-${toast.kind}`} role="alert">
+          {toast.sessionId ? (
+            <button
+              className="toast-content toast-content-clickable"
+              type="button"
+              onClick={() => props.onNavigate(toast.sessionId!)}
+              aria-label={`跳转到会话：${toast.body}`}
+            >
+              <strong className="toast-title">{toast.title}</strong>
+              <span className="toast-body">{toast.body}</span>
+            </button>
+          ) : (
+            <div className="toast-content">
+              <strong className="toast-title">{toast.title}</strong>
+              <span className="toast-body">{toast.body}</span>
+            </div>
+          )}
+          <button className="toast-dismiss" onClick={() => props.onDismiss(toast.id)} aria-label="关闭通知" type="button">
+            ×
+          </button>
+        </div>
+      ))}
     </div>
   );
 }
