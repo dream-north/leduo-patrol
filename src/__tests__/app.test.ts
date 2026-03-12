@@ -330,7 +330,7 @@ test("app summarizeToolTitle reads subagent description from stringified rawInpu
 test("app applyDemoPreset injects demo session for subagent tree preview", () => {
   const fixtures = appTestables.buildDemoFixtures("/repo", "subagent-tree");
   const sessions = appTestables.applyDemoPreset([], fixtures);
-  assert.equal(sessions[0]?.title, "panshi_wip_dev_20260309_chatops_recommands_buffer_machine_search_pipeline_validation_regression_follow_up");
+  assert.equal(sessions[0]?.title, "demo_release_readiness_multi_service_validation_timeline_and_diff_walkthrough");
 
   const taskRow = sessions[0]?.timeline.find((item) => item.kind === "tool" && item.title === "Task");
   assert.equal(taskRow?.meta, "running");
@@ -350,7 +350,7 @@ test("app buildDemoFixtures includes 8 sessions for overflow sidebar regression"
 test("app buildDemoFixtures includes session diff showcase data", () => {
   const fixtures = appTestables.buildDemoFixtures("/repo", "subagent-tree");
   const session = fixtures?.bySessionId["demo-subagent-tree"];
-  assert.equal(session?.sessionDiff.workingTree.length, 2);
+  assert.equal(session?.sessionDiff.workingTree.length, 3);
   assert.equal(session?.fileDiffs["workingTree:src/App.tsx"]?.category, "workingTree");
   assert.equal(session?.session.permissions.length, 1);
 });

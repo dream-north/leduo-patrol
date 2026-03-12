@@ -1086,7 +1086,7 @@ export default function App() {
           <div>
             <p className="eyebrow">leduo-patrol</p>
             <h1>{config?.appName ?? "乐汪队"}</h1>
-            <p className="lede">同一页面内管理多个服务器目录会话，输出会自动合并并支持折叠。</p>
+            <p className="lede">欢迎来到 leduo-patrol：在一个控制台里并行查看多会话进展、差异和执行结果。</p>
           </div>
           {globalErrorItems.length > 0 ? (
             <button
@@ -2196,7 +2196,7 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
   }
 
   const demoLongSessionTitle =
-    "panshi_wip_dev_20260309_chatops_recommands_buffer_machine_search_pipeline_validation_regression_follow_up";
+    "demo_release_readiness_multi_service_validation_timeline_and_diff_walkthrough";
   const demoLongWorkspacePath =
     "/workspace/leduo-patrol/demo_assets/very_long_gallery_workspace/ink_landscape_collection_archive/seasonal_series_spring_morning_mist_over_mountains_with_boat_and_pines";
 
@@ -2215,7 +2215,7 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
         id: "demo-user-1",
         kind: "user",
         title: "你",
-        body: "请把仓库结构分析一下，并把复杂任务交给 subagent。",
+        body: "请完成“发布前检查”演练：拆分子任务、汇总风险，并给出最终建议。",
       },
       {
         id: "demo-plan-1",
@@ -2223,10 +2223,10 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
         title: "执行计划",
         body: JSON.stringify(
           [
-            { content: "梳理现有 MCP 配置结构", priority: "medium", status: "completed" },
-            { content: "提炼 build_auth_params 公共方法", priority: "medium", status: "completed" },
-            { content: "补齐 api 鉴权端点并联调", priority: "medium", status: "in_progress" },
-            { content: "完善 SDK 认证模式兼容", priority: "medium", status: "pending" },
+            { content: "检查环境变量与配置模板", priority: "medium", status: "completed" },
+            { content: "扫描 API / WebSocket 错误处理路径", priority: "medium", status: "completed" },
+            { content: "复核构建产物与静态资源缓存", priority: "medium", status: "in_progress" },
+            { content: "输出发布风险清单与回滚建议", priority: "medium", status: "pending" },
           ],
           null,
           2,
@@ -2236,27 +2236,102 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
         id: "demo-tool-task-start",
         kind: "tool",
         title: "Task",
-        body: JSON.stringify({ toolCallId: "demo-task-1", title: "Task", status: "running" }, null, 2),
+        body: JSON.stringify(
+          { toolCallId: "demo-task-1", title: "Task", status: "running", input: "并行执行发布前检查清单" },
+          null,
+          2,
+        ),
         meta: "running",
       },
       {
         id: "demo-agent-sub-1",
         kind: "agent",
         title: "Claude",
-        body: "subagent 正在扫描目录并归类模块边界。",
+        body: "子代理 A：正在扫描项目目录，确认关键配置、脚本入口和部署依赖。",
       },
       {
         id: "demo-tool-sub-search",
         kind: "tool",
         title: "ripgrep",
-        body: JSON.stringify({ toolCallId: "demo-rg-1", title: "ripgrep", status: "completed" }, null, 2),
+        body: JSON.stringify(
+          {
+            toolCallId: "demo-rg-1",
+            title: "ripgrep",
+            status: "completed",
+            result: ["server/index.ts", "server/session-manager.ts", "src/App.tsx"],
+          },
+          null,
+          2,
+        ),
+        meta: "completed",
+      },
+      {
+        id: "demo-tool-sub-lint",
+        kind: "tool",
+        title: "npm run check",
+        body: JSON.stringify(
+          {
+            toolCallId: "demo-check-1",
+            title: "npm run check",
+            status: "completed",
+            summary: "类型检查与静态检查通过",
+          },
+          null,
+          2,
+        ),
+        meta: "completed",
+      },
+      {
+        id: "demo-agent-sub-1-summary",
+        kind: "agent",
+        title: "Claude",
+        body: "子代理 A 总结：核心入口清晰，可继续进行构建与差异复核。",
+      },
+      {
+        id: "demo-tool-task-start-2",
+        kind: "tool",
+        title: "Task",
+        body: JSON.stringify(
+          { toolCallId: "demo-task-2", title: "Task", status: "running", input: "验证构建产物与回滚包" },
+          null,
+          2,
+        ),
+        meta: "running",
+      },
+      {
+        id: "demo-agent-sub-2-progress",
+        kind: "agent",
+        title: "Claude",
+        body: "子代理 B：正在对比 dist 产物哈希并检查版本元数据。",
+      },
+      {
+        id: "demo-tool-sub-test",
+        kind: "tool",
+        title: "npm test",
+        body: JSON.stringify(
+          {
+            toolCallId: "demo-test-1",
+            title: "npm test",
+            status: "completed",
+            summary: "46 passed / 0 failed",
+          },
+          null,
+          2,
+        ),
         meta: "completed",
       },
       {
         id: "demo-agent-sub-2",
         kind: "agent",
         title: "Claude",
-        body: "subagent 完成了初步分析，准备回传主 agent。",
+        body: "子代理 B 完成构建校验，发现 1 项中风险：静态资源缓存策略需要确认。",
+      },
+      {
+        id: "demo-tool-task-end-2",
+        kind: "tool",
+        title: "Task",
+        body: JSON.stringify({ toolCallId: "demo-task-2", title: "Task", status: "completed" }, null, 2),
+        meta: "completed",
       },
       {
         id: "demo-tool-task-end",
@@ -2266,13 +2341,19 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
         meta: "completed",
       },
       {
+        id: "demo-agent-main-summary",
+        kind: "agent",
+        title: "Claude",
+        body: "主代理汇总：2 个子任务已完成。建议先确认缓存 TTL，再执行正式发布。",
+      },
+      {
         id: "demo-agent-main",
         kind: "agent",
         title: "Claude",
-        body: "已汇总 subagent 结果：你可以点击 `Task` 行右侧子项按钮折叠/展开内部输出。",
+        body: "演示提示：点击 `Task` 行右侧子项按钮，可折叠/展开子任务明细；同时可切换查看会话差异与文件 diff。",
       },
     ],
-    historyTotal: 8,
+    historyTotal: 16,
     historyStart: 0,
     permissions: [
       {
@@ -2282,7 +2363,7 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
           toolCallId: "demo-task-1",
           title: "Task",
           status: "pending",
-          rawInput: { description: "等待你确认是否继续执行" },
+          rawInput: { description: "是否允许执行“清理旧构建缓存”步骤" },
         },
         options: [
           { optionId: "demo-allow", name: "允许", kind: "allow" },
@@ -2299,10 +2380,11 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
     repositoryRoot: demoLongWorkspacePath,
     workingTree: [
       { filePath: "src/App.tsx", changeType: "修改" },
+      { filePath: "src/components/TimelinePanel.tsx", changeType: "修改" },
       { filePath: "src/styles.css", changeType: "修改" },
     ],
-    staged: [{ filePath: "README.md", changeType: "修改" }],
-    untracked: [{ filePath: "notes/demo-plan.md", changeType: "新增" }],
+    staged: [{ filePath: "docs/release-checklist.md", changeType: "修改" }],
+    untracked: [{ filePath: "scripts/verify-build-cache.ts", changeType: "新增" }],
   };
 
   const demoFileDiffs: Record<string, SessionFileDiffResponse> = {
@@ -2318,17 +2400,17 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
       omitted: false,
       diff: "@@ -610,6 +610,10 @@\n+.timeline-row {\n+  width: calc(100% - 18px);\n+}\n",
     },
-    "staged:README.md": {
+    "staged:docs/release-checklist.md": {
       category: "staged",
-      filePath: "README.md",
+      filePath: "docs/release-checklist.md",
       omitted: false,
-      diff: "@@ -90,3 +90,5 @@\n+> demo guidance moved to AGENTS.md\n",
+      diff: "@@ -12,5 +12,9 @@\n+- [ ] 发布前确认缓存策略\n+- [ ] 回滚包完整性校验\n",
     },
-    "untracked:notes/demo-plan.md": {
+    "untracked:scripts/verify-build-cache.ts": {
       category: "untracked",
-      filePath: "notes/demo-plan.md",
+      filePath: "scripts/verify-build-cache.ts",
       omitted: false,
-      diff: "# Demo Plan\n\n- verify timeline\n- verify diff modal\n",
+      diff: "export async function verifyBuildCache() {\n+  return { ok: true, checked: [\"assets-manifest\", \"etag\"] };\n+}\n",
     },
   };
 
@@ -2336,7 +2418,7 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
     const sequence = index + 2;
     return normalizeSessionRecord({
       clientSessionId: `demo-session-${sequence}`,
-      title: `demo_session_${sequence}_workspace_review_iteration`,
+      title: `demo_session_${sequence}_release_validation_iteration`,
       workspacePath: `${workspacePath}/demo/session-${sequence}`,
       connectionState: "connected",
       sessionId: `demo-session-${sequence}`,
@@ -2349,7 +2431,7 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
           id: `demo-${sequence}-user-1`,
           kind: "user",
           title: "你",
-          body: `请继续处理会话 ${sequence} 的任务。`,
+          body: `请继续处理会话 ${sequence}：补充检查记录并同步风险状态。`,
         },
       ],
       historyTotal: 1,
