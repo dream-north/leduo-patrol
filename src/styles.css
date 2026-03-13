@@ -1425,14 +1425,15 @@ h1 {
 }
 
 .modal-scroll-body {
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
   padding: 12px 14px 14px;
+}
+
+.modal-scroll-body > * + * {
+  margin-top: 10px;
 }
 
 .modal-footer {
