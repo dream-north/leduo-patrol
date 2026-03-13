@@ -3785,6 +3785,7 @@ function PermissionModal(props: {
     status: props.permission.toolCall.status ?? "pending",
     rawInput: props.permission.toolCall.rawInput,
   });
+  const planText = extractPlanText(props.permission.toolCall.rawInput);
   return (
     <div className="modal-backdrop" onClick={props.onClose}>
       <div className="modal-card" onClick={(event) => event.stopPropagation()}>
@@ -3799,7 +3800,11 @@ function PermissionModal(props: {
         </div>
         <div className="modal-scroll-body">
           <p className="modal-meta">待处理确认</p>
-          <ToolCallDetailView body={body} />
+          {planText ? (
+            <div className="modal-body markdown-body">{renderMarkdownBlocks(planText)}</div>
+          ) : (
+            <ToolCallDetailView body={body} />
+          )}
         </div>
         <div className="modal-footer">
           {props.permission.options.map((option) => (
