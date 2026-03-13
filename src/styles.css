@@ -1389,6 +1389,7 @@ h1 {
 .modal-backdrop {
   position: fixed;
   inset: 0;
+  z-index: 500;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1425,7 +1426,7 @@ h1 {
 }
 
 .modal-scroll-body {
-  flex: 1 1 0;
+  flex: 1;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
