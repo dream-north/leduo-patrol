@@ -408,7 +408,7 @@ test("app session title helpers normalize and format underscores", () => {
   assert.equal(appTestables.formatSessionTitleForDisplay("abc_def"), "abc_​def");
 });
 
-test("app resolveToolDisplayTitle prefers latest title then toolCallId", () => {
+test("app resolveToolDisplayTitle prefers description then title then toolCallId", () => {
   assert.equal(
     appTestables.resolveToolDisplayTitle(
       [
@@ -426,6 +426,21 @@ test("app resolveToolDisplayTitle prefers latest title then toolCallId", () => {
       "fallback",
     ),
     "tool-2",
+  );
+  // description in rawInput is preferred over title
+  assert.equal(
+    appTestables.resolveToolDisplayTitle(
+      [
+        {
+          toolCallId: "tool-3",
+          title: "`ls -d */`",
+          status: "pending",
+          rawInput: { command: "ls -d */", description: "列出所有子目录" },
+        },
+      ],
+      "fallback",
+    ),
+    "列出所有子目录",
   );
 });
 

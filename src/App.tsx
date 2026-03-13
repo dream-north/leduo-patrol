@@ -172,6 +172,13 @@ const MODE_OPTIONS = [
 
 const EMPTY_TIMELINE: TimelineItem[] = [];
 
+const FILE_VIEWER_MAX_LINES = 500;
+
+const FILE_VIEWER_MODE_LABEL: Record<"read" | "write", string> = {
+  read: "读取",
+  write: "写入",
+};
+
 type DemoPreset = "subagent-tree" | null;
 
 type ToastNotification = {
@@ -246,6 +253,8 @@ export default function App() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [pendingQueue, setPendingQueue] = useState<Array<{ id: string; text: string; images?: Array<{ data: string; mimeType: string }> }>>([]);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const [permissionDetail, setPermissionDetail] = useState<PermissionPayload | null>(null);
+  const shownPermissionRequestIdsRef = useRef(new Set<string>());
   const demoPreset = useMemo(() => readDemoPresetFromUrl(), []);
   const socketRef = useRef<WebSocket | null>(null);
   const pendingQueueRef = useRef(pendingQueue);
@@ -323,7 +332,20 @@ export default function App() {
   useEffect(() => {
     setPendingQueue([]);
     setPendingImages([]);
+    shownPermissionRequestIdsRef.current.clear();
   }, [activeSessionId]);
+
+  useEffect(() => {
+    if (!activeSession?.permissions.length) {
+      setPermissionDetail(null);
+      return;
+    }
+    const first = activeSession.permissions[0];
+    if (first && !shownPermissionRequestIdsRef.current.has(first.requestId)) {
+      shownPermissionRequestIdsRef.current.add(first.requestId);
+      setPermissionDetail(first);
+    }
+  }, [activeSession?.permissions.length, activeSession?.permissions[0]?.requestId]);
 
   useEffect(() => {
     if (!activeSessionIsRunning && pendingQueueRef.current.length > 0 && activeSession) {
@@ -927,21 +949,12 @@ export default function App() {
           ...session,
           permissions: [...session.permissions, message.payload],
         }));
-        appendSessionTimeline(message.payload.clientSessionId, {
-          id: message.payload.requestId,
-          kind: "tool",
-          title: summarizeToolTitle(
-            message.payload.toolCall.title,
-            message.payload.toolCall.rawInput,
-            message.payload.toolCall.toolCallId,
-          ),
-          body: formatToolBody({
-            toolCallId: message.payload.toolCall.toolCallId,
-            title: message.payload.toolCall.title,
-            status: message.payload.toolCall.status,
-            rawInput: message.payload.toolCall.rawInput,
-          }),
-          meta: message.payload.toolCall.status ?? "pending",
+        upsertToolTimeline(message.payload.clientSessionId, {
+          sessionUpdate: "tool_call",
+          toolCallId: message.payload.toolCall.toolCallId,
+          title: message.payload.toolCall.title,
+          status: message.payload.toolCall.status ?? "pending",
+          rawInput: message.payload.toolCall.rawInput,
         });
         break;
       case "permission_resolved":
@@ -1614,8 +1627,13 @@ export default function App() {
                         permission.toolCall.toolCallId,
                       )}
                     </p>
-                    <pre className="composer-pending-preview">{truncateUnknownText(permission.toolCall.rawInput, 500)}</pre>
                     <div className="composer-pending-actions">
+                      <button
+                        className="secondary"
+                        onClick={() => setPermissionDetail(permission)}
+                      >
+                        查看详情
+                      </button>
                       {permission.options.map((option) => (
                         <button
                           key={option.optionId}
@@ -1810,8 +1828,9 @@ export default function App() {
             />
             </div>
             <div className="composer-actions">
-              <button className="primary" onClick={submitPrompt} disabled={(!promptText.trim() && pendingImages.length === 0) || !activeSession}>
-                {activeSessionIsRunning ? "加入队列" : "发送到当前会话"}
+              <button className="primary composer-send" onClick={submitPrompt} disabled={(!promptText.trim() && pendingImages.length === 0) || !activeSession}>
+                {activeSessionIsRunning ? "加入队列" : "发送"}
+                <kbd className="composer-send-shortcut">⌘↩</kbd>
               </button>
               <button className="secondary composer-cancel" onClick={cancelActiveSession} disabled={!activeSessionIsRunning}>
                 <span aria-hidden="true">⏹</span>
@@ -1893,6 +1912,18 @@ export default function App() {
           sessionTitle={selectedItem.sessionTitle}
           item={selectedItem.item}
           onClose={() => setSelectedItem(null)}
+        />
+      ) : null}
+
+      {permissionDetail && activeSession ? (
+        <PermissionModal
+          sessionTitle={formatSessionTitleForDisplay(activeSession.title)}
+          permission={permissionDetail}
+          onResolve={(permission, optionId) => {
+            resolvePermission(permission, optionId);
+            setPermissionDetail(null);
+          }}
+          onClose={() => setPermissionDetail(null)}
         />
       ) : null}
 
@@ -2288,7 +2319,13 @@ function summarizeToolTitle(rawTitle: unknown, rawInput: unknown, rawToolCallId:
           : null;
   const description = typeof record?.description === "string" ? record.description : null;
   const args = Array.isArray(record?.args) ? record.args.filter((part): part is string => typeof part === "string").join(" ") : null;
-  const summary = [command, pathValue, description, args].filter(Boolean).join(" · ");
+
+  // If description is available, use it as the primary label (replaces command in title)
+  if (description) {
+    return description;
+  }
+
+  const summary = [command, pathValue, args].filter(Boolean).join(" · ");
 
   if (summary) {
     return summary;
@@ -2378,6 +2415,17 @@ function stringifyMaybe(value: unknown) {
 }
 
 function resolveToolDisplayTitle(entries: unknown[], fallbackTitle: string) {
+  // Prefer description from rawInput — it is the most human-readable label
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const record = asRecord(entries[index]);
+    if (!record) continue;
+    const inputRecord = asRecord(record.rawInput) ?? asRecord(tryParseJson(record.rawInput));
+    const description = typeof inputRecord?.description === "string" ? inputRecord.description.trim() : "";
+    if (description && !isSubagentToolTitle(description)) {
+      return description;
+    }
+  }
+
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const record = asRecord(entries[index]);
     const title = typeof record?.title === "string" ? record.title.trim() : "";
@@ -3496,6 +3544,186 @@ function shouldRenderMarkdown(item: TimelineItem) {
   return item.kind === "agent" || item.kind === "plan";
 }
 
+function isReadToolTitle(title: string | null): boolean {
+  const t = (title ?? "").trim().toLowerCase();
+  return (
+    t === "read" ||
+    t === "readfile" ||
+    t === "read_file" ||
+    t === "read file" ||
+    t === "file_read" ||
+    t === "fileread"
+  );
+}
+
+function isWriteToolTitle(title: string | null): boolean {
+  const t = (title ?? "").trim().toLowerCase();
+  return (
+    t === "write" ||
+    t === "writefile" ||
+    t === "write_file" ||
+    t === "write file" ||
+    t === "create" ||
+    t === "createfile" ||
+    t === "create_file" ||
+    t === "create file"
+  );
+}
+
+function FileContentView(props: { content: string; filePath: string | null; mode: "read" | "write" }) {
+  // Trim all trailing newlines so files ending in \n don't show blank last lines
+  const normalized = props.content.replace(/\n+$/, "");
+  const lines = normalized.split("\n");
+  const lineCount = lines.length;
+  const trimmed = lines.length > FILE_VIEWER_MAX_LINES;
+  const visibleLines = trimmed ? lines.slice(0, FILE_VIEWER_MAX_LINES) : lines;
+  const modeLabel = FILE_VIEWER_MODE_LABEL[props.mode];
+
+  return (
+    <div className={`tool-read-output tool-read-output-${props.mode}`}>
+      <div className="tool-read-header">
+        {props.filePath ? <code className="tool-read-path">{props.filePath}</code> : null}
+        <span className="tool-read-linecount">{modeLabel} · {lineCount} 行</span>
+      </div>
+      <div className="tool-read-body">
+        <table className="tool-read-table" cellSpacing={0} cellPadding={0}>
+          <tbody>
+            {visibleLines.map((line, i) => (
+              <tr key={i} className="tool-read-line">
+                <td className="tool-read-lineno">{i + 1}</td>
+                <td className="tool-read-linetext">{line}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {trimmed ? (
+          <p className="tool-read-truncated">（已截断，仅显示前 {FILE_VIEWER_MAX_LINES} 行，共 {lineCount} 行）</p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ToolCallDetailView(props: { body: string }) {
+  const entries = parseToolTimelineEntries(props.body);
+  let rawTitle: string | null = null;
+  let status: string | null = null;
+  let description: string | null = null;
+  let command: string | null = null;
+  let pathValue: string | null = null;
+  let rawOutput: unknown = undefined;
+  let writeContent: string | null = null;
+
+  for (const entry of [...entries].reverse()) {
+    const record = asRecord(entry);
+    if (!record) continue;
+
+    if (!rawTitle && typeof record.title === "string" && record.title.trim()) {
+      rawTitle = record.title.trim();
+    }
+    if (!status && typeof record.status === "string" && record.status.trim()) {
+      status = record.status.trim();
+    }
+    if (rawOutput === undefined && record.rawOutput !== undefined && record.rawOutput !== null) {
+      rawOutput = record.rawOutput;
+    }
+    const inputRecord = asRecord(record.rawInput) ?? asRecord(tryParseJson(record.rawInput));
+    if (inputRecord) {
+      if (!description && typeof inputRecord.description === "string" && inputRecord.description.trim()) {
+        description = inputRecord.description.trim();
+      }
+      if (!command) {
+        // `command` is a string in bash-style tools; `cmd` is an array in exec-style tools
+        if (typeof inputRecord.command === "string" && inputRecord.command.trim()) {
+          command = inputRecord.command.trim();
+        } else if (Array.isArray(inputRecord.cmd)) {
+          const parts = inputRecord.cmd.filter((p): p is string => typeof p === "string");
+          if (parts.length) command = parts.join(" ");
+        }
+      }
+      if (!pathValue) {
+        for (const key of ["path", "filePath", "file_path", "cwd"]) {
+          const val = inputRecord[key];
+          if (typeof val === "string" && val.trim()) {
+            pathValue = val.trim();
+            break;
+          }
+        }
+      }
+      // Extract write content from rawInput (Write/Create tool)
+      if (writeContent === null) {
+        for (const key of ["content", "new_content", "new_string", "new_str"]) {
+          const val = inputRecord[key];
+          if (typeof val === "string") {
+            writeContent = val;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  const isReadTool = isReadToolTitle(rawTitle);
+  const isWriteTool = isWriteToolTitle(rawTitle);
+  const suppressPath = isReadTool || isWriteTool;
+  const hasStructuredInfo = description || command || (pathValue && !suppressPath) || status;
+  const outputText =
+    rawOutput !== undefined && rawOutput !== null
+      ? typeof rawOutput === "string"
+        ? rawOutput
+        : stringifyMaybe(rawOutput)
+      : null;
+
+  return (
+    <div className="tool-detail-view">
+      {hasStructuredInfo ? (
+        <div className="tool-detail-fields">
+          {status ? (
+            <div className="tool-detail-row">
+              <span className="tool-detail-key">状态</span>
+              <span className={`tool-detail-status tool-detail-status-${status.toLowerCase()}`}>{status}</span>
+            </div>
+          ) : null}
+          {description ? (
+            <div className="tool-detail-row">
+              <span className="tool-detail-key">描述</span>
+              <span className="tool-detail-val">{description}</span>
+            </div>
+          ) : null}
+          {command ? (
+            <div className="tool-detail-row">
+              <span className="tool-detail-key">命令</span>
+              <code className="tool-detail-val tool-detail-code">{command}</code>
+            </div>
+          ) : null}
+          {pathValue && !suppressPath ? (
+            <div className="tool-detail-row">
+              <span className="tool-detail-key">路径</span>
+              <code className="tool-detail-val tool-detail-code">{pathValue}</code>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {isReadTool && outputText !== null ? (
+        <FileContentView content={outputText} filePath={pathValue} mode="read" />
+      ) : isWriteTool && writeContent !== null ? (
+        <FileContentView content={writeContent} filePath={pathValue} mode="write" />
+      ) : outputText !== null ? (
+        <details className="tool-detail-section" open>
+          <summary className="tool-detail-summary">输出</summary>
+          <pre className="modal-body tool-detail-content">{outputText}</pre>
+        </details>
+      ) : null}
+
+      <details className="tool-detail-section">
+        <summary className="tool-detail-summary">原始数据</summary>
+        <pre className="modal-body tool-detail-content">{props.body}</pre>
+      </details>
+    </div>
+  );
+}
+
 function MessageModal(props: {
   sessionTitle: string;
   item: TimelineItem;
@@ -3513,24 +3741,77 @@ function MessageModal(props: {
             关闭
           </button>
         </div>
-        <p className="modal-meta">{props.item.meta ?? "详细内容"}</p>
-        {props.item.images && props.item.images.length > 0 ? (
-          <div className="modal-attached-images">
-            {props.item.images.map((img, idx) => (
-              <img
-                key={idx}
-                src={`data:${img.mimeType};base64,${img.data}`}
-                alt={`附件图片 ${idx + 1}`}
-                className="modal-attached-image"
-              />
-            ))}
+        <div className="modal-scroll-body">
+          <p className="modal-meta">{props.item.meta ?? "详细内容"}</p>
+          {props.item.images && props.item.images.length > 0 ? (
+            <div className="modal-attached-images">
+              {props.item.images.map((img, idx) => (
+                <img
+                  key={idx}
+                  src={`data:${img.mimeType};base64,${img.data}`}
+                  alt={`附件图片 ${idx + 1}`}
+                  className="modal-attached-image"
+                />
+              ))}
+            </div>
+          ) : null}
+          {props.item.kind === "tool" ? (
+            <ToolCallDetailView body={props.item.body} />
+          ) : shouldRenderMarkdown(props.item) ? (
+            <div className="modal-body markdown-body">{renderMarkdownBlocks(props.item.body)}</div>
+          ) : (
+            <pre className="modal-body">{props.item.body}</pre>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PermissionModal(props: {
+  sessionTitle: string;
+  permission: PermissionPayload;
+  onResolve: (permission: PermissionPayload, optionId: string) => void;
+  onClose: () => void;
+}) {
+  const toolTitle = summarizeToolTitle(
+    props.permission.toolCall.title,
+    props.permission.toolCall.rawInput,
+    props.permission.toolCall.toolCallId,
+  );
+  const body = formatToolBody({
+    toolCallId: props.permission.toolCall.toolCallId,
+    title: props.permission.toolCall.title,
+    status: props.permission.toolCall.status ?? "pending",
+    rawInput: props.permission.toolCall.rawInput,
+  });
+  return (
+    <div className="modal-backdrop" onClick={props.onClose}>
+      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">{props.sessionTitle}</p>
+            <h3>{toolTitle}</h3>
           </div>
-        ) : null}
-        {shouldRenderMarkdown(props.item) ? (
-          <div className="modal-body markdown-body">{renderMarkdownBlocks(props.item.body)}</div>
-        ) : (
-          <pre className="modal-body">{props.item.body}</pre>
-        )}
+          <button className="secondary" onClick={props.onClose}>
+            关闭
+          </button>
+        </div>
+        <div className="modal-scroll-body">
+          <p className="modal-meta">待处理确认</p>
+          <ToolCallDetailView body={body} />
+        </div>
+        <div className="modal-footer">
+          {props.permission.options.map((option) => (
+            <button
+              key={option.optionId}
+              className="secondary"
+              onClick={() => props.onResolve(props.permission, option.optionId)}
+            >
+              {option.name}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -3555,10 +3836,12 @@ function SystemFeedModal(props: {
             关闭
           </button>
         </div>
-        <div className="system-modal-list">
-          {props.items.map((item) => (
-            <TimelineRow key={item.id} item={item} onOpen={() => props.onOpenItem(item)} />
-          ))}
+        <div className="modal-scroll-body">
+          <div className="system-modal-list">
+            {props.items.map((item) => (
+              <TimelineRow key={item.id} item={item} onOpen={() => props.onOpenItem(item)} />
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -3644,53 +3927,55 @@ function SessionDiffModal(props: {
             </button>
           </div>
         </div>
-        {props.loading ? <p className="modal-meta">正在读取 Git Diff...</p> : null}
-        {props.error ? <p className="modal-meta">{props.error}</p> : null}
+        {props.loading ? <p className="modal-meta modal-meta-padded">正在读取 Git Diff...</p> : null}
+        {props.error ? <p className="modal-meta modal-meta-padded">{props.error}</p> : null}
         {props.snapshot ? (
-          <div className="modal-body markdown-body">
-            <div className="diff-toolbar-tabs" role="tablist" aria-label="Diff 查看模式">
-              <button className={`diff-tab ${viewMode === "flat" ? "active" : ""}`} onClick={() => setViewMode("flat")} role="tab" aria-selected={viewMode === "flat"} type="button">平铺查看</button>
-              <button className={`diff-tab ${viewMode === "byFile" ? "active" : ""}`} onClick={() => setViewMode("byFile")} role="tab" aria-selected={viewMode === "byFile"} type="button">按文件查看</button>
-              {viewMode === "byFile" ? (
-                <select value={selectedFilePath} onChange={(event) => setSelectedFilePath(event.target.value)}>
-                  {currentCategoryFiles.length === 0 ? <option value="">当前没有文件变更</option> : null}
-                  {currentCategoryFiles.map((item) => (
-                    <option key={item.filePath} value={item.filePath}>[{item.changeType}] {item.filePath}</option>
-                  ))}
-                </select>
-              ) : null}
-            </div>
+          <div className="modal-scroll-body">
+            <div className="modal-body markdown-body">
+              <div className="diff-toolbar-tabs" role="tablist" aria-label="Diff 查看模式">
+                <button className={`diff-tab ${viewMode === "flat" ? "active" : ""}`} onClick={() => setViewMode("flat")} role="tab" aria-selected={viewMode === "flat"} type="button">平铺查看</button>
+                <button className={`diff-tab ${viewMode === "byFile" ? "active" : ""}`} onClick={() => setViewMode("byFile")} role="tab" aria-selected={viewMode === "byFile"} type="button">按文件查看</button>
+                {viewMode === "byFile" ? (
+                  <select value={selectedFilePath} onChange={(event) => setSelectedFilePath(event.target.value)}>
+                    {currentCategoryFiles.length === 0 ? <option value="">当前没有文件变更</option> : null}
+                    {currentCategoryFiles.map((item) => (
+                      <option key={item.filePath} value={item.filePath}>[{item.changeType}] {item.filePath}</option>
+                    ))}
+                  </select>
+                ) : null}
+              </div>
 
-            <div className="diff-toolbar-tabs" role="tablist" aria-label="Diff 分类">
-              <button className={`diff-tab ${categoryTab === "workingTree" ? "active" : ""}`} onClick={() => setCategoryTab("workingTree")} role="tab" aria-selected={categoryTab === "workingTree"} type="button">未暂存修改 ({props.snapshot.workingTree.length})</button>
-              <button className={`diff-tab ${categoryTab === "staged" ? "active" : ""}`} onClick={() => setCategoryTab("staged")} role="tab" aria-selected={categoryTab === "staged"} type="button">已暂存修改 ({props.snapshot.staged.length})</button>
-              <button className={`diff-tab ${categoryTab === "untracked" ? "active" : ""}`} onClick={() => setCategoryTab("untracked")} role="tab" aria-selected={categoryTab === "untracked"} type="button">未跟踪文件 ({props.snapshot.untracked.length})</button>
-            </div>
+              <div className="diff-toolbar-tabs" role="tablist" aria-label="Diff 分类">
+                <button className={`diff-tab ${categoryTab === "workingTree" ? "active" : ""}`} onClick={() => setCategoryTab("workingTree")} role="tab" aria-selected={categoryTab === "workingTree"} type="button">未暂存修改 ({props.snapshot.workingTree.length})</button>
+                <button className={`diff-tab ${categoryTab === "staged" ? "active" : ""}`} onClick={() => setCategoryTab("staged")} role="tab" aria-selected={categoryTab === "staged"} type="button">已暂存修改 ({props.snapshot.staged.length})</button>
+                <button className={`diff-tab ${categoryTab === "untracked" ? "active" : ""}`} onClick={() => setCategoryTab("untracked")} role="tab" aria-selected={categoryTab === "untracked"} type="button">未跟踪文件 ({props.snapshot.untracked.length})</button>
+              </div>
 
-            {viewMode === "flat" ? (
-              <>
-                <h4>{categoryLabel(categoryTab)}</h4>
-                {currentCategoryFiles.length === 0 ? (
-                  <p>(空)</p>
-                ) : (
-                  currentCategoryFiles.map((item) => (
-                    <p key={`${categoryTab}:${item.filePath}`}>
-                      <code>[{item.changeType}] {item.filePath}</code>
-                    </p>
-                  ))
-                )}
-                <p className="modal-meta">按文件查看模式会按需加载单个文件 Diff，避免一次性读取整个仓库差异。</p>
-              </>
-            ) : (
-              <>
-                <h4>文件 Diff</h4>
-                {!selectedFilePath ? <p>(空)</p> : null}
-                {selectedFileLoading ? <p>正在加载文件 Diff...</p> : null}
-                {selectedFileError ? <p className="modal-meta">{selectedFileError}</p> : null}
-                {selectedDiff?.omitted ? <p className="modal-meta">{selectedDiff.reason ?? "该文件 Diff 过大，已省略显示。"}</p> : null}
-                {selectedDiff && !selectedDiff.omitted ? <DiffBlock diff={selectedDiff.diff} /> : null}
-              </>
-            )}
+              {viewMode === "flat" ? (
+                <>
+                  <h4>{categoryLabel(categoryTab)}</h4>
+                  {currentCategoryFiles.length === 0 ? (
+                    <p>(空)</p>
+                  ) : (
+                    currentCategoryFiles.map((item) => (
+                      <p key={`${categoryTab}:${item.filePath}`}>
+                        <code>[{item.changeType}] {item.filePath}</code>
+                      </p>
+                    ))
+                  )}
+                  <p className="modal-meta">按文件查看模式会按需加载单个文件 Diff，避免一次性读取整个仓库差异。</p>
+                </>
+              ) : (
+                <>
+                  <h4>文件 Diff</h4>
+                  {!selectedFilePath ? <p>(空)</p> : null}
+                  {selectedFileLoading ? <p>正在加载文件 Diff...</p> : null}
+                  {selectedFileError ? <p className="modal-meta">{selectedFileError}</p> : null}
+                  {selectedDiff?.omitted ? <p className="modal-meta">{selectedDiff.reason ?? "该文件 Diff 过大，已省略显示。"}</p> : null}
+                  {selectedDiff && !selectedDiff.omitted ? <DiffBlock diff={selectedDiff.diff} /> : null}
+                </>
+              )}
+            </div>
           </div>
         ) : null}
       </div>

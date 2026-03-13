@@ -1389,6 +1389,7 @@ h1 {
 .modal-backdrop {
   position: fixed;
   inset: 0;
+  z-index: 500;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1401,12 +1402,13 @@ h1 {
   max-height: calc(100vh - 40px);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px;
+  gap: 0;
+  padding: 0;
   border: 1px solid var(--line);
   border-radius: 18px;
   background: rgba(255, 252, 247, 0.98);
   box-shadow: var(--shadow);
+  overflow: hidden;
 }
 
 .system-modal-card {
@@ -1414,10 +1416,46 @@ h1 {
 }
 
 .modal-header {
+  flex-shrink: 0;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.modal-scroll-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 14px 14px;
+}
+
+.modal-scroll-body > * + * {
+  margin-top: 10px;
+}
+
+.modal-footer {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 14px;
+  border-top: 1px solid var(--line);
+  background: rgba(255, 252, 247, 0.98);
+}
+
+.modal-footer .secondary {
+  margin-top: 0;
+  width: auto;
+  padding: 7px 14px;
+}
+
+.modal-meta-padded {
+  padding: 8px 14px 0;
 }
 
 .modal-actions-inline {
@@ -1861,4 +1899,240 @@ h1 {
   margin-left: 4px;
   font-size: 11px;
   opacity: 0.65;
+}
+
+/* ── Tool Call Detail View ─────────────────────────── */
+
+.tool-detail-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.tool-detail-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.tool-detail-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.tool-detail-key {
+  flex: 0 0 40px;
+  color: var(--muted);
+  font-size: 10px;
+  padding-top: 2px;
+  white-space: nowrap;
+}
+
+.tool-detail-val {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+  color: var(--text);
+}
+
+.tool-detail-code {
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-size: 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.tool-detail-status {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+}
+
+.tool-detail-status-completed {
+  background: rgba(52, 135, 86, 0.14);
+  color: #2a6e46;
+  border: 1px solid rgba(52, 135, 86, 0.32);
+}
+
+.tool-detail-status-pending {
+  background: rgba(216, 91, 52, 0.14);
+  color: #8f2d1e;
+  border: 1px solid rgba(216, 91, 52, 0.32);
+}
+
+.tool-detail-status-failed,
+.tool-detail-status-canceled,
+.tool-detail-status-cancelled {
+  background: rgba(160, 44, 32, 0.14);
+  color: #8f0000;
+  border: 1px solid rgba(160, 44, 32, 0.32);
+}
+
+.tool-detail-section {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.5);
+  overflow: hidden;
+}
+
+.tool-detail-summary {
+  padding: 7px 12px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.tool-detail-summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-detail-summary::before {
+  content: "▶ ";
+  font-size: 9px;
+}
+
+.tool-detail-section[open] > .tool-detail-summary {
+  color: var(--text);
+  border-bottom: 1px solid var(--line);
+}
+
+.tool-detail-section[open] > .tool-detail-summary::before {
+  content: "▼ ";
+}
+
+.tool-detail-content {
+  margin: 0;
+  border-radius: 0;
+  border: none;
+  background: transparent;
+}
+
+/* ── Composer send shortcut badge ─────────────────── */
+
+.composer-send {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.composer-send-shortcut {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.4;
+  opacity: 0.9;
+}
+
+.composer-send:disabled .composer-send-shortcut {
+  opacity: 0.45;
+}
+
+/* ── Read tool file viewer ─────────────────────────── */
+
+.tool-read-output {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.tool-read-output-write .tool-read-header {
+  background: rgba(52, 135, 86, 0.07);
+  border-bottom-color: rgba(52, 135, 86, 0.2);
+}
+
+.tool-read-output-write .tool-read-linecount {
+  color: #2a6e46;
+}
+
+.tool-read-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 12px;
+  background: rgba(58, 45, 33, 0.05);
+  border-bottom: 1px solid var(--line);
+}
+
+.tool-read-path {
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-size: 10px;
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-read-linecount {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.tool-read-body {
+  overflow: auto;
+  max-height: clamp(200px, 50vh, 480px);
+}
+
+.tool-read-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.tool-read-line:hover {
+  background: rgba(58, 45, 33, 0.04);
+}
+
+.tool-read-lineno {
+  width: 1%;
+  min-width: 36px;
+  padding: 0 10px 0 12px;
+  text-align: right;
+  color: var(--muted);
+  user-select: none;
+  -webkit-user-select: none;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.tool-read-linetext {
+  padding: 0 12px 0 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  vertical-align: top;
+}
+
+.tool-read-truncated {
+  padding: 6px 12px;
+  font-size: 10px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  margin: 0;
 }
