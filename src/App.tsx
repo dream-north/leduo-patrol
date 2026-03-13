@@ -246,6 +246,8 @@ export default function App() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [pendingQueue, setPendingQueue] = useState<Array<{ id: string; text: string; images?: Array<{ data: string; mimeType: string }> }>>([]);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const [permissionDetail, setPermissionDetail] = useState<PermissionPayload | null>(null);
+  const shownPermissionRequestIdsRef = useRef(new Set<string>());
   const demoPreset = useMemo(() => readDemoPresetFromUrl(), []);
   const socketRef = useRef<WebSocket | null>(null);
   const pendingQueueRef = useRef(pendingQueue);
@@ -323,7 +325,20 @@ export default function App() {
   useEffect(() => {
     setPendingQueue([]);
     setPendingImages([]);
+    shownPermissionRequestIdsRef.current.clear();
   }, [activeSessionId]);
+
+  useEffect(() => {
+    if (!activeSession?.permissions.length) {
+      setPermissionDetail(null);
+      return;
+    }
+    const first = activeSession.permissions[0];
+    if (first && !shownPermissionRequestIdsRef.current.has(first.requestId)) {
+      shownPermissionRequestIdsRef.current.add(first.requestId);
+      setPermissionDetail(first);
+    }
+  }, [activeSession?.permissions.length, activeSession?.permissions[0]?.requestId]);
 
   useEffect(() => {
     if (!activeSessionIsRunning && pendingQueueRef.current.length > 0 && activeSession) {
@@ -927,21 +942,12 @@ export default function App() {
           ...session,
           permissions: [...session.permissions, message.payload],
         }));
-        appendSessionTimeline(message.payload.clientSessionId, {
-          id: message.payload.requestId,
-          kind: "tool",
-          title: summarizeToolTitle(
-            message.payload.toolCall.title,
-            message.payload.toolCall.rawInput,
-            message.payload.toolCall.toolCallId,
-          ),
-          body: formatToolBody({
-            toolCallId: message.payload.toolCall.toolCallId,
-            title: message.payload.toolCall.title,
-            status: message.payload.toolCall.status,
-            rawInput: message.payload.toolCall.rawInput,
-          }),
-          meta: message.payload.toolCall.status ?? "pending",
+        upsertToolTimeline(message.payload.clientSessionId, {
+          sessionUpdate: "tool_call",
+          toolCallId: message.payload.toolCall.toolCallId,
+          title: message.payload.toolCall.title,
+          status: message.payload.toolCall.status ?? "pending",
+          rawInput: message.payload.toolCall.rawInput,
         });
         break;
       case "permission_resolved":
@@ -1614,8 +1620,13 @@ export default function App() {
                         permission.toolCall.toolCallId,
                       )}
                     </p>
-                    <pre className="composer-pending-preview">{truncateUnknownText(permission.toolCall.rawInput, 500)}</pre>
                     <div className="composer-pending-actions">
+                      <button
+                        className="secondary"
+                        onClick={() => setPermissionDetail(permission)}
+                      >
+                        查看详情
+                      </button>
                       {permission.options.map((option) => (
                         <button
                           key={option.optionId}
@@ -1810,7 +1821,7 @@ export default function App() {
             />
             </div>
             <div className="composer-actions">
-              <button className="primary" onClick={submitPrompt} disabled={(!promptText.trim() && pendingImages.length === 0) || !activeSession}>
+              <button className="primary" onClick={submitPrompt} disabled={(!promptText.trim() && pendingImages.length === 0) || !activeSession} title="发送 (⌘+Enter / Ctrl+Enter)">
                 {activeSessionIsRunning ? "加入队列" : "发送到当前会话"}
               </button>
               <button className="secondary composer-cancel" onClick={cancelActiveSession} disabled={!activeSessionIsRunning}>
@@ -1893,6 +1904,18 @@ export default function App() {
           sessionTitle={selectedItem.sessionTitle}
           item={selectedItem.item}
           onClose={() => setSelectedItem(null)}
+        />
+      ) : null}
+
+      {permissionDetail && activeSession ? (
+        <PermissionModal
+          sessionTitle={formatSessionTitleForDisplay(activeSession.title)}
+          permission={permissionDetail}
+          onResolve={(permission, optionId) => {
+            resolvePermission(permission, optionId);
+            setPermissionDetail(null);
+          }}
+          onClose={() => setPermissionDetail(null)}
         />
       ) : null}
 
@@ -2288,7 +2311,13 @@ function summarizeToolTitle(rawTitle: unknown, rawInput: unknown, rawToolCallId:
           : null;
   const description = typeof record?.description === "string" ? record.description : null;
   const args = Array.isArray(record?.args) ? record.args.filter((part): part is string => typeof part === "string").join(" ") : null;
-  const summary = [command, pathValue, description, args].filter(Boolean).join(" · ");
+
+  // If description is available, use it as the primary label (replaces command in title)
+  if (description) {
+    return description;
+  }
+
+  const summary = [command, pathValue, args].filter(Boolean).join(" · ");
 
   if (summary) {
     return summary;
@@ -3496,6 +3525,102 @@ function shouldRenderMarkdown(item: TimelineItem) {
   return item.kind === "agent" || item.kind === "plan";
 }
 
+function ToolCallDetailView(props: { body: string }) {
+  const entries = parseToolTimelineEntries(props.body);
+  let status: string | null = null;
+  let description: string | null = null;
+  let command: string | null = null;
+  let pathValue: string | null = null;
+  let rawOutput: unknown = undefined;
+
+  for (const entry of [...entries].reverse()) {
+    const record = asRecord(entry);
+    if (!record) continue;
+
+    if (!status && typeof record.status === "string" && record.status.trim()) {
+      status = record.status.trim();
+    }
+    if (rawOutput === undefined && record.rawOutput !== undefined && record.rawOutput !== null) {
+      rawOutput = record.rawOutput;
+    }
+    const inputRecord = asRecord(record.rawInput) ?? asRecord(tryParseJson(record.rawInput));
+    if (inputRecord) {
+      if (!description && typeof inputRecord.description === "string" && inputRecord.description.trim()) {
+        description = inputRecord.description.trim();
+      }
+      if (!command) {
+        // `command` is a string in bash-style tools; `cmd` is an array in exec-style tools
+        if (typeof inputRecord.command === "string" && inputRecord.command.trim()) {
+          command = inputRecord.command.trim();
+        } else if (Array.isArray(inputRecord.cmd)) {
+          const parts = inputRecord.cmd.filter((p): p is string => typeof p === "string");
+          if (parts.length) command = parts.join(" ");
+        }
+      }
+      if (!pathValue) {
+        for (const key of ["path", "filePath", "file_path", "cwd"]) {
+          const val = inputRecord[key];
+          if (typeof val === "string" && val.trim()) {
+            pathValue = val.trim();
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  const hasStructuredInfo = description || command || pathValue || status;
+  const outputText =
+    rawOutput !== undefined && rawOutput !== null
+      ? typeof rawOutput === "string"
+        ? rawOutput
+        : stringifyMaybe(rawOutput)
+      : null;
+
+  return (
+    <div className="tool-detail-view">
+      {hasStructuredInfo ? (
+        <div className="tool-detail-fields">
+          {status ? (
+            <div className="tool-detail-row">
+              <span className="tool-detail-key">状态</span>
+              <span className={`tool-detail-status tool-detail-status-${status.toLowerCase()}`}>{status}</span>
+            </div>
+          ) : null}
+          {description ? (
+            <div className="tool-detail-row">
+              <span className="tool-detail-key">描述</span>
+              <span className="tool-detail-val">{description}</span>
+            </div>
+          ) : null}
+          {command ? (
+            <div className="tool-detail-row">
+              <span className="tool-detail-key">命令</span>
+              <code className="tool-detail-val tool-detail-code">{command}</code>
+            </div>
+          ) : null}
+          {pathValue ? (
+            <div className="tool-detail-row">
+              <span className="tool-detail-key">路径</span>
+              <code className="tool-detail-val tool-detail-code">{pathValue}</code>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {outputText !== null ? (
+        <details className="tool-detail-section" open>
+          <summary className="tool-detail-summary">输出</summary>
+          <pre className="modal-body tool-detail-content">{outputText}</pre>
+        </details>
+      ) : null}
+      <details className="tool-detail-section">
+        <summary className="tool-detail-summary">原始数据</summary>
+        <pre className="modal-body tool-detail-content">{props.body}</pre>
+      </details>
+    </div>
+  );
+}
+
 function MessageModal(props: {
   sessionTitle: string;
   item: TimelineItem;
@@ -3526,11 +3651,60 @@ function MessageModal(props: {
             ))}
           </div>
         ) : null}
-        {shouldRenderMarkdown(props.item) ? (
+        {props.item.kind === "tool" ? (
+          <ToolCallDetailView body={props.item.body} />
+        ) : shouldRenderMarkdown(props.item) ? (
           <div className="modal-body markdown-body">{renderMarkdownBlocks(props.item.body)}</div>
         ) : (
           <pre className="modal-body">{props.item.body}</pre>
         )}
+      </div>
+    </div>
+  );
+}
+
+function PermissionModal(props: {
+  sessionTitle: string;
+  permission: PermissionPayload;
+  onResolve: (permission: PermissionPayload, optionId: string) => void;
+  onClose: () => void;
+}) {
+  const toolTitle = summarizeToolTitle(
+    props.permission.toolCall.title,
+    props.permission.toolCall.rawInput,
+    props.permission.toolCall.toolCallId,
+  );
+  const body = formatToolBody({
+    toolCallId: props.permission.toolCall.toolCallId,
+    title: props.permission.toolCall.title,
+    status: props.permission.toolCall.status ?? "pending",
+    rawInput: props.permission.toolCall.rawInput,
+  });
+  return (
+    <div className="modal-backdrop" onClick={props.onClose}>
+      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">{props.sessionTitle}</p>
+            <h3>{toolTitle}</h3>
+          </div>
+          <button className="secondary" onClick={props.onClose}>
+            关闭
+          </button>
+        </div>
+        <p className="modal-meta">待处理确认</p>
+        <ToolCallDetailView body={body} />
+        <div className="composer-pending-actions">
+          {props.permission.options.map((option) => (
+            <button
+              key={option.optionId}
+              className="secondary"
+              onClick={() => props.onResolve(props.permission, option.optionId)}
+            >
+              {option.name}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
