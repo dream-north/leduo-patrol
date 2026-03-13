@@ -149,6 +149,8 @@ test("app markdown decision and plan parsing helpers", () => {
   assert.equal(appTestables.shouldRenderMarkdown({ id: "1", kind: "plan", title: "p", body: "b" }), true);
   assert.equal(appTestables.shouldUseExpandedPreview({ id: "1", kind: "tool", title: "t", body: "line1\nline2" }), false);
   assert.equal(appTestables.extractPlanText({ rawInput: { file_path: "/repo/.claude/plans/p2.md", content: "abc" } }), "abc");
+  assert.equal(appTestables.extractPlanText({ plan: "# Plan\n- step 1" }), "# Plan\n- step 1");
+  assert.equal(appTestables.extractPlanText({ rawInput: { plan: "# Plan\n- step 1" } }), "# Plan\n- step 1");
   assert.deepEqual(appTestables.tryParseJson('{"a":1}'), { a: 1 });
 });
 
