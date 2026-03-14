@@ -163,6 +163,21 @@ test("app extractChunkText handles ACP content variants", () => {
   );
 });
 
+
+test("app buildPathBreadcrumbs supports root shortcut and nested path", () => {
+  const crumbs = appTestables.buildPathBreadcrumbs("/workspace/leduo-patrol/src/components", ["/workspace", "/tmp"]);
+  assert.equal(crumbs[0]?.label, "根目录");
+  assert.equal(crumbs[0]?.path, "/workspace");
+  assert.equal(crumbs.at(-1)?.path, "/workspace/leduo-patrol/src/components");
+  assert.equal(crumbs.at(-1)?.active, true);
+});
+
+test("app buildPathBreadcrumbs falls back to absolute root when outside allowed roots", () => {
+  const crumbs = appTestables.buildPathBreadcrumbs("/opt/demo/project", ["/workspace"]);
+  assert.equal(crumbs[0]?.label, "/");
+  assert.equal(crumbs[1]?.path, "/opt");
+  assert.equal(crumbs.at(-1)?.path, "/opt/demo/project");
+});
 test("app timeline tree helpers group subagent span", () => {
   const rows = appTestables.buildTimelineTreeRows([
     {
@@ -379,6 +394,14 @@ test("app applyDemoPreset injects demo session for subagent tree preview", () =>
   assert.equal(steps[2]?.status, "in_progress");
 });
 
+
+
+test("app buildDemoFixtures includes create-session showcase data", () => {
+  const fixtures = appTestables.buildDemoFixtures("/repo", "subagent-tree");
+  assert.equal(fixtures?.createSession?.modeId, "plan");
+  assert.equal(fixtures?.createSession?.title, "demo_new_session_path_picker_showcase");
+  assert.equal(fixtures?.createSession?.workspacePath, "/repo/demo/new-session-showcase/client-dashboard");
+});
 
 test("app buildDemoFixtures includes 8 sessions for overflow sidebar regression", () => {
   const fixtures = appTestables.buildDemoFixtures("/repo", "subagent-tree");

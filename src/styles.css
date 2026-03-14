@@ -392,6 +392,69 @@ h1 {
   font-size: 11px;
 }
 
+.workspace-suggestion-hint {
+  margin-top: -4px;
+  margin-bottom: 8px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.workspace-path-inline {
+  display: grid;
+  grid-template-columns: max-content auto minmax(220px, 1fr);
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.workspace-path-root {
+  margin-bottom: 0;
+  max-width: min(42vw, 420px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-path-sep {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.workspace-path-inline input {
+  width: 100%;
+  margin-bottom: 0;
+}
+
+.masthead .actions.compact {
+  margin-top: 12px;
+}
+
+.workspace-suggestion-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.workspace-suggestion-item {
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-suggestion-current {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
 .tab-panel.fill .session-list {
   margin-top: 0;
 }
