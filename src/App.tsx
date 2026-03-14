@@ -123,8 +123,15 @@ type DemoSessionFixture = {
   fileDiffs: Record<string, SessionFileDiffResponse>;
 };
 
+type DemoCreateSessionFixture = {
+  workspacePath: string;
+  title: string;
+  modeId: string;
+};
+
 type DemoFixtures = {
   bySessionId: Record<string, DemoSessionFixture>;
+  createSession: DemoCreateSessionFixture | null;
 };
 
 type ExecutionPlanStepStatus = "completed" | "in_progress" | "pending" | "unknown";
@@ -227,7 +234,9 @@ export default function App() {
   const [workspacePath, setWorkspacePath] = useState("");
   const [newSessionTitle, setNewSessionTitle] = useState("");
   const [newSessionModeId, setNewSessionModeId] = useState("default");
-  const [sidebarTab, setSidebarTab] = useState<"sessions" | "create">("sessions");
+  const [createSessionModalOpen, setCreateSessionModalOpen] = useState(false);
+  const [createWorkspaceRoot, setCreateWorkspaceRoot] = useState("");
+  const [createWorkspaceSuffix, setCreateWorkspaceSuffix] = useState("");
   const [connectionState, setConnectionState] = useState("connecting");
   const [promptText, setPromptText] = useState("");
   const [commandSuggestionIndex, setCommandSuggestionIndex] = useState(0);
@@ -301,7 +310,31 @@ export default function App() {
   const latestExecutionPlanSteps = useMemo(() => parseExecutionPlanSteps(latestExecutionPlanBody), [latestExecutionPlanBody]);
   const browseRootPath = directoryBrowserPath || activeSession?.workspacePath || config?.workspacePath || "";
   const currentBrowsePath = directoryRootPath || browseRootPath;
-  const canBrowseUp = canNavigateUp(currentBrowsePath, config?.allowedRoots ?? []);
+  const workspaceSuffixSuggestions = useMemo(() => {
+    if (!createWorkspaceRoot) {
+      return [];
+    }
+    const query = createWorkspaceSuffix.trim().toLowerCase();
+    const candidates = new Set<string>();
+    const currentRelative = relativePathFromRoot(createWorkspaceRoot, currentBrowsePath);
+    if (currentRelative) {
+      candidates.add(currentRelative);
+    }
+    for (const option of directoryOptions) {
+      const relative = relativePathFromRoot(createWorkspaceRoot, option.path);
+      if (relative) {
+        candidates.add(relative);
+      }
+    }
+
+    const sorted = Array.from(candidates).sort((a, b) => a.localeCompare(b));
+    if (!query) {
+      return sorted.slice(0, 30);
+    }
+    const startsWith = sorted.filter((pathValue) => pathValue.toLowerCase().startsWith(query));
+    const includes = sorted.filter((pathValue) => !startsWith.includes(pathValue) && pathValue.toLowerCase().includes(query));
+    return [...startsWith, ...includes].slice(0, 30);
+  }, [createWorkspaceRoot, createWorkspaceSuffix, currentBrowsePath, directoryOptions]);
 
   useEffect(() => {
     if (sessions.length === 0) {
@@ -312,18 +345,6 @@ export default function App() {
       setActiveSessionId(sessions[0].clientSessionId);
     }
   }, [activeSessionId, sessions]);
-
-  useEffect(() => {
-    if (sessions.length === 0) {
-      setSidebarTab("create");
-    }
-  }, [sessions.length]);
-
-  useEffect(() => {
-    if (sessions.length > 0 && activeSessionId) {
-      setSidebarTab("sessions");
-    }
-  }, [activeSessionId, sessions.length]);
 
   useEffect(() => {
     setCommandSuggestionIndex(0);
@@ -432,11 +453,22 @@ export default function App() {
         const configData = (await configResponse.json()) as AppConfig;
         const stateData = (await stateResponse.json()) as StateResponse;
         setConfig(configData);
-        setWorkspacePath(configData.workspacePath);
         const normalizedSessions = stateData.sessions.map(normalizeSessionRecord);
         const fixtures = buildDemoFixtures(configData.workspacePath, demoPreset);
+        const createSessionShowcase = fixtures?.createSession;
+        const initialWorkspacePath = createSessionShowcase?.workspacePath ?? configData.workspacePath;
+        setWorkspacePath(initialWorkspacePath);
+        const initialWorkspaceSplit = splitWorkspacePathByAllowedRoots(initialWorkspacePath, configData.allowedRoots);
+        setCreateWorkspaceRoot(initialWorkspaceSplit.root);
+        setCreateWorkspaceSuffix(initialWorkspaceSplit.suffix);
+        setNewSessionTitle(createSessionShowcase?.title ?? "");
+        setNewSessionModeId(createSessionShowcase?.modeId ?? "default");
+        setDirectoryBrowserPath(initialWorkspacePath);
         setDemoFixtures(fixtures);
         setSessions(applyDemoPreset(normalizedSessions, fixtures));
+        if (createSessionShowcase) {
+          setCreateSessionModalOpen(true);
+        }
         setAuthPrompt("");
       })
       .catch((error) => {
@@ -1099,7 +1131,7 @@ export default function App() {
       },
     });
     if (didSend) {
-      setSidebarTab("sessions");
+      setCreateSessionModalOpen(false);
     }
   }
 
@@ -1389,162 +1421,75 @@ export default function App() {
           <StatusCard label="会话数" value={String(sessions.length)} />
         </div>
 
-        <div className="sidebar-tabs" role="tablist" aria-label="会话面板">
+        <div className="actions compact">
           <button
-            className={`sidebar-tab ${sidebarTab === "sessions" ? "active" : ""}`}
-            onClick={() => setSidebarTab("sessions")}
+            className="primary"
             type="button"
-            role="tab"
-            aria-selected={sidebarTab === "sessions"}
-            aria-controls="panel-sessions"
-            title="查看并切换当前会话"
-          >
-            当前会话
-          </button>
-          <button
-            className={`sidebar-tab ${sidebarTab === "create" ? "active" : ""}`}
-            onClick={() => setSidebarTab("create")}
-            type="button"
-            role="tab"
-            aria-selected={sidebarTab === "create"}
-            aria-controls="panel-create"
+            onClick={() => {
+              const split = splitWorkspacePathByAllowedRoots(workspacePath, config?.allowedRoots ?? []);
+              setCreateWorkspaceRoot(split.root);
+              setCreateWorkspaceSuffix(split.suffix);
+              setCreateSessionModalOpen(true);
+            }}
             title="新建一个 Claude Code 会话"
           >
             + 新建会话
           </button>
+          <button
+            className="secondary"
+            onClick={openVscodeRemote}
+            disabled={!config?.vscodeRemoteUri}
+            title={config?.vscodeRemoteUri ? "在 VS Code Remote SSH 中打开工作目录" : "需要配置 LEDUO_PATROL_SSH_HOST 环境变量"}
+          >
+            打开 VS Code Remote SSH
+          </button>
         </div>
 
         <div className="sidebar-body">
-          {sidebarTab === "create" ? (
-            <div id="panel-create" className="tab-panel create-panel" role="tabpanel" aria-label="新建会话">
-              <div className="details">
-                <label htmlFor="create-workspace-path">会话目录</label>
-                <input id="create-workspace-path" value={workspacePath} placeholder="请输入绝对路径，例如 /home/user/project" onChange={(event) => setWorkspacePath(event.target.value)} />
-                <label htmlFor="create-session-title">会话名</label>
-                <input
-                  id="create-session-title"
-                  placeholder="可选，例如 leduo-api"
-                  onChange={(event) => setNewSessionTitle(event.target.value)}
-                />
-                <label htmlFor="create-session-mode">默认模式</label>
-                <select id="create-session-mode" value={newSessionModeId} onChange={(event) => setNewSessionModeId(event.target.value)}>
-                  {MODE_OPTIONS.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <label htmlFor="create-subdir">当前目录的子目录</label>
-                <select
-                  id="create-subdir"
-                  value=""
-                  disabled={directoryLoading || directoryOptions.length === 0}
-                  onChange={(event) => {
-                    if (event.target.value) {
-                      setDirectoryBrowserPath(event.target.value);
-                      setWorkspacePath(event.target.value);
-                    }
-                  }}
-                >
-                  <option value="">
-                    {directoryLoading
-                      ? "正在读取子目录..."
-                      : directoryOptions.length > 0
-                        ? "选择一个子目录"
-                        : "当前目录下没有可选子目录"}
-                  </option>
-                  {directoryOptions.map((option) => (
-                    <option key={option.path} value={option.path}>
-                      {option.name}
-                    </option>
-                  ))}
-                </select>
-                <div className="inline-actions">
-                  <button
-                    className="secondary"
-                    type="button"
-                    disabled={!currentBrowsePath || !canBrowseUp}
-                    onClick={() => setDirectoryBrowserPath(parentDirectory(currentBrowsePath))}
-                  >
-                    返回上一级
-                  </button>
-                  <button
-                    className="secondary"
-                    type="button"
-                    disabled={!currentBrowsePath}
-                    onClick={() => setWorkspacePath(currentBrowsePath)}
-                  >
-                    使用当前目录
-                  </button>
-                </div>
-                <p>当前浏览目录</p>
-                <code>{currentBrowsePath || "加载中..."}</code>
-                {directoryError ? <p>{directoryError}</p> : null}
-                <p>允许根目录</p>
-                <code>{config?.allowedRoots?.join("\n") ?? "加载中..."}</code>
-              </div>
-              <div className="actions">
-                <button className="primary" onClick={createSession} disabled={!workspacePath.trim()}>
-                  新建目录会话
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div id="panel-sessions" className="tab-panel fill" role="tabpanel" aria-label="当前会话">
-              <div className="actions compact">
-                <button
-                  className="secondary"
-                  onClick={openVscodeRemote}
-                  disabled={!config?.vscodeRemoteUri}
-                  title={config?.vscodeRemoteUri ? "在 VS Code Remote SSH 中打开工作目录" : "需要配置 LEDUO_PATROL_SSH_HOST 环境变量"}
-                >
-                  打开 VS Code Remote SSH
-                </button>
-              </div>
-              <div className="session-list">
-                {sessions.length === 0 ? (
-                  <div className="empty">还没有会话。点击「+ 新建会话」创建一个。</div>
-                ) : (
-                  sessions.map((session) => {
-                    const sidebarStatus = getSessionSidebarStatus(session);
-                    const updatedAtLabel = formatRelativeUpdatedAt(session.updatedAt);
-                    const sessionModeLabel = labelForMode(session.defaultModeId);
-                    const sidebarWorkspacePath = formatWorkspacePathForSidebar(session.workspacePath, config?.allowedRoots ?? []);
-                    const isActive = session.clientSessionId === activeSessionId;
-                    return (
-                      <button
-                        key={session.clientSessionId}
-                        className={`session-chip ${isActive ? "active" : ""}`}
-                        onClick={() => setActiveSessionId(session.clientSessionId)}
-                        aria-current={isActive ? "true" : undefined}
-                        title={session.title || session.workspacePath}
-                      >
-                        <span className="session-chip-title" title={session.title}>
-                          {formatSessionTitleForDisplay(session.title)}
-                        </span>
-                        <span className="session-chip-meta">
-                          <span className="session-chip-status">
-                            {sidebarStatus ? (
-                              <span className={`session-chip-tag session-chip-tag-${sidebarStatus.tone}`}>{sidebarStatus.label}</span>
-                            ) : null}
-                            <span className="session-chip-mode" title={`会话模式：${sessionModeLabel}`}>
-                              {sessionModeLabel}
-                            </span>
-                          </span>
-                          <span className="session-chip-time" title={session.updatedAt}>
-                            {updatedAtLabel}
+          <div id="panel-sessions" className="tab-panel fill" role="tabpanel" aria-label="当前会话">
+            <div className="session-list">
+              {sessions.length === 0 ? (
+                <div className="empty">还没有会话。点击「+ 新建会话」创建一个。</div>
+              ) : (
+                sessions.map((session) => {
+                  const sidebarStatus = getSessionSidebarStatus(session);
+                  const updatedAtLabel = formatRelativeUpdatedAt(session.updatedAt);
+                  const sessionModeLabel = labelForMode(session.defaultModeId);
+                  const sidebarWorkspacePath = formatWorkspacePathForSidebar(session.workspacePath, config?.allowedRoots ?? []);
+                  const isActive = session.clientSessionId === activeSessionId;
+                  return (
+                    <button
+                      key={session.clientSessionId}
+                      className={`session-chip ${isActive ? "active" : ""}`}
+                      onClick={() => setActiveSessionId(session.clientSessionId)}
+                      aria-current={isActive ? "true" : undefined}
+                      title={session.title || session.workspacePath}
+                    >
+                      <span className="session-chip-title" title={session.title}>
+                        {formatSessionTitleForDisplay(session.title)}
+                      </span>
+                      <span className="session-chip-meta">
+                        <span className="session-chip-status">
+                          {sidebarStatus ? (
+                            <span className={`session-chip-tag session-chip-tag-${sidebarStatus.tone}`}>{sidebarStatus.label}</span>
+                          ) : null}
+                          <span className="session-chip-mode" title={`会话模式：${sessionModeLabel}`}>
+                            {sessionModeLabel}
                           </span>
                         </span>
-                        <span className="session-chip-path" title={session.workspacePath}>
-                          {sidebarWorkspacePath}
+                        <span className="session-chip-time" title={session.updatedAt}>
+                          {updatedAtLabel}
                         </span>
-                      </button>
-                    );
-                  })
-                )}
-              </div>
+                      </span>
+                      <span className="session-chip-path" title={session.workspacePath}>
+                        {sidebarWorkspacePath}
+                      </span>
+                    </button>
+                  );
+                })
+              )}
             </div>
-          )}
+          </div>
         </div>
 
       </aside>
@@ -1906,6 +1851,94 @@ export default function App() {
           <div className="empty">选择一个会话后再处理确认或关闭会话。</div>
         )}
       </aside>
+
+      {createSessionModalOpen ? (
+        <div className="modal-backdrop" onClick={() => setCreateSessionModalOpen(false)}>
+          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h3>新建会话</h3>
+                <p>在一个输入框里完成目录输入与补全选择。</p>
+              </div>
+              <button className="secondary" onClick={() => setCreateSessionModalOpen(false)}>
+                关闭
+              </button>
+            </div>
+            <div className="modal-scroll-body">
+              <div className="details">
+                <label htmlFor="create-workspace-suffix">会话目录（根目录已锁定）</label>
+                <div className="workspace-path-inline">
+                  <code className="workspace-path-root">{createWorkspaceRoot || "(未配置允许根目录)"}</code>
+                  <span className="workspace-path-sep" aria-hidden="true">/</span>
+                  <input
+                    id="create-workspace-suffix"
+                    list="create-workspace-suffix-suggestions"
+                    value={createWorkspaceSuffix}
+                    placeholder="例如 demo/new-session-showcase"
+                    onChange={(event) => {
+                      const nextSuffix = sanitizeWorkspaceSuffix(event.target.value);
+                      setCreateWorkspaceSuffix(nextSuffix);
+                      const nextPath = composeWorkspacePath(createWorkspaceRoot, nextSuffix);
+                      setWorkspacePath(nextPath);
+                      setDirectoryBrowserPath(nextPath);
+                    }}
+                  />
+                </div>
+                <datalist id="create-workspace-suffix-suggestions">
+                  {workspaceSuffixSuggestions.map((pathValue) => (
+                    <option key={pathValue} value={pathValue} />
+                  ))}
+                </datalist>
+                <p className="workspace-suggestion-hint">目录前缀已锁定到根目录，只补全后缀路径。</p>
+                {workspaceSuffixSuggestions.length > 0 ? (
+                  <div className="workspace-suggestion-list" role="list" aria-label="目录候选">
+                    {workspaceSuffixSuggestions.slice(0, 8).map((pathValue) => (
+                      <button
+                        key={pathValue}
+                        type="button"
+                        className="workspace-suggestion-item"
+                        onClick={() => {
+                          setCreateWorkspaceSuffix(pathValue);
+                          const nextPath = composeWorkspacePath(createWorkspaceRoot, pathValue);
+                          setWorkspacePath(nextPath);
+                          setDirectoryBrowserPath(nextPath);
+                        }}
+                      >
+                        {pathValue}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                <p className="workspace-suggestion-current">当前目录：<code>{workspacePath}</code></p>
+                <label htmlFor="create-session-title">会话名</label>
+                <input
+                  id="create-session-title"
+                  value={newSessionTitle}
+                  placeholder="可选，例如 leduo-api"
+                  onChange={(event) => setNewSessionTitle(event.target.value)}
+                />
+                <label htmlFor="create-session-mode">默认模式</label>
+                <select id="create-session-mode" value={newSessionModeId} onChange={(event) => setNewSessionModeId(event.target.value)}>
+                  {MODE_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                {directoryError ? <p>{directoryError}</p> : null}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="primary" onClick={createSession} disabled={!workspacePath.trim()}>
+                新建目录会话
+              </button>
+              <button className="secondary" type="button" onClick={() => setCreateSessionModalOpen(false)}>
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {selectedItem ? (
         <MessageModal
@@ -2817,6 +2850,77 @@ function normalizePath(pathValue: string) {
   return normalized || "/";
 }
 
+function sanitizeWorkspaceSuffix(value: string) {
+  return value.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+function composeWorkspacePath(rootPath: string, suffixPath: string) {
+  const normalizedRoot = normalizePath(rootPath);
+  const normalizedSuffix = sanitizeWorkspaceSuffix(suffixPath);
+  if (!normalizedSuffix) {
+    return normalizedRoot;
+  }
+  return normalizePath(`${normalizedRoot}/${normalizedSuffix}`);
+}
+
+function relativePathFromRoot(rootPath: string, targetPath: string) {
+  const normalizedRoot = normalizePath(rootPath);
+  const normalizedTarget = normalizePath(targetPath);
+  if (!isWithinRoot(normalizedRoot, normalizedTarget)) {
+    return "";
+  }
+  if (normalizedTarget === normalizedRoot) {
+    return "";
+  }
+  return normalizedTarget.slice(normalizedRoot.length).replace(/^\/+/, "");
+}
+
+function splitWorkspacePathByAllowedRoots(pathValue: string, allowedRoots: string[]) {
+  const normalizedPath = normalizePath(pathValue.trim() || "/");
+  const normalizedRoots = allowedRoots
+    .map((rootPath) => normalizePath(rootPath.trim()))
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  const matchedRoot = normalizedRoots.find((rootPath) => isWithinRoot(rootPath, normalizedPath));
+  const fallbackRoot = normalizedRoots[0] ?? "/";
+  const activeRoot = matchedRoot ?? fallbackRoot;
+  const suffix = relativePathFromRoot(activeRoot, normalizedPath);
+  return { root: activeRoot, suffix };
+}
+
+function buildPathBreadcrumbs(currentPath: string, allowedRoots: string[]) {
+  const normalizedCurrent = normalizePath(currentPath.trim());
+  if (!normalizedCurrent) {
+    return [];
+  }
+
+  const sortedRoots = allowedRoots
+    .map((rootPath) => normalizePath(rootPath.trim()))
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  const matchedRoot = sortedRoots.find((rootPath) => isWithinRoot(rootPath, normalizedCurrent));
+  const activeBase = matchedRoot ?? "/";
+
+  const remainder = normalizedCurrent === activeBase ? "" : normalizedCurrent.slice(activeBase.length).replace(/^\/+/, "");
+  const segments = remainder ? remainder.split("/").filter(Boolean) : [];
+
+  const crumbs: Array<{ label: string; path: string; active: boolean }> = [];
+  const baseLabel = matchedRoot ? "根目录" : "/";
+  crumbs.push({ label: baseLabel, path: activeBase, active: normalizedCurrent === activeBase });
+
+  let cursor = activeBase;
+  for (const segment of segments) {
+    const nextPath = cursor === "/" ? `/${segment}` : `${cursor}/${segment}`;
+    cursor = normalizePath(nextPath);
+    crumbs.push({ label: segment, path: cursor, active: cursor === normalizedCurrent });
+  }
+
+  if (crumbs.length === 0) {
+    return [{ label: "/", path: "/", active: normalizedCurrent === "/" }];
+  }
+  return crumbs;
+}
+
 function toSingleLine(value: string) {
   return value.replace(/\s+/g, " ").trim() || "(空)";
 }
@@ -3161,6 +3265,11 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
   });
 
   return {
+    createSession: {
+      workspacePath: `${workspacePath}/demo/new-session-showcase/client-dashboard`,
+      title: "demo_new_session_path_picker_showcase",
+      modeId: "plan",
+    },
     bySessionId: {
       [demoSession.clientSessionId]: {
         session: demoSession,
@@ -4054,6 +4163,7 @@ export const appTestables = {
   parentDirectory,
   isWithinRoot,
   normalizePath,
+  buildPathBreadcrumbs,
   toSingleLine,
   toPreviewText,
   normalizeTimelineItem,
