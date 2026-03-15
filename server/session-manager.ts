@@ -63,6 +63,8 @@ export type SocketEvent =
         clientSessionId: string;
         title: string;
         workspacePath: string;
+        defaultModeId: string;
+        currentModeId: string;
       };
     }
   | {
@@ -190,6 +192,8 @@ export class SessionManager {
           clientSessionId: existingEntry.snapshot.clientSessionId,
           title: existingEntry.snapshot.title,
           workspacePath: existingEntry.snapshot.workspacePath,
+          defaultModeId: existingEntry.snapshot.defaultModeId,
+          currentModeId: existingEntry.snapshot.currentModeId,
         },
       });
       return existingEntry.snapshot;
@@ -227,6 +231,8 @@ export class SessionManager {
         clientSessionId: snapshot.clientSessionId,
         title: snapshot.title,
         workspacePath: snapshot.workspacePath,
+        defaultModeId: snapshot.defaultModeId,
+        currentModeId: snapshot.currentModeId,
       },
     });
 

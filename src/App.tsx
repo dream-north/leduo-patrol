@@ -145,7 +145,7 @@ type EventMessage =
   | { type: "ready"; payload: { workspacePath: string; agentConnected: boolean; clientSessionId?: string } }
   | {
       type: "session_registered";
-      payload: { clientSessionId: string; title: string; workspacePath: string };
+      payload: { clientSessionId: string; title: string; workspacePath: string; defaultModeId?: string; currentModeId?: string };
     }
   | {
       type: "session_created";
@@ -227,6 +227,7 @@ function withAccessKey(path: string, keyOverride?: string) {
 }
 
 export default function App() {
+  const WORKSPACE_SUGGESTION_INITIAL_LIMIT = 8;
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [accessKey, setAccessKey] = useState(() => readAccessKeyFromUrl());
   const [accessKeyInput, setAccessKeyInput] = useState(() => readAccessKeyFromUrl());
@@ -235,6 +236,7 @@ export default function App() {
   const [newSessionTitle, setNewSessionTitle] = useState("");
   const [newSessionModeId, setNewSessionModeId] = useState("default");
   const [createSessionModalOpen, setCreateSessionModalOpen] = useState(false);
+  const [showAllWorkspaceSuggestions, setShowAllWorkspaceSuggestions] = useState(false);
   const [createWorkspaceRoot, setCreateWorkspaceRoot] = useState("");
   const [createWorkspaceSuffix, setCreateWorkspaceSuffix] = useState("");
   const [connectionState, setConnectionState] = useState("connecting");
@@ -335,6 +337,10 @@ export default function App() {
     const includes = sorted.filter((pathValue) => !startsWith.includes(pathValue) && pathValue.toLowerCase().includes(query));
     return [...startsWith, ...includes].slice(0, 30);
   }, [createWorkspaceRoot, createWorkspaceSuffix, currentBrowsePath, directoryOptions]);
+  const visibleWorkspaceSuffixSuggestions = showAllWorkspaceSuggestions
+    ? workspaceSuffixSuggestions
+    : workspaceSuffixSuggestions.slice(0, WORKSPACE_SUGGESTION_INITIAL_LIMIT);
+  const hasMoreWorkspaceSuggestions = workspaceSuffixSuggestions.length > WORKSPACE_SUGGESTION_INITIAL_LIMIT;
 
   useEffect(() => {
     if (sessions.length === 0) {
@@ -899,8 +905,8 @@ export default function App() {
               connectionState: "connecting",
               sessionId: "",
               modes: [],
-              defaultModeId: newSessionModeId,
-              currentModeId: newSessionModeId,
+              defaultModeId: message.payload.defaultModeId ?? newSessionModeId,
+              currentModeId: message.payload.currentModeId ?? message.payload.defaultModeId ?? newSessionModeId,
               busy: false,
               timeline: [],
               historyTotal: 0,
@@ -1132,6 +1138,9 @@ export default function App() {
     });
     if (didSend) {
       setCreateSessionModalOpen(false);
+      setShowAllWorkspaceSuggestions(false);
+      setCreateWorkspaceSuffix("");
+      setWorkspacePath("");
     }
   }
 
@@ -1208,12 +1217,6 @@ export default function App() {
         optionId,
       },
     });
-  }
-
-  function openVscodeRemote() {
-    if (config?.vscodeRemoteUri) {
-      window.location.href = config.vscodeRemoteUri;
-    }
   }
 
   function sendCommand(command: unknown) {
@@ -1426,22 +1429,20 @@ export default function App() {
             className="primary"
             type="button"
             onClick={() => {
-              const split = splitWorkspacePathByAllowedRoots(workspacePath, config?.allowedRoots ?? []);
+              const defaultWorkspacePath = config?.workspacePath ?? workspacePath;
+              const split = splitWorkspacePathByAllowedRoots(defaultWorkspacePath, config?.allowedRoots ?? []);
+              setWorkspacePath(defaultWorkspacePath);
               setCreateWorkspaceRoot(split.root);
               setCreateWorkspaceSuffix(split.suffix);
+              setDirectoryBrowserPath(resolveWorkspaceLookupPath(split.root, split.suffix, []));
+              setNewSessionTitle("");
+              setNewSessionModeId("default");
+              setShowAllWorkspaceSuggestions(false);
               setCreateSessionModalOpen(true);
             }}
             title="新建一个 Claude Code 会话"
           >
             + 新建会话
-          </button>
-          <button
-            className="secondary"
-            onClick={openVscodeRemote}
-            disabled={!config?.vscodeRemoteUri}
-            title={config?.vscodeRemoteUri ? "在 VS Code Remote SSH 中打开工作目录" : "需要配置 LEDUO_PATROL_SSH_HOST 环境变量"}
-          >
-            打开 VS Code Remote SSH
           </button>
         </div>
 
@@ -1853,13 +1854,22 @@ export default function App() {
       </aside>
 
       {createSessionModalOpen ? (
-        <div className="modal-backdrop" onClick={() => setCreateSessionModalOpen(false)}>
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            setCreateSessionModalOpen(false);
+            setShowAllWorkspaceSuggestions(false);
+          }}
+        >
           <div className="modal-card" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <div>
                 <h3>新建会话</h3>
               </div>
-              <button className="secondary" onClick={() => setCreateSessionModalOpen(false)}>
+              <button className="secondary" onClick={() => {
+                setCreateSessionModalOpen(false);
+                setShowAllWorkspaceSuggestions(false);
+              }}>
                 关闭
               </button>
             </div>
@@ -1881,6 +1891,7 @@ export default function App() {
                       const nextLookupPath = resolveWorkspaceLookupPath(createWorkspaceRoot, nextSuffix, directoryOptions);
                       setWorkspacePath(nextPath);
                       setDirectoryBrowserPath(nextLookupPath);
+                      setShowAllWorkspaceSuggestions(false);
                     }}
                   />
                 </div>
@@ -1891,7 +1902,7 @@ export default function App() {
                 </datalist>
                 {workspaceSuffixSuggestions.length > 0 ? (
                   <div className="workspace-suggestion-list" role="list" aria-label="目录候选">
-                    {workspaceSuffixSuggestions.slice(0, 8).map((pathValue) => (
+                    {visibleWorkspaceSuffixSuggestions.map((pathValue) => (
                       <button
                         key={pathValue}
                         type="button"
@@ -1902,11 +1913,21 @@ export default function App() {
                           const nextLookupPath = resolveWorkspaceLookupPath(createWorkspaceRoot, pathValue, directoryOptions);
                           setWorkspacePath(nextPath);
                           setDirectoryBrowserPath(nextLookupPath);
+                          setShowAllWorkspaceSuggestions(false);
                         }}
                       >
                         {pathValue}
                       </button>
                     ))}
+                    {hasMoreWorkspaceSuggestions ? (
+                      <button
+                        type="button"
+                        className="workspace-suggestion-item"
+                        onClick={() => setShowAllWorkspaceSuggestions((current) => !current)}
+                      >
+                        {showAllWorkspaceSuggestions ? "收起候选" : `展开更多（+${workspaceSuffixSuggestions.length - WORKSPACE_SUGGESTION_INITIAL_LIMIT}）`}
+                      </button>
+                    ) : null}
                   </div>
                 ) : null}
                 <label htmlFor="create-session-title">会话名</label>
@@ -1938,7 +1959,10 @@ export default function App() {
               <button className="primary" onClick={createSession} disabled={!workspacePath.trim()}>
                 新建目录会话
               </button>
-              <button className="secondary" type="button" onClick={() => setCreateSessionModalOpen(false)}>
+              <button className="secondary" type="button" onClick={() => {
+                setCreateSessionModalOpen(false);
+                setShowAllWorkspaceSuggestions(false);
+              }}>
                 取消
               </button>
             </div>

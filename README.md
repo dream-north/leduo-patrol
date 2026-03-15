@@ -83,7 +83,6 @@
 - **目录浏览**：创建会话时可在允许根目录范围内浏览子目录，安全限制越权访问
 
 ### 工具与集成
-- **VS Code Remote SSH**：侧边栏提供快捷按钮，一键在 VS Code 中打开远程目录（需配置环境变量）
 - **内置终端**：下方可展开终端抽屉，通过 xterm.js 提供完整 PTY 终端体验（需服务端开启 `LEDUO_ENABLE_SHELL=true`）
 
 ### 界面与可访问性
@@ -133,16 +132,12 @@ LEDUO_PATROL_WEB_PORT=5173
 LEDUO_PATROL_APP_NAME=乐多汪汪队
 LEDUO_PATROL_WORKSPACE_PATH=/absolute/workspace/path
 LEDUO_PATROL_ALLOWED_ROOTS=/absolute/workspace/path,/another/allowed/root
-LEDUO_PATROL_SSH_HOST=user@example-host
-LEDUO_PATROL_SSH_PATH=/absolute/workspace/path
-LEDUO_PATROL_VSCODE_URI=vscode://vscode-remote/ssh-remote+user@example-host/absolute/workspace/path
 ANTHROPIC_API_KEY=sk-...
 LEDUO_PATROL_ACCESS_KEY=your-fixed-key
 LEDUO_PATROL_AGENT_BIN=/absolute/path/to/claude-code-acp
 LEDUO_ENABLE_SHELL=true
 ```
 
-如果未设置 `LEDUO_PATROL_VSCODE_URI`，但设置了 `LEDUO_PATROL_SSH_HOST`，服务会自动生成一个 VS Code Remote SSH 链接。  
 如果设置了 `LEDUO_PATROL_ALLOWED_ROOTS`，网页中只能连接这些根目录之下的路径；未设置时默认只允许启动命令所在目录。
 如果未设置 `LEDUO_PATROL_WORKSPACE_PATH`，默认工作目录为启动命令所在目录（`process.cwd()`），并在启动日志中提示如何通过环境变量修改。
 如果未设置 `LEDUO_PATROL_ALLOWED_ROOTS`，默认允许根目录同样为启动命令所在目录，并会在启动日志中提示可配置项。
