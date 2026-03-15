@@ -463,7 +463,7 @@ export default function App() {
         setCreateWorkspaceSuffix(initialWorkspaceSplit.suffix);
         setNewSessionTitle(createSessionShowcase?.title ?? "");
         setNewSessionModeId(createSessionShowcase?.modeId ?? "default");
-        setDirectoryBrowserPath(initialWorkspacePath);
+        setDirectoryBrowserPath(resolveWorkspaceLookupPath(initialWorkspaceSplit.root, initialWorkspaceSplit.suffix, []));
         setDemoFixtures(fixtures);
         setSessions(applyDemoPreset(normalizedSessions, fixtures));
         if (createSessionShowcase) {
@@ -1858,7 +1858,6 @@ export default function App() {
             <div className="modal-header">
               <div>
                 <h3>新建会话</h3>
-                <p>在一个输入框里完成目录输入与补全选择。</p>
               </div>
               <button className="secondary" onClick={() => setCreateSessionModalOpen(false)}>
                 关闭
@@ -1866,7 +1865,7 @@ export default function App() {
             </div>
             <div className="modal-scroll-body">
               <div className="details">
-                <label htmlFor="create-workspace-suffix">会话目录（根目录已锁定）</label>
+                <label htmlFor="create-workspace-suffix">会话目录</label>
                 <div className="workspace-path-inline">
                   <code className="workspace-path-root">{createWorkspaceRoot || "(未配置允许根目录)"}</code>
                   <span className="workspace-path-sep" aria-hidden="true">/</span>
@@ -1879,8 +1878,9 @@ export default function App() {
                       const nextSuffix = sanitizeWorkspaceSuffix(event.target.value);
                       setCreateWorkspaceSuffix(nextSuffix);
                       const nextPath = composeWorkspacePath(createWorkspaceRoot, nextSuffix);
+                      const nextLookupPath = resolveWorkspaceLookupPath(createWorkspaceRoot, nextSuffix, directoryOptions);
                       setWorkspacePath(nextPath);
-                      setDirectoryBrowserPath(nextPath);
+                      setDirectoryBrowserPath(nextLookupPath);
                     }}
                   />
                 </div>
@@ -1889,7 +1889,6 @@ export default function App() {
                     <option key={pathValue} value={pathValue} />
                   ))}
                 </datalist>
-                <p className="workspace-suggestion-hint">目录前缀已锁定到根目录，只补全后缀路径。</p>
                 {workspaceSuffixSuggestions.length > 0 ? (
                   <div className="workspace-suggestion-list" role="list" aria-label="目录候选">
                     {workspaceSuffixSuggestions.slice(0, 8).map((pathValue) => (
@@ -1900,8 +1899,9 @@ export default function App() {
                         onClick={() => {
                           setCreateWorkspaceSuffix(pathValue);
                           const nextPath = composeWorkspacePath(createWorkspaceRoot, pathValue);
+                          const nextLookupPath = resolveWorkspaceLookupPath(createWorkspaceRoot, pathValue, directoryOptions);
                           setWorkspacePath(nextPath);
-                          setDirectoryBrowserPath(nextPath);
+                          setDirectoryBrowserPath(nextLookupPath);
                         }}
                       >
                         {pathValue}
@@ -1909,7 +1909,6 @@ export default function App() {
                     ))}
                   </div>
                 ) : null}
-                <p className="workspace-suggestion-current">当前目录：<code>{workspacePath}</code></p>
                 <label htmlFor="create-session-title">会话名</label>
                 <input
                   id="create-session-title"
@@ -1917,14 +1916,21 @@ export default function App() {
                   placeholder="可选，例如 leduo-api"
                   onChange={(event) => setNewSessionTitle(event.target.value)}
                 />
-                <label htmlFor="create-session-mode">默认模式</label>
-                <select id="create-session-mode" value={newSessionModeId} onChange={(event) => setNewSessionModeId(event.target.value)}>
+                <label>默认模式</label>
+                <div className="mode-tile-grid" role="radiogroup" aria-label="默认模式">
                   {MODE_OPTIONS.map((option) => (
-                    <option key={option.id} value={option.id}>
+                    <button
+                      key={option.id}
+                      type="button"
+                      className={`mode-tile ${newSessionModeId === option.id ? "active" : ""}`}
+                      role="radio"
+                      aria-checked={newSessionModeId === option.id}
+                      onClick={() => setNewSessionModeId(option.id)}
+                    >
                       {option.label}
-                    </option>
+                    </button>
                   ))}
-                </select>
+                </div>
                 {directoryError ? <p>{directoryError}</p> : null}
               </div>
             </div>
@@ -2861,6 +2867,24 @@ function composeWorkspacePath(rootPath: string, suffixPath: string) {
     return normalizedRoot;
   }
   return normalizePath(`${normalizedRoot}/${normalizedSuffix}`);
+}
+
+function resolveWorkspaceLookupPath(
+  rootPath: string,
+  suffixPath: string,
+  availableDirectories: Array<{ name: string; path: string }>,
+) {
+  const normalizedSuffix = sanitizeWorkspaceSuffix(suffixPath);
+  const composedPath = composeWorkspacePath(rootPath, normalizedSuffix);
+  if (!normalizedSuffix) {
+    return composedPath;
+  }
+  const normalizedComposedPath = normalizePath(composedPath);
+  const hasExactMatch = availableDirectories.some((entry) => normalizePath(entry.path) === normalizedComposedPath);
+  if (hasExactMatch) {
+    return composedPath;
+  }
+  return parentDirectory(composedPath);
 }
 
 function relativePathFromRoot(rootPath: string, targetPath: string) {
@@ -4184,6 +4208,7 @@ export const appTestables = {
   splitCompletionLabel,
   buildCompletionSections,
   canMergeToolTimelineItem,
+  resolveWorkspaceLookupPath,
   buildTimelineTreeRows,
   countChildrenByRoot,
   isSubagentToolTitle,
