@@ -240,7 +240,7 @@ export default function App() {
   const [createWorkspaceRoot, setCreateWorkspaceRoot] = useState("");
   const [createWorkspaceSuffix, setCreateWorkspaceSuffix] = useState("");
   const [connectionState, setConnectionState] = useState("connecting");
-  const [promptText, setPromptText] = useState("");
+  const [promptDraftBySessionId, setPromptDraftBySessionId] = useState<Record<string, string>>({});
   const [commandSuggestionIndex, setCommandSuggestionIndex] = useState(0);
   const [isCompletionOpen, setIsCompletionOpen] = useState(false);
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
@@ -282,6 +282,20 @@ export default function App() {
   const fitAddonRef = useRef<FitAddon | null>(null);
 
   const activeSession = sessions.find((session) => session.clientSessionId === activeSessionId) ?? null;
+  const promptText = activeSessionId ? (promptDraftBySessionId[activeSessionId] ?? "") : "";
+  const setPromptText = (value: string | ((current: string) => string)) => {
+    if (!activeSessionId) {
+      return;
+    }
+    setPromptDraftBySessionId((current) => {
+      const currentValue = current[activeSessionId] ?? "";
+      const nextValue = typeof value === "function" ? value(currentValue) : value;
+      if (nextValue === currentValue) {
+        return current;
+      }
+      return { ...current, [activeSessionId]: nextValue };
+    });
+  };
   pendingQueueRef.current = pendingQueue;
   const activeAvailableCommands = activeSession?.availableCommands ?? [];
   const commandCompletions = useMemo(
@@ -347,6 +361,25 @@ export default function App() {
       setActiveSessionId(sessions[0].clientSessionId);
     }
   }, [activeSessionId, sessions]);
+
+  useEffect(() => {
+    setPromptDraftBySessionId((current) => {
+      if (Object.keys(current).length === 0) {
+        return current;
+      }
+      const validSessionIds = new Set(sessions.map((session) => session.clientSessionId));
+      let changed = false;
+      const next: Record<string, string> = {};
+      for (const [sessionId, draft] of Object.entries(current)) {
+        if (validSessionIds.has(sessionId)) {
+          next[sessionId] = draft;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [sessions]);
 
   useEffect(() => {
     setCommandSuggestionIndex(0);
@@ -1715,6 +1748,23 @@ export default function App() {
                 }
               }}
               onKeyDown={(event) => {
+                if (
+                  event.key === "Enter" &&
+                  !event.shiftKey &&
+                  !event.metaKey &&
+                  !event.ctrlKey &&
+                  isCompletionOpen &&
+                  commandCompletions.length > 0 &&
+                  Boolean(extractPromptCommandQuery(promptText))
+                ) {
+                  event.preventDefault();
+                  const selected = commandCompletions[commandSuggestionIndex] ?? commandCompletions[0];
+                  if (selected) {
+                    applyCommandSuggestion(selected.name);
+                    setIsCompletionOpen(false);
+                  }
+                  return;
+                }
                 if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
                   submitPrompt();
                   return;
