@@ -145,6 +145,25 @@ test("app path helpers parent/isWithinRoot", () => {
   assert.equal(appTestables.isWithinRoot("/a", "/x/y"), false);
 });
 
+test("app resolveWorkspaceLookupPath falls back to parent for partial directory names", () => {
+  assert.equal(
+    appTestables.resolveWorkspaceLookupPath(
+      "/repo",
+      "src/compo",
+      [{ name: "components", path: "/repo/src/components" }],
+    ),
+    "/repo/src",
+  );
+  assert.equal(
+    appTestables.resolveWorkspaceLookupPath(
+      "/repo",
+      "src/components",
+      [{ name: "components", path: "/repo/src/components" }],
+    ),
+    "/repo/src/components",
+  );
+});
+
 test("app markdown decision and plan parsing helpers", () => {
   assert.equal(appTestables.shouldRenderMarkdown({ id: "1", kind: "plan", title: "p", body: "b" }), true);
   assert.equal(appTestables.shouldUseExpandedPreview({ id: "1", kind: "tool", title: "t", body: "line1\nline2" }), false);
