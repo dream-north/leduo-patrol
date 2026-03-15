@@ -87,7 +87,7 @@
 
 ### 界面与可访问性
 - **访问 Key 认证**：所有请求（HTTP / WebSocket）均需携带 key；浏览器检测到无效 key 时展示输入页
-- **Toast 通知**：后台事件（新会话、错误、会话恢复）以 toast 形式非侵入提示，支持跳转
+- **Toast 通知**：后台事件（新会话、错误、会话恢复）以站内 toast 形式非侵入提示，支持跳转
 - **错误聚合**：全局错误指示器汇总所有应用级错误，点击查看详情
 - **键盘友好**：所有交互元素均有 focus-visible 样式，tab 与会话列表支持完整 ARIA 语义
 - **响应式过渡**：状态切换（tab、会话选中、按钮 hover）均有平滑过渡动画
@@ -102,10 +102,20 @@
 
 ```bash
 npm install
+# 服务器模式（远程可访问，默认）
 npm run dev
+
+# 本地模式（仅监听 127.0.0.1）
+npm run dev:local
 ```
 
 默认情况下：
+
+- 启动模式支持两种：
+  - `server`（默认）：监听 `0.0.0.0`，便于远程连接
+  - `local`：监听 `127.0.0.1`，仅本机可访问
+- 可通过命令行参数 `--mode=local|server` 或环境变量 `LEDUO_PATROL_BIND_MODE` 指定，命令行参数优先级更高
+- 若未显式指定，启动时会在终端提示选择模式；并可选择记住到 `~/.leduo-patrol/launch-preferences.json`，后续自动复用
 
 - 前端开发服务运行在自动探测到的可访问内网 IP（优先 `bond* / eth* / ens* / enp*` 网卡）上
 - 后端服务运行在 `PORT`（默认 `3001`，端口冲突时会自动递增寻找可用端口）
@@ -119,7 +129,12 @@ npm run dev
 
 ```bash
 npm run build
+
+# 服务器模式（远程可访问，默认）
 npm start
+
+# 本地模式（仅监听 127.0.0.1）
+npm run start:local
 ```
 
 > 开发者向的编程与验证测试技巧请见 `AGENTS.md`。
@@ -129,6 +144,7 @@ npm start
 ```bash
 PORT=3001
 LEDUO_PATROL_WEB_PORT=5173
+LEDUO_PATROL_BIND_MODE=server
 LEDUO_PATROL_APP_NAME=乐多汪汪队
 LEDUO_PATROL_WORKSPACE_PATH=/absolute/workspace/path
 LEDUO_PATROL_ALLOWED_ROOTS=/absolute/workspace/path,/another/allowed/root
