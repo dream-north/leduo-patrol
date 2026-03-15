@@ -293,10 +293,6 @@ export default function App() {
     () => buildCompletionSections(commandCompletions, completionQuery),
     [commandCompletions, completionQuery],
   );
-  const capabilityGroups = useMemo(
-    () => groupAvailableCapabilities(activeAvailableCommands),
-    [activeAvailableCommands],
-  );
   const activeSessionHasPendingPermission = Boolean(activeSession && activeSession.permissions.length > 0);
   const activeSessionIsRunning = Boolean(activeSession && isSessionRunning(activeSession));
   const activeSessionModeOptions =
@@ -1596,7 +1592,7 @@ export default function App() {
               </select>
             </div>
             <p className="composer-capability-summary">
-              ACP 能力：tools {capabilityGroups.tools.length} · mcp {capabilityGroups.mcp.length} · skills {capabilityGroups.skills.length}
+              ACP 能力：{activeAvailableCommands.length}
             </p>
             {isCompletionOpen && commandCompletions.length > 0 ? (
               <div className="composer-completions" role="listbox" aria-label="命令补全">
@@ -2534,40 +2530,6 @@ function normalizeCommandName(rawName: string) {
   return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
 }
 
-function classifyCommandKind(commandName: string): "tools" | "mcp" | "skills" | "other" {
-  const normalized = commandName.toLowerCase();
-  if (normalized.includes("mcp")) {
-    return "mcp";
-  }
-  if (normalized.includes("skill")) {
-    return "skills";
-  }
-  if (normalized.startsWith("/")) {
-    return "tools";
-  }
-  return "other";
-}
-
-function groupAvailableCapabilities(commands: AvailableCommand[]) {
-  const groups: {
-    tools: AvailableCommand[];
-    mcp: AvailableCommand[];
-    skills: AvailableCommand[];
-    other: AvailableCommand[];
-  } = {
-    tools: [],
-    mcp: [],
-    skills: [],
-    other: [],
-  };
-
-  for (const command of commands) {
-    groups[classifyCommandKind(command.name)].push(command);
-  }
-
-  return groups;
-}
-
 function getPromptCommandCompletions(prompt: string, commands: AvailableCommand[]) {
   const query = extractPromptCommandQuery(prompt);
   if (!query) {
@@ -2639,25 +2601,10 @@ function renderCompletionLabel(commandName: string, query: string | null) {
 
 function buildCompletionSections(commands: AvailableCommand[], query: string | null) {
   const indexed = commands.map((command, index) => ({ command, index }));
-  if (query !== "/") {
-    return [{ key: "all", title: null, items: indexed }];
+  if (!query || indexed.length === 0) {
+    return [];
   }
-
-  const groups = {
-    tools: indexed.filter((item) => classifyCommandKind(item.command.name) === "tools"),
-    mcp: indexed.filter((item) => classifyCommandKind(item.command.name) === "mcp"),
-    skills: indexed.filter((item) => classifyCommandKind(item.command.name) === "skills"),
-    other: indexed.filter((item) => classifyCommandKind(item.command.name) === "other"),
-  };
-
-  const sections = [
-    { key: "tools", title: "tools", items: groups.tools },
-    { key: "mcp", title: "mcp", items: groups.mcp },
-    { key: "skills", title: "skills", items: groups.skills },
-    { key: "other", title: "other", items: groups.other },
-  ].filter((section) => section.items.length > 0);
-
-  return sections.length > 0 ? sections : [{ key: "all", title: null, items: indexed }];
+  return [{ key: "all", title: null, items: indexed }];
 }
 
 function parseToolTimelineEntries(body: string) {
@@ -4204,8 +4151,6 @@ export const appTestables = {
   extractChunkText,
   tryParseJson,
   normalizeAvailableCommands,
-  classifyCommandKind,
-  groupAvailableCapabilities,
   getPromptCommandCompletions,
   applyPromptCommandCompletion,
   extractPromptCommandQuery,
