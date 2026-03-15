@@ -12,6 +12,7 @@ import { ShellSession } from "./shell-session.js";
 import { buildSingleFileDiff, buildWorkspaceDiffFilesSnapshot, type DiffCategory } from "./git-diff.js";
 import { buildAccessCookie, createAccessKey, hasAuthorizedAccessCookie, isAccessKeyAuthorized } from "./access-key.js";
 import { findAvailablePort, pickPreferredLanIp } from "./network.js";
+import { resolveBindMode } from "./launch-mode.js";
 
 type ClientCommand =
   | { type: "hello" }
@@ -44,6 +45,8 @@ const vscodeRemoteUri =
 const requestedPort = Number(process.env.PORT ?? 3001);
 const devWebPort = Number(process.env.LEDUO_PATROL_WEB_PORT ?? 5173);
 const isDevServer = process.env.npm_lifecycle_event === "dev:server";
+const bindMode = await resolveBindMode();
+const listenHost = bindMode === "local" ? "127.0.0.1" : "0.0.0.0";
 const agentBinPath = resolveAgentBinPath();
 const accessKey = process.env.LEDUO_PATROL_ACCESS_KEY?.trim() || createAccessKey();
 const enableShell = process.env.LEDUO_ENABLE_SHELL === "true";
@@ -314,27 +317,28 @@ wss.on("connection", (socket, request) => {
   });
 });
 
-const listenPort = await findAvailablePort(requestedPort);
+const listenPort = await findAvailablePort(requestedPort, listenHost);
 
 await new Promise<void>((resolve) => {
-  server.listen(listenPort, "0.0.0.0", () => resolve());
+  server.listen(listenPort, listenHost, () => resolve());
 });
 
-const lanIp = pickPreferredLanIp();
+const displayHost = bindMode === "local" ? "127.0.0.1" : pickPreferredLanIp();
 const accessPort = isDevServer ? devWebPort : listenPort;
 
-console.log(`${appName} server listening on http://${lanIp}:${listenPort}`);
+console.log(`Launch mode: ${bindMode === "local" ? "local (127.0.0.1 only)" : "server (remote accessible)"}`);
+console.log(`${appName} server listening on http://${displayHost}:${listenPort}`);
 if (listenPort !== requestedPort) {
   console.log(`Port ${requestedPort} is busy, switched to ${listenPort}`);
 }
 if (isDevServer) {
-  console.log(`Dev Web URL (Vite default): http://${lanIp}:${devWebPort}`);
+  console.log(`Dev Web URL (Vite default): http://${displayHost}:${devWebPort}`);
 } else if (hasBundledWeb) {
-  console.log(`Web UI is served by the same server port: http://${lanIp}:${listenPort}`);
+  console.log(`Web UI is served by the same server port: http://${displayHost}:${listenPort}`);
 } else {
   console.log("Web UI is unavailable on this start because bundled assets are missing.");
 }
-console.log(`Access URL: http://${lanIp}:${accessPort}/?key=${accessKey}`);
+console.log(`Access URL: http://${displayHost}:${accessPort}/?key=${accessKey}`);
 
 function sendEvent(socket: WebSocket, event: SocketEvent) {
   if (socket.readyState !== WebSocket.OPEN) {

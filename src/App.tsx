@@ -543,13 +543,6 @@ export default function App() {
   }, [activeSessionId, visibleTimeline.length]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || !("Notification" in window) || Notification.permission !== "default") {
-      return;
-    }
-    void Notification.requestPermission();
-  }, []);
-
-  useEffect(() => {
     for (const session of sessions) {
       for (const permission of session.permissions) {
         if (notifiedPermissionRequestIdsRef.current[permission.requestId]) {
@@ -558,7 +551,6 @@ export default function App() {
         notifiedPermissionRequestIdsRef.current[permission.requestId] = true;
         const title = "待处理确认";
         const body = `${formatSessionTitleForDisplay(session.title)}: ${summarizeToolTitle(permission.toolCall.title, permission.toolCall.rawInput, permission.toolCall.toolCallId)}`;
-        pushBrowserNotification(title, body);
         pushInAppToast(permission.requestId, title, body, session.clientSessionId, "permission");
       }
 
@@ -572,7 +564,6 @@ export default function App() {
         notifiedCompletionIdsRef.current[item.id] = true;
         const title = "任务已完成";
         const body = `${formatSessionTitleForDisplay(session.title)}: ${item.body || "本轮执行完成"}`;
-        pushBrowserNotification(title, body);
         pushInAppToast(item.id, title, body, session.clientSessionId, "completion");
       }
     }
@@ -708,17 +699,6 @@ export default function App() {
 
   function appendGlobalTimeline(item: TimelineItem) {
     setGlobalTimeline((current) => [...current, item]);
-  }
-
-  function pushBrowserNotification(title: string, body: string) {
-    if (typeof window === "undefined" || !("Notification" in window) || Notification.permission !== "granted") {
-      return;
-    }
-    try {
-      new Notification(title, { body });
-    } catch {
-      // no-op
-    }
   }
 
   function pushInAppToast(id: string, title: string, body: string, sessionId: string | undefined, kind: ToastNotification["kind"]) {

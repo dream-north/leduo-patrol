@@ -14,7 +14,11 @@
     "start": "node dist/server/index.js",
     "check": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "test": "tsx --test server/__tests__/*.test.ts src/__tests__/*.test.ts",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "dev:local": "concurrently -k \"npm:dev:web:local\" \"npm:dev:server:local\"",
+    "dev:web:local": "vite --host 127.0.0.1",
+    "dev:server:local": "tsx watch server/index.ts --mode=local",
+    "start:local": "node dist/server/index.js --mode=local"
   },
   "keywords": [],
   "author": "",
