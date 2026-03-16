@@ -3491,13 +3491,29 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
         body: "主代理汇总：2 个子任务已完成。建议先确认缓存 TTL，再执行正式发布。",
       },
       {
+        id: "demo-tool-write",
+        kind: "tool",
+        title: "Write /src/config.ts",
+        body: JSON.stringify(
+          {
+            toolCallId: "demo-write-1",
+            title: "Write /src/config.ts",
+            status: "completed",
+            rawInput: { file_path: "/src/config.ts", content: "export const version = '1.2.0';" },
+          },
+          null,
+          2,
+        ),
+        meta: "completed",
+      },
+      {
         id: "demo-agent-main",
         kind: "agent",
         title: "Claude",
         body: "演示提示：点击 `Task` 行右侧子项按钮，可折叠/展开子任务明细；同时可切换查看会话差异与文件 diff。",
       },
     ],
-    historyTotal: 16,
+    historyTotal: 18,
     historyStart: 0,
     permissions: [
       {
@@ -3515,7 +3531,18 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
         ],
       },
     ],
-    questions: [],
+    questions: [
+      {
+        clientSessionId: "demo-subagent-tree",
+        questionId: "demo-question-1",
+        question: "发布前需要确认：是否已完成回滚测试？",
+        options: [
+          { id: "yes", label: "是，已完成" },
+          { id: "no", label: "否，尚未完成" },
+        ],
+        allowCustomAnswer: true,
+      },
+    ],
     updatedAt: new Date().toISOString(),
   });
 
