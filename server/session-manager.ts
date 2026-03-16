@@ -618,8 +618,9 @@ export class SessionManager {
 
         // AskUserQuestion tool_call notifications arrive as stream events
         // BEFORE the corresponding permission_requested event from
-        // canUseTool().  The vendored ACP agent patch ensures that
-        // canUseTool() always fires a requestPermission for
+        // canUseTool().  The vendored ACP agent patch
+        // (vendor/claude-code-acp/dist/acp-agent.js, canUseTool method)
+        // ensures that canUseTool() always fires a requestPermission for
         // AskUserQuestion, which the permission_requested handler below
         // converts into a proper question flow.  We therefore skip
         // creating a question here to avoid duplicates — just display
