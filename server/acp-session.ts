@@ -336,7 +336,7 @@ export class ClaudeAcpSession {
       message.includes("Error handling notification") &&
       message.includes("method: 'session/update'") &&
       message.includes("message: 'Invalid params'")
-    );
+    ) || isMissingPostToolHookMessage(message);
   }
 
   private shouldIgnoreToolOutputLog(message: string) {
@@ -378,4 +378,8 @@ export class ClaudeAcpSession {
     }
     return absolutePath;
   }
+}
+
+function isMissingPostToolHookMessage(message: string) {
+  return message.includes("No onPostToolUseHook found for tool use ID:");
 }

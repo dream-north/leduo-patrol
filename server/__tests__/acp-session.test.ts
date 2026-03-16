@@ -39,6 +39,13 @@ test("ClaudeAcpSession.shouldIgnoreAgentStderr filters known ACP session/update 
   assert.equal(ignored, true);
 });
 
+
+
+test("ClaudeAcpSession.shouldIgnoreAgentStderr filters missing onPostToolUseHook noise", () => {
+  const session = makeSession();
+  const ignored = (session as any).shouldIgnoreAgentStderr("No onPostToolUseHook found for tool use ID: toolu_123");
+  assert.equal(ignored, true);
+});
 test("ClaudeAcpSession.shouldIgnoreAgentStderr keeps non-matching errors", () => {
   const session = makeSession();
   const ignored = (session as any).shouldIgnoreAgentStderr("Error: connection reset");

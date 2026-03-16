@@ -1839,12 +1839,6 @@ export default function App() {
                 <div className="session-meta-item session-meta-item-wide">
                   <span>会话模式</span>
                   <code>{labelForMode(activeSession.defaultModeId)}</code>
-                  <p className="session-meta-note">模式选择已移动到输入框上方，发送消息前可随时切换。</p>
-                  {activeSession.currentModeId !== activeSession.defaultModeId ? (
-                    <p className="session-meta-note">
-                      当前 ACP 临时处于 {labelForMode(activeSession.currentModeId)}，下一条消息会按新的会话模式同步。
-                    </p>
-                  ) : null}
                 </div>
               </div>
               <div className="session-meta-actions">
