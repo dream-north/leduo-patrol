@@ -5,7 +5,6 @@ import path from "node:path";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type * as schema from "@agentclientprotocol/sdk/dist/schema/types.gen.js";
-
 export type AskQuestionOption = {
   id: string;
   label: string;

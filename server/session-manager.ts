@@ -261,7 +261,7 @@ export class SessionManager {
     }
     entry.snapshot.updatedAt = new Date().toISOString();
     this.schedulePersist();
-    await entry.acpSession?.prompt(enrichPromptWithToolHints(text), images);
+    await entry.acpSession?.prompt(text, images);
   }
 
   async setSessionMode(clientSessionId: string, modeId: string) {
@@ -846,23 +846,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
-const PROMPT_HINTS = [
-  "[ACP Tool] mcp__acp__Read — 读取文件内容。参数：{ path: string }（绝对路径）。",
-  "[ACP Tool] mcp__acp__Write — 写入文件（如果文件已存在需要先读取）。参数：{ path: string, content: string }（绝对路径）。",
-  "[ACP Tool] mcp__acp__Edit — 编辑文件（必须先用 mcp__acp__Read 读取后才能编辑）。参数：{ path: string, old_string: string, new_string: string }（绝对路径）。",
-  "[Extension] 当你需要向用户提问（例如选择方案、确认操作、获取额外信息）时，" +
-    "请调用扩展方法 leduo/ask_question，参数格式：" +
-    '{ "question": "你的问题", "options": [{ "id": "a", "label": "选项A" }, { "id": "b", "label": "选项B" }], "allowCustomAnswer": true }。' +
-    "返回 { answer: string }。如果设置 allowCustomAnswer 为 true，用户可以输入自定义回答。",
-].join("\n");
-
-function enrichPromptWithToolHints(text: string) {
-  const normalized = text.trim();
-  if (!normalized) {
-    return text;
-  }
-  return `${normalized}\n\n${PROMPT_HINTS}`;
-}
 
 function formatEditToolChangeMessage(message: string) {
   const parsed = tryParseJson(message);
@@ -1022,7 +1005,6 @@ export const sessionManagerTestables = {
   asRecord,
   extractChunkText,
   normalizeAvailableCommandsSnapshot,
-  enrichPromptWithToolHints,
   formatEditToolChangeMessage,
   labelForMode,
   formatError,
