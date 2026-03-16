@@ -304,7 +304,7 @@ export class SessionManager {
     const mappedPermission = this.askUserQuestionMap.get(questionId);
     if (mappedPermission) {
       this.askUserQuestionMap.delete(questionId);
-      await this.getEntry(mappedPermission.clientSessionId).acpSession?.resolvePermission(
+      await this.getEntry(clientSessionId).acpSession?.resolvePermission(
         mappedPermission.requestId,
         "allow",
         answer,
