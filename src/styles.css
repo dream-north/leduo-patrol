@@ -149,6 +149,18 @@ h1 {
   min-width: 0;
 }
 
+.brand-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.brand-title-row h1 {
+  margin: 0;
+}
+
+
 .masthead-lede {
   margin-top: 8px;
 }
@@ -422,6 +434,13 @@ h1 {
 
 .masthead .actions.compact {
   margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.masthead .actions.compact .primary {
+  flex: 1 1 auto;
 }
 
 .workspace-suggestion-list {
@@ -1217,21 +1236,20 @@ h1 {
 }
 
 .session-meta-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: nowrap;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
   margin-top: 2px;
 }
 
 .session-meta-actions .secondary {
-  min-width: 112px;
+  width: 100%;
+  min-width: 0;
   height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 12px;
+  padding: 0 10px;
 }
 
 .session-meta-header h3 {
@@ -1244,6 +1262,11 @@ h1 {
   color: #9a1c1c;
 }
 
+
+.session-open-vscode {
+  background: rgba(91, 71, 216, 0.12);
+  color: #4a31c6;
+}
 .session-diff-trigger {
   background: rgba(20, 98, 138, 0.14);
   color: #0a5c88;
@@ -2209,4 +2232,44 @@ h1 {
   color: var(--muted);
   border-top: 1px solid var(--line);
   margin: 0;
+}
+
+
+.vscode-settings-help {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.75);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.vscode-settings-help p {
+  margin: 0 0 4px;
+  color: var(--text);
+}
+
+.vscode-settings-help ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+@media (max-width: 1360px) {
+  .session-meta-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+.vscode-settings-actions {
+  grid-template-columns: 1fr;
+}
+
+.session-settings-trigger {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 10px;
+  font-size: 14px;
 }

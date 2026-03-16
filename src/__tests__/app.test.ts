@@ -92,6 +92,18 @@ test("app session sidebar status handles running, completed, error, connecting",
         timeline: [{ id: "err-1", kind: "error", title: "错误", body: "boom" }],
       }),
     ),
+    { label: "运行中", tone: "running" },
+  );
+  assert.deepEqual(
+    appTestables.getSessionSidebarStatus(
+      makeSession({
+        connectionState: "error",
+        timeline: [
+          { id: "err-1", kind: "error", title: "错误", body: "boom" },
+          { id: "done-1", kind: "system", title: "本轮完成", body: "stop" },
+        ],
+      }),
+    ),
     { label: "异常", tone: "error" },
   );
   assert.deepEqual(appTestables.getSessionSidebarStatus(makeSession({ connectionState: "connecting" })), {

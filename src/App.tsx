@@ -196,6 +196,17 @@ type ToastNotification = {
   kind: "permission" | "completion";
 };
 
+type VscodeOpenMode = "remote" | "local";
+
+type VscodeLaunchConfig = {
+  mode: VscodeOpenMode;
+  sshHost: string;
+  sshBasePath: string;
+  localBasePath: string;
+};
+
+const VSCODE_LAUNCH_CONFIG_STORAGE_KEY = "leduo-patrol:vscode-launch-config";
+
 function readAccessKeyFromUrl() {
   if (typeof window === "undefined") {
     return "";
@@ -226,6 +237,81 @@ function withAccessKey(path: string, keyOverride?: string) {
   return `${url.pathname}${url.search}`;
 }
 
+function createDefaultVscodeLaunchConfig(config: AppConfig | null): VscodeLaunchConfig {
+  return {
+    mode: config?.sshHost ? "remote" : "local",
+    sshHost: config?.sshHost ?? "",
+    sshBasePath: config?.sshPath || config?.workspacePath || "",
+    localBasePath: config?.workspacePath || "",
+  };
+}
+
+function readStoredVscodeLaunchConfig(config: AppConfig | null): VscodeLaunchConfig {
+  const fallback = createDefaultVscodeLaunchConfig(config);
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+  const raw = window.localStorage.getItem(VSCODE_LAUNCH_CONFIG_STORAGE_KEY);
+  if (!raw) {
+    return fallback;
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<VscodeLaunchConfig>;
+    const mode = parsed.mode === "remote" || parsed.mode === "local" ? parsed.mode : fallback.mode;
+    return {
+      mode,
+      sshHost: typeof parsed.sshHost === "string" ? parsed.sshHost : fallback.sshHost,
+      sshBasePath: typeof parsed.sshBasePath === "string" ? parsed.sshBasePath : fallback.sshBasePath,
+      localBasePath: typeof parsed.localBasePath === "string" ? parsed.localBasePath : fallback.localBasePath,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function createVscodeOpenUri(config: VscodeLaunchConfig, workspacePath: string) {
+  const normalizedWorkspacePath = workspacePath.trim();
+  if (!normalizedWorkspacePath) {
+    return "";
+  }
+  if (config.mode === "local") {
+    return `vscode://file${normalizedWorkspacePath}`;
+  }
+  const host = config.sshHost.trim();
+  if (!host) {
+    return "";
+  }
+  const remoteAuthority = `ssh-remote+${encodeURIComponent(host)}`;
+  return `vscode://vscode-remote/${remoteAuthority}${normalizedWorkspacePath}`;
+}
+
+function trimTrailingSlash(value: string) {
+  const normalized = value.trim();
+  if (normalized.length <= 1) {
+    return normalized;
+  }
+  return normalized.replace(/\/+$/, "");
+}
+
+function mapWorkspacePathForVscode(workspacePath: string, config: VscodeLaunchConfig) {
+  const normalizedWorkspacePath = workspacePath.trim();
+  if (config.mode !== "remote") {
+    return normalizedWorkspacePath;
+  }
+  const localBase = trimTrailingSlash(config.localBasePath);
+  const remoteBase = trimTrailingSlash(config.sshBasePath);
+  if (!localBase || !remoteBase) {
+    return normalizedWorkspacePath;
+  }
+  if (normalizedWorkspacePath === localBase) {
+    return remoteBase;
+  }
+  if (normalizedWorkspacePath.startsWith(`${localBase}/`)) {
+    return `${remoteBase}${normalizedWorkspacePath.slice(localBase.length)}`;
+  }
+  return normalizedWorkspacePath;
+}
+
 export default function App() {
   const WORKSPACE_SUGGESTION_INITIAL_LIMIT = 8;
   const [config, setConfig] = useState<AppConfig | null>(null);
@@ -252,6 +338,8 @@ export default function App() {
   const [directoryError, setDirectoryError] = useState("");
   const [globalTimeline, setGlobalTimeline] = useState<TimelineItem[]>([]);
   const [showGlobalErrors, setShowGlobalErrors] = useState(false);
+  const [vscodeSettingsOpen, setVscodeSettingsOpen] = useState(false);
+  const [vscodeLaunchError, setVscodeLaunchError] = useState("");
   const [selectedItem, setSelectedItem] = useState<{ sessionTitle: string; item: TimelineItem } | null>(null);
   const [sessionDiff, setSessionDiff] = useState<SessionDiffResponse | null>(null);
   const [sessionDiffError, setSessionDiffError] = useState("");
@@ -265,7 +353,9 @@ export default function App() {
   const [pendingQueue, setPendingQueue] = useState<Array<{ id: string; text: string; images?: Array<{ data: string; mimeType: string }> }>>([]);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [permissionDetail, setPermissionDetail] = useState<PermissionPayload | null>(null);
+  const [vscodeLaunchConfig, setVscodeLaunchConfig] = useState<VscodeLaunchConfig>(() => readStoredVscodeLaunchConfig(null));
   const shownPermissionRequestIdsRef = useRef(new Set<string>());
+  const vscodeConfigHydratedRef = useRef(false);
   const demoPreset = useMemo(() => readDemoPresetFromUrl(), []);
   const socketRef = useRef<WebSocket | null>(null);
   const pendingQueueRef = useRef(pendingQueue);
@@ -322,6 +412,11 @@ export default function App() {
   const latestExecutionPlanSteps = useMemo(() => parseExecutionPlanSteps(latestExecutionPlanBody), [latestExecutionPlanBody]);
   const browseRootPath = directoryBrowserPath || activeSession?.workspacePath || config?.workspacePath || "";
   const currentBrowsePath = directoryRootPath || browseRootPath;
+  const workspaceForLaunch = useMemo(
+    () => mapWorkspacePathForVscode(activeSession?.workspacePath ?? config?.workspacePath ?? "", vscodeLaunchConfig),
+    [activeSession?.workspacePath, config?.workspacePath, vscodeLaunchConfig],
+  );
+  const canOpenWorkspaceInVscode = Boolean(createVscodeOpenUri(vscodeLaunchConfig, workspaceForLaunch));
   const workspaceSuffixSuggestions = useMemo(() => {
     if (!createWorkspaceRoot) {
       return [];
@@ -470,6 +565,21 @@ export default function App() {
   useEffect(() => {
     setDirectoryBrowserPath(activeSession?.workspacePath ?? config?.workspacePath ?? "");
   }, [activeSession?.workspacePath, config?.workspacePath]);
+
+  useEffect(() => {
+    if (!config || vscodeConfigHydratedRef.current) {
+      return;
+    }
+    setVscodeLaunchConfig(readStoredVscodeLaunchConfig(config));
+    vscodeConfigHydratedRef.current = true;
+  }, [config]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(VSCODE_LAUNCH_CONFIG_STORAGE_KEY, JSON.stringify(vscodeLaunchConfig));
+  }, [vscodeLaunchConfig]);
 
   useEffect(() => {
     if (!accessKey) {
@@ -1361,6 +1471,17 @@ export default function App() {
   }
 
 
+  function openWorkspaceInVscode(workspacePath: string) {
+    const mappedWorkspacePath = mapWorkspacePathForVscode(workspacePath, vscodeLaunchConfig);
+    const uri = createVscodeOpenUri(vscodeLaunchConfig, mappedWorkspacePath);
+    if (!uri) {
+      setVscodeLaunchError("请先配置 VSCode 打开参数（模式、主机或目录映射）。");
+      return;
+    }
+    setVscodeLaunchError("");
+    window.open(uri, "_self");
+  }
+
   function applyAccessKey() {
     const normalizedKey = accessKeyInput.trim();
     if (!normalizedKey) {
@@ -1409,7 +1530,9 @@ export default function App() {
               <img className="brand-icon" src="/assets/brand-icon.png" alt="" aria-hidden="true" />
               <div className="brand-copy">
                 <p className="eyebrow">leduo-patrol</p>
-                <h1>{config?.appName ?? "LEDUO-PATROL 乐多汪汪队"}</h1>
+                <div className="brand-title-row">
+                  <h1>{config?.appName ?? "LEDUO-PATROL 乐多汪汪队"}</h1>
+                </div>
               </div>
             </div>
             <p className="lede masthead-lede">欢迎来到 leduo-patrol：在一个控制台里并行查看多会话进展、差异和执行结果。</p>
@@ -1434,6 +1557,15 @@ export default function App() {
         </div>
 
         <div className="actions compact">
+          <button
+            className="secondary session-settings-trigger"
+            type="button"
+            onClick={() => setVscodeSettingsOpen(true)}
+            aria-label="打开 VSCode 配置"
+            title="VSCode 配置"
+          >
+            ⚙️
+          </button>
           <button
             className="primary"
             type="button"
@@ -1842,6 +1974,9 @@ export default function App() {
                 </div>
               </div>
               <div className="session-meta-actions">
+                <button className="secondary session-open-vscode" onClick={() => openWorkspaceInVscode(activeSession.workspacePath)}>
+                  VSCode
+                </button>
                 <button className="secondary session-diff-trigger" onClick={openSessionDiff}>
                   查看diff
                 </button>
@@ -1872,6 +2007,91 @@ export default function App() {
           <div className="empty">选择一个会话后再处理确认或关闭会话。</div>
         )}
       </aside>
+
+      {vscodeSettingsOpen ? (
+        <div className="modal-backdrop" onClick={() => setVscodeSettingsOpen(false)}>
+          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h3>VSCode 打开配置</h3>
+                <p className="modal-meta">远程模式需要填写 SSH 用户与主机（如 <code>dev@10.0.0.8</code>）以及目录映射；本地模式只需目录路径。</p>
+              </div>
+              <button className="secondary" onClick={() => setVscodeSettingsOpen(false)}>
+                关闭
+              </button>
+            </div>
+            <div className="modal-scroll-body">
+              <div className="details">
+                <div className="vscode-settings-help">
+                  <p><strong>需要配置的内容：</strong></p>
+                  <ul>
+                    <li><code>打开模式</code>：远程 SSH 或本地目录。</li>
+                    <li><code>SSH 主机</code>：远程模式必填，格式如 <code>user@host</code>。</li>
+                    <li><code>本地根目录</code>：当前 patrol 里的目录前缀。</li>
+                    <li><code>远程根目录</code>：远端服务器上对应的目录前缀。</li>
+                  </ul>
+                </div>
+                <label htmlFor="vscode-open-mode">打开模式</label>
+                <select
+                  id="vscode-open-mode"
+                  value={vscodeLaunchConfig.mode}
+                  onChange={(event) => {
+                    const nextMode = event.target.value === "remote" ? "remote" : "local";
+                    setVscodeLaunchConfig((current) => ({ ...current, mode: nextMode }));
+                  }}
+                >
+                  <option value="remote">远程 SSH</option>
+                  <option value="local">本地目录</option>
+                </select>
+
+                <label htmlFor="vscode-open-ssh-host">SSH 主机</label>
+                <input
+                  id="vscode-open-ssh-host"
+                  placeholder="如 user@server"
+                  value={vscodeLaunchConfig.sshHost}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setVscodeLaunchConfig((current) => ({ ...current, sshHost: value }));
+                  }}
+                />
+
+                <label htmlFor="vscode-open-local-base">本地根目录（用于映射）</label>
+                <input
+                  id="vscode-open-local-base"
+                  placeholder="如 /workspace/leduo-patrol"
+                  value={vscodeLaunchConfig.localBasePath}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setVscodeLaunchConfig((current) => ({ ...current, localBasePath: value }));
+                  }}
+                />
+
+                <label htmlFor="vscode-open-remote-base">远程根目录（用于映射）</label>
+                <input
+                  id="vscode-open-remote-base"
+                  placeholder="如 /home/dev/leduo-patrol"
+                  value={vscodeLaunchConfig.sshBasePath}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setVscodeLaunchConfig((current) => ({ ...current, sshBasePath: value }));
+                  }}
+                />
+
+                <div className="session-meta-item session-meta-item-wide">
+                  <span>当前一键打开目标</span>
+                  <code>{workspaceForLaunch || "(未选择目录)"}</code>
+                </div>
+                {vscodeLaunchError ? <p className="modal-meta">{vscodeLaunchError}</p> : null}
+                <div className="session-meta-actions vscode-settings-actions">
+                  <button className="secondary" onClick={() => openWorkspaceInVscode(activeSession?.workspacePath ?? config?.workspacePath ?? "")} disabled={!canOpenWorkspaceInVscode}>
+                    立即打开当前目录
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {createSessionModalOpen ? (
         <div
@@ -2703,6 +2923,9 @@ function getSessionSidebarStatus(session: SessionRecord): SessionSidebarStatus |
   if (isSessionRunning(session)) {
     return { label: "运行中", tone: "running" };
   }
+  if (!hasCompletedPrompt(session) && hasSessionErrorLog(session)) {
+    return { label: "运行中", tone: "running" };
+  }
   if (shouldShowSessionException(session)) {
     return { label: "异常", tone: "error" };
   }
@@ -2719,8 +2942,15 @@ function hasCompletedPrompt(session: SessionRecord) {
   return session.timeline.some((item) => item.kind === "system" && item.title === "本轮完成");
 }
 
+function hasSessionErrorLog(session: SessionRecord) {
+  return session.timeline.some((item) => item.kind === "error");
+}
+
 function shouldShowSessionException(session: SessionRecord) {
   if (isSessionRunning(session) || session.connectionState !== "error") {
+    return false;
+  }
+  if (!hasCompletedPrompt(session)) {
     return false;
   }
   const lastItem = [...session.timeline].reverse().find((item) => item.kind !== "system" || item.title !== "本轮完成");
@@ -4177,6 +4407,7 @@ export const appTestables = {
   getSessionSidebarStatus,
   shouldShowSessionException,
   hasCompletedPrompt,
+  hasSessionErrorLog,
   formatRelativeUpdatedAt,
   canNavigateUp,
   parentDirectory,
