@@ -3965,7 +3965,6 @@ function QuestionPanel(props: {
   onAnswer: (answer: string) => void;
 }) {
   const [customAnswer, setCustomAnswer] = useState("");
-  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
 
   function handleSubmitCustomAnswer() {
     const trimmed = customAnswer.trim();
@@ -3983,11 +3982,8 @@ function QuestionPanel(props: {
           {props.question.options.map((option) => (
             <button
               key={option.id}
-              className={`question-option-btn ${selectedOptionId === option.id ? "question-option-selected" : ""}`}
-              onClick={() => {
-                setSelectedOptionId(option.id);
-                props.onAnswer(option.label);
-              }}
+              className="question-option-btn"
+              onClick={() => props.onAnswer(option.label)}
             >
               {option.label}
             </button>

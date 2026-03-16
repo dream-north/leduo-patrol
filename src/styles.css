@@ -799,11 +799,6 @@ h1 {
   border-color: rgba(216, 91, 52, 0.4);
 }
 
-.question-option-selected {
-  background: rgba(216, 91, 52, 0.12);
-  border-color: rgba(216, 91, 52, 0.5);
-}
-
 .question-custom-answer {
   display: flex;
   gap: 6px;
