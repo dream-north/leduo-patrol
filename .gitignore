@@ -1,4 +1,5 @@
-# Build output (project root only, not vendored packages)
+# Build output — only the project root /dist is ignored.
+# vendor/claude-code-acp/dist/ is committed as pre-built vendored code.
 /dist
 node_modules
 .DS_Store
