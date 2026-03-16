@@ -178,3 +178,30 @@ test("sessionManagerTestables.normalizeAvailableCommandsSnapshot keeps slash nam
     ["/help", "/mcp.list"],
   );
 });
+
+test("sessionManagerTestables.normalizeAcpToolTitle strips mcp__acp__ prefix", () => {
+  assert.equal(sessionManagerTestables.normalizeAcpToolTitle("mcp__acp__Read"), "Read");
+  assert.equal(sessionManagerTestables.normalizeAcpToolTitle("mcp__acp__Write"), "Write");
+  assert.equal(sessionManagerTestables.normalizeAcpToolTitle("mcp__acp__Edit"), "Edit");
+  assert.equal(sessionManagerTestables.normalizeAcpToolTitle("mcp__acp__Bash"), "Bash");
+  assert.equal(sessionManagerTestables.normalizeAcpToolTitle("mcp__acp__CustomTool"), "CustomTool");
+});
+
+test("sessionManagerTestables.normalizeAcpToolTitle leaves normal titles unchanged", () => {
+  assert.equal(sessionManagerTestables.normalizeAcpToolTitle("Read /path/file"), "Read /path/file");
+  assert.equal(sessionManagerTestables.normalizeAcpToolTitle("Task"), "Task");
+  assert.equal(sessionManagerTestables.normalizeAcpToolTitle(""), "");
+  assert.equal(sessionManagerTestables.normalizeAcpToolTitle(null), "");
+  assert.equal(sessionManagerTestables.normalizeAcpToolTitle(undefined), "");
+});
+
+test("sessionManagerTestables.summarizeToolTitle strips mcp__acp__ prefix before summarizing", () => {
+  assert.equal(
+    sessionManagerTestables.summarizeToolTitle("mcp__acp__Read", { file_path: "/src/index.ts" }, "tc-1"),
+    "Read",
+  );
+  assert.equal(
+    sessionManagerTestables.summarizeToolTitle("mcp__acp__CustomTool", null, "tc-2"),
+    "CustomTool",
+  );
+});

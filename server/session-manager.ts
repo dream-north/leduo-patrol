@@ -427,12 +427,13 @@ export class SessionManager {
         this.consumeSessionUpdate(entry, event.payload);
         break;
       case "permission_requested": {
+        const normalizedTitle = normalizeAcpToolTitle(event.payload.toolCall.title) || undefined;
         const permission: PermissionSnapshot = {
           clientSessionId,
           requestId: event.payload.requestId,
           toolCall: {
             toolCallId: event.payload.toolCall.toolCallId,
-            title: event.payload.toolCall.title ?? undefined,
+            title: normalizedTitle,
             status: event.payload.toolCall.status ?? undefined,
             rawInput: event.payload.toolCall.rawInput,
           },
@@ -447,13 +448,13 @@ export class SessionManager {
           id: event.payload.requestId,
           kind: "tool",
           title: summarizeToolTitle(
-            event.payload.toolCall.title,
+            normalizedTitle,
             event.payload.toolCall.rawInput,
             event.payload.toolCall.toolCallId,
           ),
           body: formatToolDetails({
             toolCallId: event.payload.toolCall.toolCallId,
-            title: event.payload.toolCall.title,
+            title: normalizedTitle,
             status: event.payload.toolCall.status,
             rawInput: event.payload.toolCall.rawInput,
           }),
@@ -554,14 +555,15 @@ export class SessionManager {
         break;
       }
       case "tool_call":
-      case "tool_call_update":
+      case "tool_call_update": {
+        const normalizedTitle = normalizeAcpToolTitle(update.title) || undefined;
         this.appendTimeline(entry, {
           id: randomUUID(),
           kind: "tool",
-          title: summarizeToolTitle(update.title, update.rawInput, update.toolCallId),
+          title: summarizeToolTitle(normalizedTitle, update.rawInput, update.toolCallId),
           body: formatToolDetails({
             toolCallId: update.toolCallId,
-            title: update.title,
+            title: normalizedTitle,
             status: update.status,
             rawInput: update.rawInput,
             rawOutput: update.rawOutput,
@@ -569,6 +571,7 @@ export class SessionManager {
           meta: String(update.status ?? update.sessionUpdate),
         });
         break;
+      }
       case "plan":
         this.appendTimeline(entry, {
           id: randomUUID(),
@@ -756,8 +759,24 @@ function formatToolDetails(details: {
   });
 }
 
+/**
+ * Strip the `mcp__acp__` prefix that the ACP agent adds when it re-publishes
+ * Claude Code built-in tools as MCP tools.  The prefix leaks into tool titles
+ * when `toolInfoFromToolUse()` doesn't recognise the tool name (default branch)
+ * and simply uses the raw name as the title.
+ *
+ * Examples:
+ *   "mcp__acp__Read"           → "Read"
+ *   "mcp__acp__CustomTool"     → "CustomTool"
+ *   "Read /path/file"          → "Read /path/file"  (no prefix – unchanged)
+ */
+function normalizeAcpToolTitle(rawTitle: unknown): string {
+  if (typeof rawTitle !== "string") return "";
+  return rawTitle.replace(/^mcp__acp__/i, "");
+}
+
 function summarizeToolTitle(rawTitle: unknown, rawInput: unknown, rawToolCallId: unknown) {
-  const title = typeof rawTitle === "string" ? rawTitle.trim() : "";
+  const title = normalizeAcpToolTitle(rawTitle).trim();
   const record = asRecord(rawInput) ?? asRecord(tryParseJson(rawInput));
   const normalizedTitle = title.toLowerCase();
   const isSubagent = normalizedTitle.includes("subagent") || normalizedTitle === "task" || normalizedTitle.includes(" task");
@@ -1002,6 +1021,7 @@ export const sessionManagerTestables = {
   stringifyMaybe,
   formatToolDetails,
   summarizeToolTitle,
+  normalizeAcpToolTitle,
   asRecord,
   extractChunkText,
   normalizeAvailableCommandsSnapshot,
