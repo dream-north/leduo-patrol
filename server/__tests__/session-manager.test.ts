@@ -146,12 +146,20 @@ test("SessionManager.setSessionMode updates default and current mode together", 
 });
 
 
-test("sessionManagerTestables.enrichPromptWithToolHints does not append routing hint", () => {
-  const untouched = sessionManagerTestables.enrichPromptWithToolHints("请读取配置并写回");
-  assert.equal(untouched, "请读取配置并写回");
+test("sessionManagerTestables.enrichPromptWithToolHints appends ask_question hint", () => {
+  const enriched = sessionManagerTestables.enrichPromptWithToolHints("请读取配置并写回");
+  assert.ok(enriched.startsWith("请读取配置并写回"));
+  assert.ok(enriched.includes("leduo/ask_question"));
 
   const trimmed = sessionManagerTestables.enrichPromptWithToolHints("  请使用 mcp_acp_Read 读取文件  ");
-  assert.equal(trimmed, "请使用 mcp_acp_Read 读取文件");
+  assert.ok(trimmed.startsWith("请使用 mcp_acp_Read 读取文件"));
+  assert.ok(trimmed.includes("leduo/ask_question"));
+
+  const empty = sessionManagerTestables.enrichPromptWithToolHints("");
+  assert.equal(empty, "");
+
+  const whitespaceOnly = sessionManagerTestables.enrichPromptWithToolHints("   ");
+  assert.equal(whitespaceOnly, "   ");
 });
 
 test("sessionManagerTestables.formatEditToolChangeMessage summarizes edit diff payload", () => {

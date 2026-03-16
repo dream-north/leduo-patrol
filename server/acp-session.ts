@@ -163,6 +163,17 @@ export class ClaudeAcpSession {
             readTextFile: true,
             writeTextFile: true,
           },
+          _meta: {
+            extensions: [
+              {
+                method: "leduo/ask_question",
+                description:
+                  "Ask the user a question with optional multiple-choice options. " +
+                  "Params: { question: string, options?: Array<{ id: string, label: string }>, allowCustomAnswer?: boolean }. " +
+                  "Returns: { answer: string }.",
+              },
+            ],
+          },
         },
       });
 

@@ -846,9 +846,18 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
+const ASK_QUESTION_HINT =
+  "[Extension] 当你需要向用户提问（例如选择方案、确认操作、获取额外信息）时，" +
+  "请调用扩展方法 leduo/ask_question，参数格式：" +
+  '{ "question": "你的问题", "options": [{ "id": "a", "label": "选项A" }, { "id": "b", "label": "选项B" }], "allowCustomAnswer": true }。' +
+  "返回 { answer: string }。如果设置 allowCustomAnswer 为 true，用户可以输入自定义回答。";
+
 function enrichPromptWithToolHints(text: string) {
   const normalized = text.trim();
-  return normalized || text;
+  if (!normalized) {
+    return text;
+  }
+  return `${normalized}\n\n${ASK_QUESTION_HINT}`;
 }
 
 function formatEditToolChangeMessage(message: string) {
