@@ -624,6 +624,17 @@ export class SessionManager {
         // converts into a proper question flow.  We therefore skip
         // creating a question here to avoid duplicates — just display
         // the tool call in the timeline like any other tool.
+        //
+        // Because the native AskUserQuestion handler can't run in ACP
+        // (it uses stdin), the patched canUseTool returns "deny" with
+        // the user's answer.  The SDK marks this as "failed", but from
+        // the user's perspective the question was answered successfully.
+        // Override the status to "completed" so the timeline shows it
+        // seamlessly — identical to any other successful tool call.
+        const effectiveStatus =
+          isAskUserQuestionTitle(normalizedTitle) && update.status === "failed"
+            ? "completed"
+            : update.status;
 
         this.appendTimeline(entry, {
           id: randomUUID(),
@@ -632,11 +643,11 @@ export class SessionManager {
           body: formatToolDetails({
             toolCallId: update.toolCallId,
             title: normalizedTitle,
-            status: update.status,
+            status: effectiveStatus,
             rawInput: update.rawInput,
             rawOutput: update.rawOutput,
           }),
-          meta: String(update.status ?? update.sessionUpdate),
+          meta: String(effectiveStatus ?? update.sessionUpdate),
         });
         break;
       }

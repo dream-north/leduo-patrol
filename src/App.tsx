@@ -3491,6 +3491,23 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
         body: "主代理汇总：2 个子任务已完成。建议先确认缓存 TTL，再执行正式发布。",
       },
       {
+        id: "demo-tool-read",
+        kind: "tool",
+        title: "Read /src/config.ts",
+        body: JSON.stringify(
+          {
+            toolCallId: "demo-read-1",
+            title: "Read /src/config.ts",
+            status: "completed",
+            rawInput: { file_path: "/src/config.ts" },
+            rawOutput: "export const version = '1.1.0';",
+          },
+          null,
+          2,
+        ),
+        meta: "completed",
+      },
+      {
         id: "demo-tool-write",
         kind: "tool",
         title: "Write /src/config.ts",
@@ -3513,7 +3530,7 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
         body: "演示提示：点击 `Task` 行右侧子项按钮，可折叠/展开子任务明细；同时可切换查看会话差异与文件 diff。",
       },
     ],
-    historyTotal: 18,
+    historyTotal: 19,
     historyStart: 0,
     permissions: [
       {

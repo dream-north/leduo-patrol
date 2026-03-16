@@ -583,67 +583,33 @@ export class ClaudeAcpAgent {
             }
             // ── leduo-patrol patch: intercept native Read/Write/AskUserQuestion ──
             // When the LLM ignores disallowedTools and still calls the native
-            // tools, redirect them through client capabilities so they work
-            // correctly in the ACP context.  We return "deny" with the result
-            // embedded in the message so Claude still receives the output while
-            // the native (broken-in-ACP) handler never runs.
+            // tools (Read, Write, AskUserQuestion), handle them so the user
+            // experience is identical to the mcp__acp__-prefixed counterparts.
 
-            // Intercept native Read → client readTextFile capability
+            // Native Read / Write: simply allow — the native handler executes
+            // on the local filesystem (same machine as the ACP agent) and
+            // produces the same result as mcp__acp__Read / mcp__acp__Write.
+            // The tool_call_update shows "completed" just like the prefixed
+            // version; the user sees no difference.
             if (toolName === "Read" && this.clientCapabilities?.fs?.readTextFile) {
-                try {
-                    const filePath = (toolInput && typeof toolInput.file_path === "string")
-                        ? toolInput.file_path
-                        : (toolInput && typeof toolInput.path === "string") ? toolInput.path : "";
-                    const readParams = { path: filePath };
-                    if (toolInput && typeof toolInput.offset === "number") {
-                        readParams.line = toolInput.offset;
-                    }
-                    if (toolInput && typeof toolInput.limit === "number") {
-                        readParams.limit = toolInput.limit;
-                    }
-                    const result = await this.client.readTextFile(readParams);
-                    return {
-                        behavior: "deny",
-                        message: result.content ?? "",
-                    };
-                }
-                catch (error) {
-                    return {
-                        behavior: "deny",
-                        message: `Failed to read file: ${error instanceof Error ? error.message : String(error)}`,
-                    };
-                }
+                return {
+                    behavior: "allow",
+                    updatedInput: toolInput,
+                };
             }
-
-            // Intercept native Write → client writeTextFile capability
             if (toolName === "Write" && this.clientCapabilities?.fs?.writeTextFile) {
-                try {
-                    const filePath = (toolInput && typeof toolInput.file_path === "string")
-                        ? toolInput.file_path
-                        : (toolInput && typeof toolInput.path === "string") ? toolInput.path : "";
-                    const content = (toolInput && typeof toolInput.content === "string") ? toolInput.content : "";
-                    await this.client.writeTextFile({ path: filePath, content });
-                    return {
-                        behavior: "deny",
-                        message: `Successfully wrote to ${filePath}. ` +
-                            "(Note: the native Write tool was intercepted and the operation was handled " +
-                            "by the client filesystem handler.  The file was written successfully.)",
-                    };
-                }
-                catch (error) {
-                    return {
-                        behavior: "deny",
-                        message: `Failed to write file: ${error instanceof Error ? error.message : String(error)}`,
-                    };
-                }
+                return {
+                    behavior: "allow",
+                    updatedInput: toolInput,
+                };
             }
 
-            // Intercept native AskUserQuestion → permission-based question flow
-            // The client-side session manager converts AskUserQuestion permission
-            // requests into a proper question UI.  The user's answer is returned
-            // via _meta.note on the permission response.  We return "deny" with
-            // the answer so the native AskUserQuestion handler (which requires
-            // stdin and doesn't work in ACP) never runs.
+            // Native AskUserQuestion: the native handler uses stdin which
+            // doesn't work in ACP, so we must intercept it.  We route it
+            // through requestPermission → session-manager converts to the
+            // question panel.  We return "deny" with the user's answer so
+            // Claude receives it; the session-manager overrides the status
+            // to "completed" in the timeline for a seamless display.
             if (toolName === "AskUserQuestion") {
                 const response = await this.client.requestPermission({
                     options: [

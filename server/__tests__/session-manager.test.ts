@@ -315,3 +315,51 @@ test("handleSessionEvent: AskUserQuestion permission_requested still creates que
   assert.equal(entry.snapshot.questions[0].question, "选择颜色");
   assert.equal(entry.snapshot.permissions.length, 0);
 });
+
+test("handleSessionEvent: AskUserQuestion tool_call_update with failed status shows as completed", () => {
+  const manager = new SessionManager({ allowedRoots: [process.cwd()], agentBinPath: "claude" });
+
+  (manager as any).sessions.set("s1", {
+    snapshot: {
+      clientSessionId: "s1",
+      title: "demo",
+      workspacePath: process.cwd(),
+      connectionState: "connected",
+      sessionId: "x",
+      modes: [],
+      defaultModeId: "default",
+      currentModeId: "default",
+      busy: true,
+      timeline: [],
+      historyTotal: 0,
+      historyStart: 0,
+      permissions: [],
+      questions: [],
+      availableCommands: [],
+      updatedAt: new Date().toISOString(),
+    },
+    acpSession: null,
+    connectPromise: null,
+    fullTimeline: [],
+  });
+
+  // Simulate the tool_call_update that arrives after canUseTool returns
+  // "deny" with the user's answer.  The SDK marks it as "failed" but the
+  // session-manager should override this to "completed" for AskUserQuestion.
+  (manager as any).handleSessionEvent("s1", {
+    type: "session_update",
+    payload: {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "tc-ask-1",
+      title: "AskUserQuestion",
+      status: "failed",
+      rawInput: { question: "选择颜色" },
+      rawOutput: "红色",
+    },
+  });
+
+  const entry = (manager as any).sessions.get("s1");
+  const lastItem = entry.fullTimeline[entry.fullTimeline.length - 1];
+  // The meta should be "completed", not "failed"
+  assert.equal(lastItem.meta, "completed");
+});
