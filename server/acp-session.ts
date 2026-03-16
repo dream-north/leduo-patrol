@@ -6,6 +6,21 @@ import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type * as schema from "@agentclientprotocol/sdk/dist/schema/types.gen.js";
 
+/**
+ * Invisible-to-user tool hints appended as a separate content block
+ * when sending prompts to the ACP agent. These are emitted AFTER the
+ * `prompt_started` event so the timeline / UI never displays them.
+ */
+const PROMPT_HINTS = [
+  "[ACP Tool] mcp__acp__Read — 读取文件内容。参数：{ path: string }（绝对路径）。",
+  "[ACP Tool] mcp__acp__Write — 写入文件（如果文件已存在需要先读取）。参数：{ path: string, content: string }（绝对路径）。",
+  "[ACP Tool] mcp__acp__Edit — 编辑文件（必须先用 mcp__acp__Read 读取后才能编辑）。参数：{ path: string, old_string: string, new_string: string }（绝对路径）。",
+  "[Extension] 当你需要向用户提问（例如选择方案、确认操作、获取额外信息）时，" +
+    "请调用扩展方法 leduo/ask_question，参数格式：" +
+    '{ "question": "你的问题", "options": [{ "id": "a", "label": "选项A" }, { "id": "b", "label": "选项B" }], "allowCustomAnswer": true }。' +
+    "返回 { answer: string }。如果设置 allowCustomAnswer 为 true，用户可以输入自定义回答。",
+].join("\n");
+
 export type AskQuestionOption = {
   id: string;
   label: string;
@@ -305,6 +320,9 @@ export class ClaudeAcpSession {
         }
       }
       promptContent.push({ type: "text", text });
+      // Append tool hints as a separate content block so Claude sees them
+      // but they never appear in the prompt_started event / user timeline.
+      promptContent.push({ type: "text", text: PROMPT_HINTS });
       const response = await this.connection.prompt({
         sessionId,
         messageId: randomUUID(),
