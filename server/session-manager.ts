@@ -115,6 +115,9 @@ export class SessionManager {
   private readonly stateFilePath: string;
   private readonly sessions = new Map<string, ManagedSession>();
   private readonly listeners = new Set<(event: SocketEvent) => void>();
+  // Maps a synthetic questionId to the original permission requestId so that
+  // answering an AskUserQuestion-originated question resolves the permission.
+  private readonly askUserQuestionMap = new Map<string, { clientSessionId: string; requestId: string }>();
   private persistTimer: NodeJS.Timeout | null = null;
 
   constructor(options: SessionManagerOptions) {
@@ -295,6 +298,28 @@ export class SessionManager {
   }
 
   async answerQuestion(clientSessionId: string, questionId: string, answer: string) {
+    // If this question was synthesised from an AskUserQuestion permission
+    // request, resolve the underlying permission instead of routing through
+    // the question channel.
+    const mappedPermission = this.askUserQuestionMap.get(questionId);
+    if (mappedPermission) {
+      this.askUserQuestionMap.delete(questionId);
+      await this.getEntry(clientSessionId).acpSession?.resolvePermission(
+        mappedPermission.requestId,
+        "allow",
+        answer,
+      );
+      // Remove the question snapshot from the session so the UI clears it.
+      const entry = this.getEntry(clientSessionId);
+      entry.snapshot.questions = entry.snapshot.questions.filter(
+        (q) => q.questionId !== questionId,
+      );
+      this.emit({
+        type: "question_answered",
+        payload: { clientSessionId, questionId, answer },
+      } as unknown as SocketEvent);
+      return;
+    }
     await this.getEntry(clientSessionId).acpSession?.answerQuestion(questionId, answer);
   }
 
@@ -428,6 +453,39 @@ export class SessionManager {
         break;
       case "permission_requested": {
         const normalizedTitle = normalizeAcpToolTitle(event.payload.toolCall.title) || undefined;
+
+        // When the ACP agent sends a permission request for AskUserQuestion
+        // (which means AskUserQuestion is no longer fully disallowed in this
+        // ACP version), convert it to a question flow so the user sees the
+        // proper question panel instead of a raw permission dialog.
+        if (isAskUserQuestionTitle(normalizedTitle)) {
+          const rawInput = asRecord(event.payload.toolCall.rawInput);
+          const questionText = typeof rawInput?.question === "string" ? rawInput.question : "";
+          const questionId = randomUUID();
+          const questionSnapshot: QuestionSnapshot = {
+            clientSessionId,
+            questionId,
+            question: questionText,
+            options: [],
+            allowCustomAnswer: true,
+          };
+          entry.snapshot.questions.push(questionSnapshot);
+          this.appendTimeline(entry, {
+            id: questionId,
+            kind: "system",
+            title: "提问",
+            body: questionText,
+            meta: "pending",
+          });
+          // Map the question to the permission request so we can resolve it
+          // when the user answers.
+          this.askUserQuestionMap.set(questionId, {
+            clientSessionId,
+            requestId: event.payload.requestId,
+          });
+          break;
+        }
+
         const permission: PermissionSnapshot = {
           clientSessionId,
           requestId: event.payload.requestId,
@@ -557,6 +615,46 @@ export class SessionManager {
       case "tool_call":
       case "tool_call_update": {
         const normalizedTitle = normalizeAcpToolTitle(update.title) || undefined;
+
+        // When AskUserQuestion appears as a tool_call (e.g. the agent
+        // streams the tool use before the SDK rejects it as disallowed),
+        // surface it as a question so the user can answer it.  Only the
+        // initial ("pending") call triggers the question; subsequent
+        // updates (e.g. "failed") are ignored once the question exists.
+        if (isAskUserQuestionTitle(normalizedTitle) && update.status === "pending") {
+          const rawInput = asRecord(update.rawInput);
+          const questionText = typeof rawInput?.question === "string" ? rawInput.question : "";
+          if (questionText) {
+            const questionId = randomUUID();
+            const questionSnapshot: QuestionSnapshot = {
+              clientSessionId: entry.snapshot.clientSessionId,
+              questionId,
+              question: questionText,
+              options: [],
+              allowCustomAnswer: true,
+            };
+            entry.snapshot.questions.push(questionSnapshot);
+            this.appendTimeline(entry, {
+              id: questionId,
+              kind: "system",
+              title: "提问",
+              body: questionText,
+              meta: "pending",
+            });
+            this.emit({
+              type: "question_requested",
+              payload: {
+                clientSessionId: entry.snapshot.clientSessionId,
+                questionId,
+                question: questionText,
+                options: [],
+                allowCustomAnswer: true,
+              },
+            } as unknown as SocketEvent);
+            break;
+          }
+        }
+
         this.appendTimeline(entry, {
           id: randomUUID(),
           kind: "tool",
@@ -1016,12 +1114,27 @@ function normalizeCommandName(rawName: string) {
   return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
 }
 
+/**
+ * Returns `true` when the tool title (already normalised by
+ * `normalizeAcpToolTitle`) matches the Claude-native AskUserQuestion tool.
+ *
+ * We detect this so that a `permission_requested` event for AskUserQuestion
+ * can be silently converted to a question-flow instead of a raw permission
+ * dialog the user wouldn't know how to answer.
+ */
+function isAskUserQuestionTitle(title: string | undefined): boolean {
+  if (!title) return false;
+  const lower = title.toLowerCase();
+  return lower === "askuserquestion" || lower.startsWith("askuserquestion ");
+}
+
 
 export const sessionManagerTestables = {
   stringifyMaybe,
   formatToolDetails,
   summarizeToolTitle,
   normalizeAcpToolTitle,
+  isAskUserQuestionTitle,
   asRecord,
   extractChunkText,
   normalizeAvailableCommandsSnapshot,
