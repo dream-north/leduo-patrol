@@ -205,3 +205,13 @@ test("sessionManagerTestables.summarizeToolTitle strips mcp__acp__ prefix before
     "CustomTool",
   );
 });
+
+test("sessionManagerTestables.isAskUserQuestionTitle detects AskUserQuestion variants", () => {
+  assert.equal(sessionManagerTestables.isAskUserQuestionTitle("AskUserQuestion"), true);
+  assert.equal(sessionManagerTestables.isAskUserQuestionTitle("askuserquestion"), true);
+  assert.equal(sessionManagerTestables.isAskUserQuestionTitle("AskUserQuestion Choose a color"), true);
+  assert.equal(sessionManagerTestables.isAskUserQuestionTitle("mcp__acp__AskUserQuestion"), false);
+  assert.equal(sessionManagerTestables.isAskUserQuestionTitle("Write"), false);
+  assert.equal(sessionManagerTestables.isAskUserQuestionTitle(undefined), false);
+  assert.equal(sessionManagerTestables.isAskUserQuestionTitle(""), false);
+});

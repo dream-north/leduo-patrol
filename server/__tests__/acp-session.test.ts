@@ -173,3 +173,63 @@ test("ClaudeAcpSession.handleExtMethod handles missing options gracefully", asyn
   const result = await resultPromise;
   assert.deepEqual(result, { answer: "张三" });
 });
+
+test("ClaudeAcpSession.handleReadTextFile reads file content", async () => {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const dir = "/tmp/test-acp-read-" + Date.now();
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, "test.txt"), "line1\nline2\nline3\n", "utf8");
+  const session = new ClaudeAcpSession({
+    workspacePath: dir,
+    agentBinPath: "claude",
+    onEvent: () => undefined,
+  });
+  const result = await (session as any).handleReadTextFile({
+    path: path.join(dir, "test.txt"),
+    sessionId: "s1",
+  });
+  assert.equal(result.content, "line1\nline2\nline3\n");
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("ClaudeAcpSession.handleReadTextFile supports line/limit params", async () => {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const dir = "/tmp/test-acp-read-limit-" + Date.now();
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, "test.txt"), "a\nb\nc\nd\ne\n", "utf8");
+  const session = new ClaudeAcpSession({
+    workspacePath: dir,
+    agentBinPath: "claude",
+    onEvent: () => undefined,
+  });
+  const result = await (session as any).handleReadTextFile({
+    path: path.join(dir, "test.txt"),
+    sessionId: "s1",
+    line: 2,
+    limit: 2,
+  });
+  assert.equal(result.content, "b\nc");
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("ClaudeAcpSession.handleWriteTextFile creates file and directories", async () => {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const dir = "/tmp/test-acp-write-" + Date.now();
+  const session = new ClaudeAcpSession({
+    workspacePath: dir,
+    agentBinPath: "claude",
+    onEvent: () => undefined,
+  });
+  const filePath = path.join(dir, "sub", "file.txt");
+  await (session as any).handleWriteTextFile({
+    path: filePath,
+    content: "hello world",
+    sessionId: "s1",
+  });
+  const content = await fs.readFile(filePath, "utf8");
+  assert.equal(content, "hello world");
+  await fs.rm(dir, { recursive: true, force: true });
+});

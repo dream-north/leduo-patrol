@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
@@ -134,18 +134,17 @@ export class ClaudeAcpSession {
       const input = Writable.toWeb(this.agentProcess.stdin) as WritableStream<Uint8Array>;
       const output = Readable.toWeb(this.agentProcess.stdout) as ReadableStream<Uint8Array>;
       const stream = acp.ndJsonStream(input, output);
-      // Do NOT declare readTextFile / writeTextFile here.
-      // When those capabilities are present the ACP agent disables the native
-      // Read / Write / Edit tools and registers mcp__acp__Read etc. instead.
-      // Claude frequently ignores the mcp__acp__ prefix and calls the native
-      // tool name, which produces "No such tool available: Read" errors.
-      // By omitting the fs implementations the native tools stay enabled and
-      // Claude can use Read / Write / Edit directly without confusion.
+      // Provide readTextFile / writeTextFile so the ACP agent routes file
+      // operations through us.  The agent registers mcp__acp__Read / Write /
+      // Edit and disallows the native names; our normalizeAcpToolTitle()
+      // safety net strips the prefix in the UI.
       const client: acp.Client = {
         requestPermission: async (params) => this.handlePermissionRequest(params),
         sessionUpdate: async (params) => {
           this.onEvent({ type: "session_update", payload: params.update });
         },
+        readTextFile: async (params) => this.handleReadTextFile(params),
+        writeTextFile: async (params) => this.handleWriteTextFile(params),
         // Handles custom extension methods called by the agent (e.g. "leduo/ask_question").
         // The ACP SDK routes any unrecognized method to this handler.
         extMethod: async (method, params) => this.handleExtMethod(method, params),
@@ -156,6 +155,7 @@ export class ClaudeAcpSession {
       await this.connection.initialize({
         protocolVersion: acp.PROTOCOL_VERSION,
         clientCapabilities: {
+          fs: { readTextFile: true, writeTextFile: true },
           _meta: {
             extensions: [
               {
@@ -472,6 +472,39 @@ export class ClaudeAcpSession {
       throw new Error(`Refusing to access file outside workspace: ${targetPath}`);
     }
     return absolutePath;
+  }
+
+  private async handleReadTextFile(
+    params: schema.ReadTextFileRequest,
+  ): Promise<schema.ReadTextFileResponse> {
+    // The ACP MCP server already handles internal paths (~/.claude/) directly.
+    // Only non-internal (workspace) file reads are forwarded to the client.
+    const filePath = path.isAbsolute(params.path)
+      ? params.path
+      : this.resolveWorkspacePath(params.path);
+    const content = await readFile(filePath, "utf8");
+
+    if (params.line != null || params.limit != null) {
+      const lines = content.split("\n");
+      const offset = (params.line ?? 1) - 1;
+      const limit = params.limit ?? lines.length;
+      const start = Math.max(0, offset);
+      const end = Math.min(lines.length, start + limit);
+      return { content: lines.slice(start, end).join("\n") };
+    }
+    return { content };
+  }
+
+  private async handleWriteTextFile(
+    params: schema.WriteTextFileRequest,
+  ): Promise<schema.WriteTextFileResponse> {
+    const filePath = path.isAbsolute(params.path)
+      ? params.path
+      : this.resolveWorkspacePath(params.path);
+    const dirName = path.dirname(filePath);
+    await mkdir(dirName, { recursive: true });
+    await writeFile(filePath, params.content, "utf8");
+    return {};
   }
 }
 
