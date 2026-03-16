@@ -616,44 +616,14 @@ export class SessionManager {
       case "tool_call_update": {
         const normalizedTitle = normalizeAcpToolTitle(update.title) || undefined;
 
-        // When AskUserQuestion appears as a tool_call (e.g. the agent
-        // streams the tool use before the SDK rejects it as disallowed),
-        // surface it as a question so the user can answer it.  Only the
-        // initial ("pending") call triggers the question; subsequent
-        // updates (e.g. "failed") are ignored once the question exists.
-        if (isAskUserQuestionTitle(normalizedTitle) && update.status === "pending") {
-          const rawInput = asRecord(update.rawInput);
-          const questionText = typeof rawInput?.question === "string" ? rawInput.question : "";
-          if (questionText) {
-            const questionId = randomUUID();
-            const questionSnapshot: QuestionSnapshot = {
-              clientSessionId: entry.snapshot.clientSessionId,
-              questionId,
-              question: questionText,
-              options: [],
-              allowCustomAnswer: true,
-            };
-            entry.snapshot.questions.push(questionSnapshot);
-            this.appendTimeline(entry, {
-              id: questionId,
-              kind: "system",
-              title: "提问",
-              body: questionText,
-              meta: "pending",
-            });
-            this.emit({
-              type: "question_requested",
-              payload: {
-                clientSessionId: entry.snapshot.clientSessionId,
-                questionId,
-                question: questionText,
-                options: [],
-                allowCustomAnswer: true,
-              },
-            } as unknown as SocketEvent);
-            break;
-          }
-        }
+        // AskUserQuestion tool_call notifications arrive as stream events
+        // BEFORE the corresponding permission_requested event from
+        // canUseTool().  The vendored ACP agent patch ensures that
+        // canUseTool() always fires a requestPermission for
+        // AskUserQuestion, which the permission_requested handler below
+        // converts into a proper question flow.  We therefore skip
+        // creating a question here to avoid duplicates — just display
+        // the tool call in the timeline like any other tool.
 
         this.appendTimeline(entry, {
           id: randomUUID(),

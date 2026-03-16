@@ -215,3 +215,103 @@ test("sessionManagerTestables.isAskUserQuestionTitle detects AskUserQuestion var
   assert.equal(sessionManagerTestables.isAskUserQuestionTitle(undefined), false);
   assert.equal(sessionManagerTestables.isAskUserQuestionTitle(""), false);
 });
+
+test("handleSessionEvent: AskUserQuestion tool_call does not create duplicate question snapshot", () => {
+  const manager = new SessionManager({ allowedRoots: [process.cwd()], agentBinPath: "claude" });
+
+  (manager as any).sessions.set("s1", {
+    snapshot: {
+      clientSessionId: "s1",
+      title: "demo",
+      workspacePath: process.cwd(),
+      connectionState: "connected",
+      sessionId: "x",
+      modes: [],
+      defaultModeId: "default",
+      currentModeId: "default",
+      busy: true,
+      timeline: [],
+      historyTotal: 0,
+      historyStart: 0,
+      permissions: [],
+      questions: [],
+      availableCommands: [],
+      updatedAt: new Date().toISOString(),
+    },
+    acpSession: null,
+    connectPromise: null,
+    fullTimeline: [],
+  });
+
+  // Simulate a session_update / tool_call for AskUserQuestion
+  (manager as any).handleSessionEvent("s1", {
+    type: "session_update",
+    payload: {
+      sessionUpdate: "tool_call",
+      toolCallId: "tc-ask-1",
+      title: "AskUserQuestion",
+      status: "pending",
+      rawInput: { question: "你好吗?" },
+    },
+  });
+
+  const entry = (manager as any).sessions.get("s1");
+  // Should NOT create a question snapshot from tool_call — the permission_requested
+  // handler will create it later.  This prevents duplicate questions.
+  assert.equal(entry.snapshot.questions.length, 0);
+  // Should still add a timeline entry for the tool call
+  assert.ok(entry.fullTimeline.length > 0);
+});
+
+test("handleSessionEvent: AskUserQuestion permission_requested still creates question snapshot", () => {
+  const manager = new SessionManager({ allowedRoots: [process.cwd()], agentBinPath: "claude" });
+
+  (manager as any).sessions.set("s1", {
+    snapshot: {
+      clientSessionId: "s1",
+      title: "demo",
+      workspacePath: process.cwd(),
+      connectionState: "connected",
+      sessionId: "x",
+      modes: [],
+      defaultModeId: "default",
+      currentModeId: "default",
+      busy: true,
+      timeline: [],
+      historyTotal: 0,
+      historyStart: 0,
+      permissions: [],
+      questions: [],
+      availableCommands: [],
+      updatedAt: new Date().toISOString(),
+    },
+    acpSession: null,
+    connectPromise: null,
+    fullTimeline: [],
+  });
+
+  // Simulate a permission_requested event for AskUserQuestion (from the
+  // patched canUseTool).  This should create a question snapshot.
+  (manager as any).handleSessionEvent("s1", {
+    type: "permission_requested",
+    payload: {
+      requestId: "req-ask-1",
+      toolCall: {
+        toolCallId: "tc-ask-1",
+        title: "AskUserQuestion",
+        status: "pending",
+        rawInput: { question: "选择颜色" },
+      },
+      options: [
+        { optionId: "allow", name: "Answer", kind: "allow_once" },
+        { optionId: "reject", name: "Reject", kind: "reject_once" },
+      ],
+    },
+  });
+
+  const entry = (manager as any).sessions.get("s1");
+  // Should create a question (not a permission)
+  assert.equal(entry.snapshot.questions.length, 1);
+  assert.equal(entry.snapshot.questions[0].question, "选择颜色");
+  assert.equal(entry.snapshot.permissions.length, 0);
+});
