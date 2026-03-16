@@ -2434,14 +2434,14 @@ function TimelineRow(props: {
 }
 
 function buildToolTimelineItem(update: SessionUpdate): TimelineItem {
-  const normalizedTitle = normalizeAcpToolTitle(update.title);
+  const normalizedTitle = normalizeAcpToolTitle(update.title) || undefined;
   return {
     id: makeId(),
     kind: "tool",
     title: summarizeToolTitle(normalizedTitle, update.rawInput, update.toolCallId),
     body: formatToolDetails({
       toolCallId: update.toolCallId,
-      title: normalizedTitle || update.title,
+      title: normalizedTitle,
       status: update.status,
       rawInput: update.rawInput,
       rawOutput: update.rawOutput,
@@ -3985,6 +3985,8 @@ function isReadToolTitle(title: string | null): boolean {
 function isWriteToolTitle(title: string | null): boolean {
   const t = normalizeAcpToolTitle(title).trim().toLowerCase();
   const prefixes = ["write", "writefile", "write_file", "write file"];
+  // "create" variants use exact match only – "Create <path>" is not a
+  // recognised title pattern from Claude Code, whereas "Write <path>" is.
   const exact = ["create", "createfile", "create_file", "create file"];
   return prefixes.some((p) => t === p || t.startsWith(p + " ")) || exact.some((p) => t === p);
 }

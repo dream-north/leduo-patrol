@@ -556,14 +556,14 @@ export class SessionManager {
       }
       case "tool_call":
       case "tool_call_update": {
-        const normalizedTitle = normalizeAcpToolTitle(update.title);
+        const normalizedTitle = normalizeAcpToolTitle(update.title) || undefined;
         this.appendTimeline(entry, {
           id: randomUUID(),
           kind: "tool",
           title: summarizeToolTitle(normalizedTitle, update.rawInput, update.toolCallId),
           body: formatToolDetails({
             toolCallId: update.toolCallId,
-            title: normalizedTitle || update.title,
+            title: normalizedTitle,
             status: update.status,
             rawInput: update.rawInput,
             rawOutput: update.rawOutput,
