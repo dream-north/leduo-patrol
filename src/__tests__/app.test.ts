@@ -393,6 +393,75 @@ test("app summarizeToolTitle reads subagent description from stringified rawInpu
   assert.equal(appTestables.summarizeToolTitle("Task", rawInput, "tc-2"), "Task · 探索当前代码库结构");
 });
 
+test("app normalizeAcpToolTitle strips mcp__acp__ prefix", () => {
+  assert.equal(appTestables.normalizeAcpToolTitle("mcp__acp__Read"), "Read");
+  assert.equal(appTestables.normalizeAcpToolTitle("mcp__acp__Write"), "Write");
+  assert.equal(appTestables.normalizeAcpToolTitle("mcp__acp__Edit"), "Edit");
+  assert.equal(appTestables.normalizeAcpToolTitle("mcp__acp__Bash"), "Bash");
+  assert.equal(appTestables.normalizeAcpToolTitle("mcp__acp__KillShell"), "KillShell");
+});
+
+test("app normalizeAcpToolTitle leaves normal titles unchanged", () => {
+  assert.equal(appTestables.normalizeAcpToolTitle("Read /path/file"), "Read /path/file");
+  assert.equal(appTestables.normalizeAcpToolTitle("Task"), "Task");
+  assert.equal(appTestables.normalizeAcpToolTitle(""), "");
+  assert.equal(appTestables.normalizeAcpToolTitle(null), "");
+  assert.equal(appTestables.normalizeAcpToolTitle(42), "");
+});
+
+test("app summarizeToolTitle strips mcp__acp__ prefix", () => {
+  assert.equal(
+    appTestables.summarizeToolTitle("mcp__acp__Read", null, "tc-1"),
+    "Read",
+  );
+  assert.equal(
+    appTestables.summarizeToolTitle("mcp__acp__CustomTool", null, "tc-2"),
+    "CustomTool",
+  );
+});
+
+test("app isReadToolTitle detects read variants", () => {
+  // Exact names
+  assert.equal(appTestables.isReadToolTitle("Read"), true);
+  assert.equal(appTestables.isReadToolTitle("read"), true);
+  assert.equal(appTestables.isReadToolTitle("ReadFile"), true);
+  assert.equal(appTestables.isReadToolTitle("read_file"), true);
+  assert.equal(appTestables.isReadToolTitle("Read File"), true);
+  assert.equal(appTestables.isReadToolTitle("file_read"), true);
+  assert.equal(appTestables.isReadToolTitle("FileRead"), true);
+  // Titles with path suffix (from ACP toolInfoFromToolUse)
+  assert.equal(appTestables.isReadToolTitle("Read /src/index.ts"), true);
+  assert.equal(appTestables.isReadToolTitle("Read /src/index.ts (1 - 100)"), true);
+  assert.equal(appTestables.isReadToolTitle("Read File"), true);
+  // mcp__acp__ prefixed
+  assert.equal(appTestables.isReadToolTitle("mcp__acp__Read"), true);
+  // Non-read tools
+  assert.equal(appTestables.isReadToolTitle("Write"), false);
+  assert.equal(appTestables.isReadToolTitle("Bash"), false);
+  assert.equal(appTestables.isReadToolTitle(null), false);
+  assert.equal(appTestables.isReadToolTitle(""), false);
+});
+
+test("app isWriteToolTitle detects write variants", () => {
+  // Exact names
+  assert.equal(appTestables.isWriteToolTitle("Write"), true);
+  assert.equal(appTestables.isWriteToolTitle("write"), true);
+  assert.equal(appTestables.isWriteToolTitle("WriteFile"), true);
+  assert.equal(appTestables.isWriteToolTitle("write_file"), true);
+  assert.equal(appTestables.isWriteToolTitle("Write File"), true);
+  assert.equal(appTestables.isWriteToolTitle("Create"), true);
+  assert.equal(appTestables.isWriteToolTitle("CreateFile"), true);
+  // Titles with path suffix (from ACP toolInfoFromToolUse)
+  assert.equal(appTestables.isWriteToolTitle("Write /src/index.ts"), true);
+  // mcp__acp__ prefixed
+  assert.equal(appTestables.isWriteToolTitle("mcp__acp__Write"), true);
+  // Non-write tools
+  assert.equal(appTestables.isWriteToolTitle("Read"), false);
+  assert.equal(appTestables.isWriteToolTitle("Bash"), false);
+  assert.equal(appTestables.isWriteToolTitle(null), false);
+  assert.equal(appTestables.isWriteToolTitle(""), false);
+});
+
 test("app available command helpers normalize group and complete", () => {
   const normalized = appTestables.normalizeAvailableCommands([
     { name: " mcp.list ", description: "list mcp" },

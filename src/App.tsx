@@ -2434,13 +2434,14 @@ function TimelineRow(props: {
 }
 
 function buildToolTimelineItem(update: SessionUpdate): TimelineItem {
+  const normalizedTitle = normalizeAcpToolTitle(update.title);
   return {
     id: makeId(),
     kind: "tool",
-    title: summarizeToolTitle(update.title, update.rawInput, update.toolCallId),
+    title: summarizeToolTitle(normalizedTitle, update.rawInput, update.toolCallId),
     body: formatToolDetails({
       toolCallId: update.toolCallId,
-      title: update.title,
+      title: normalizedTitle || update.title,
       status: update.status,
       rawInput: update.rawInput,
       rawOutput: update.rawOutput,
@@ -2655,8 +2656,17 @@ function isTerminalToolStatus(status: string | null) {
   return normalized === "completed" || normalized === "failed" || normalized === "canceled" || normalized === "cancelled";
 }
 
+/**
+ * Strip the `mcp__acp__` prefix that the ACP agent adds when it re-publishes
+ * Claude Code built-in tools as MCP tools.
+ */
+function normalizeAcpToolTitle(rawTitle: unknown): string {
+  if (typeof rawTitle !== "string") return "";
+  return rawTitle.replace(/^mcp__acp__/i, "");
+}
+
 function summarizeToolTitle(rawTitle: unknown, rawInput: unknown, rawToolCallId: unknown) {
-  const title = typeof rawTitle === "string" ? rawTitle.trim() : "";
+  const title = normalizeAcpToolTitle(rawTitle).trim();
   const record = asRecord(rawInput) ?? asRecord(tryParseJson(rawInput));
   const subagentTitle = summarizeSubagentToolTitle(title, record);
   if (subagentTitle) {
@@ -3967,29 +3977,16 @@ function shouldRenderMarkdown(item: TimelineItem) {
 }
 
 function isReadToolTitle(title: string | null): boolean {
-  const t = (title ?? "").trim().toLowerCase();
-  return (
-    t === "read" ||
-    t === "readfile" ||
-    t === "read_file" ||
-    t === "read file" ||
-    t === "file_read" ||
-    t === "fileread"
-  );
+  const t = normalizeAcpToolTitle(title).trim().toLowerCase();
+  const prefixes = ["read", "readfile", "read_file", "read file", "file_read", "fileread"];
+  return prefixes.some((p) => t === p || t.startsWith(p + " "));
 }
 
 function isWriteToolTitle(title: string | null): boolean {
-  const t = (title ?? "").trim().toLowerCase();
-  return (
-    t === "write" ||
-    t === "writefile" ||
-    t === "write_file" ||
-    t === "write file" ||
-    t === "create" ||
-    t === "createfile" ||
-    t === "create_file" ||
-    t === "create file"
-  );
+  const t = normalizeAcpToolTitle(title).trim().toLowerCase();
+  const prefixes = ["write", "writefile", "write_file", "write file"];
+  const exact = ["create", "createfile", "create_file", "create file"];
+  return prefixes.some((p) => t === p || t.startsWith(p + " ")) || exact.some((p) => t === p);
 }
 
 function FileContentView(props: { content: string; filePath: string | null; mode: "read" | "write" }) {
@@ -4552,6 +4549,9 @@ export const appTestables = {
   extractPromptCommandQuery,
   splitCompletionLabel,
   buildCompletionSections,
+  normalizeAcpToolTitle,
+  isReadToolTitle,
+  isWriteToolTitle,
   canMergeToolTimelineItem,
   resolveWorkspaceLookupPath,
   buildTimelineTreeRows,

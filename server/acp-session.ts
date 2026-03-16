@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
@@ -134,21 +134,17 @@ export class ClaudeAcpSession {
       const input = Writable.toWeb(this.agentProcess.stdin) as WritableStream<Uint8Array>;
       const output = Readable.toWeb(this.agentProcess.stdout) as ReadableStream<Uint8Array>;
       const stream = acp.ndJsonStream(input, output);
+      // Do NOT declare readTextFile / writeTextFile here.
+      // When those capabilities are present the ACP agent disables the native
+      // Read / Write / Edit tools and registers mcp__acp__Read etc. instead.
+      // Claude frequently ignores the mcp__acp__ prefix and calls the native
+      // tool name, which produces "No such tool available: Read" errors.
+      // By omitting the fs implementations the native tools stay enabled and
+      // Claude can use Read / Write / Edit directly without confusion.
       const client: acp.Client = {
         requestPermission: async (params) => this.handlePermissionRequest(params),
         sessionUpdate: async (params) => {
           this.onEvent({ type: "session_update", payload: params.update });
-        },
-        readTextFile: async (params) => {
-          const filePath = this.resolveWorkspacePath(params.path);
-          const content = await readFile(filePath, "utf8");
-          return { content };
-        },
-        writeTextFile: async (params) => {
-          const filePath = this.resolveWorkspacePath(params.path);
-          await mkdir(path.dirname(filePath), { recursive: true });
-          await writeFile(filePath, params.content, "utf8");
-          return {};
         },
         // Handles custom extension methods called by the agent (e.g. "leduo/ask_question").
         // The ACP SDK routes any unrecognized method to this handler.
@@ -160,10 +156,6 @@ export class ClaudeAcpSession {
       await this.connection.initialize({
         protocolVersion: acp.PROTOCOL_VERSION,
         clientCapabilities: {
-          fs: {
-            readTextFile: true,
-            writeTextFile: true,
-          },
           _meta: {
             extensions: [
               {
