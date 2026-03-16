@@ -19,6 +19,14 @@ export type PermissionSnapshot = {
   options: Array<{ optionId: string; name: string; kind: string }>;
 };
 
+export type QuestionSnapshot = {
+  clientSessionId: string;
+  questionId: string;
+  question: string;
+  options: Array<{ id: string; label: string }>;
+  allowCustomAnswer: boolean;
+};
+
 export type AvailableCommandSnapshot = {
   name: string;
   description: string;
@@ -39,6 +47,7 @@ export type SessionSnapshot = {
   historyTotal: number;
   historyStart: number;
   permissions: PermissionSnapshot[];
+  questions: QuestionSnapshot[];
   availableCommands: AvailableCommandSnapshot[];
   updatedAt: string;
 };
@@ -128,6 +137,7 @@ export class SessionManager {
         historyTotal: 0,
         historyStart: 0,
         permissions: [],
+        questions: [],
         availableCommands: normalizeAvailableCommandsSnapshot(snapshot.availableCommands),
       };
       this.sessions.set(restoredSnapshot.clientSessionId, {
@@ -213,6 +223,7 @@ export class SessionManager {
       historyTotal: 0,
       historyStart: 0,
       permissions: [],
+      questions: [],
       availableCommands: [],
       updatedAt: new Date().toISOString(),
     };
@@ -281,6 +292,10 @@ export class SessionManager {
 
   async resolvePermission(clientSessionId: string, requestId: string, optionId: string, note?: string) {
     await this.getEntry(clientSessionId).acpSession?.resolvePermission(requestId, optionId, note);
+  }
+
+  async answerQuestion(clientSessionId: string, questionId: string, answer: string) {
+    await this.getEntry(clientSessionId).acpSession?.answerQuestion(questionId, answer);
   }
 
   async closeSession(clientSessionId: string) {
@@ -449,6 +464,32 @@ export class SessionManager {
       case "permission_resolved":
         entry.snapshot.permissions = entry.snapshot.permissions.filter(
           (permission) => permission.requestId !== event.payload.requestId,
+        );
+        break;
+      case "question_requested": {
+        const questionSnapshot: QuestionSnapshot = {
+          clientSessionId,
+          questionId: event.payload.questionId,
+          question: event.payload.question,
+          options: event.payload.options.map((opt) => ({
+            id: opt.id,
+            label: opt.label,
+          })),
+          allowCustomAnswer: event.payload.allowCustomAnswer,
+        };
+        entry.snapshot.questions.push(questionSnapshot);
+        this.appendTimeline(entry, {
+          id: event.payload.questionId,
+          kind: "system",
+          title: "提问",
+          body: event.payload.question,
+          meta: "pending",
+        });
+        break;
+      }
+      case "question_answered":
+        entry.snapshot.questions = entry.snapshot.questions.filter(
+          (q) => q.questionId !== event.payload.questionId,
         );
         break;
       case "error":

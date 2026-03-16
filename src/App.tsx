@@ -47,6 +47,14 @@ type PermissionPayload = {
   options: Array<{ optionId: string; name: string; kind: string }>;
 };
 
+type QuestionPayload = {
+  clientSessionId: string;
+  questionId: string;
+  question: string;
+  options: Array<{ id: string; label: string }>;
+  allowCustomAnswer: boolean;
+};
+
 type SessionRecord = {
   clientSessionId: string;
   title: string;
@@ -61,6 +69,7 @@ type SessionRecord = {
   historyTotal: number;
   historyStart: number;
   permissions: PermissionPayload[];
+  questions: QuestionPayload[];
   availableCommands?: AvailableCommand[];
   updatedAt: string;
 };
@@ -164,6 +173,8 @@ type EventMessage =
     }
   | { type: "permission_requested"; payload: PermissionPayload }
   | { type: "permission_resolved"; payload: { clientSessionId: string; requestId: string; optionId: string } }
+  | { type: "question_requested"; payload: QuestionPayload }
+  | { type: "question_answered"; payload: { clientSessionId: string; questionId: string; answer: string } }
   | { type: "session_closed"; payload: { clientSessionId: string } }
   | { type: "error"; payload: { message: string; clientSessionId?: string } }
   | { type: "shell_output"; payload: { data: string } }
@@ -308,6 +319,7 @@ export default function App() {
     [commandCompletions, completionQuery],
   );
   const activeSessionHasPendingPermission = Boolean(activeSession && activeSession.permissions.length > 0);
+  const activeSessionHasPendingQuestion = Boolean(activeSession && activeSession.questions.length > 0);
   const activeSessionIsRunning = Boolean(activeSession && isSessionRunning(activeSession));
   const activeSessionModeOptions =
     activeSession?.modes.length && activeSession.modes.length > 0
@@ -599,7 +611,7 @@ export default function App() {
   }, [sessions]);
 
   useEffect(() => {
-    const pendingCount = sessions.reduce((sum, s) => sum + s.permissions.length, 0);
+    const pendingCount = sessions.reduce((sum, s) => sum + s.permissions.length + s.questions.length, 0);
     const appName = config?.appName ?? "乐汪队";
     document.title = pendingCount > 0 ? `[${pendingCount} 待确认] ${appName}` : appName;
   }, [sessions, config?.appName]);
@@ -921,6 +933,7 @@ export default function App() {
               historyTotal: 0,
               historyStart: 0,
               permissions: [],
+              questions: [],
               availableCommands: [],
               updatedAt: new Date().toISOString(),
             }),
@@ -1008,6 +1021,25 @@ export default function App() {
         updateSession(message.payload.clientSessionId, (session) => ({
           ...session,
           permissions: session.permissions.filter((permission) => permission.requestId !== message.payload.requestId),
+        }));
+        break;
+      case "question_requested":
+        updateSession(message.payload.clientSessionId, (session) => ({
+          ...session,
+          questions: [...session.questions, message.payload],
+        }));
+        appendSessionTimeline(message.payload.clientSessionId, {
+          id: message.payload.questionId,
+          kind: "system",
+          title: "提问",
+          body: message.payload.question,
+          meta: "pending",
+        });
+        break;
+      case "question_answered":
+        updateSession(message.payload.clientSessionId, (session) => ({
+          ...session,
+          questions: session.questions.filter((q) => q.questionId !== message.payload.questionId),
         }));
         break;
       case "session_closed":
@@ -1224,6 +1256,17 @@ export default function App() {
         clientSessionId: permission.clientSessionId,
         requestId: permission.requestId,
         optionId,
+      },
+    });
+  }
+
+  function answerQuestion(question: QuestionPayload, answer: string) {
+    sendCommand({
+      type: "answer_question",
+      payload: {
+        clientSessionId: question.clientSessionId,
+        questionId: question.questionId,
+        answer,
       },
     });
   }
@@ -1564,45 +1607,63 @@ export default function App() {
           {activeSessionIsRunning ? (
             <div className="timeline-running-indicator" aria-live="polite">
               <span className="timeline-running-dot" aria-hidden="true" />
-              {activeSessionHasPendingPermission ? "等待待处理中..." : "正在运行中..."}
+              {activeSessionHasPendingPermission || activeSessionHasPendingQuestion ? "等待待处理中..." : "正在运行中..."}
             </div>
           ) : null}
         </div>
-        {activeSessionHasPendingPermission ? (
+        {activeSessionHasPendingPermission || activeSessionHasPendingQuestion ? (
           <div className="composer composer-pending-placeholder">
-            <p className="composer-pending-title">待处理确认</p>
-            <div className="composer-pending-list">
-              {activeSession?.permissions.map((permission) => {
-                return (
-                  <section className="composer-pending-item" key={permission.requestId}>
-                    <p className="composer-pending-tool">
-                      {summarizeToolTitle(
-                        permission.toolCall.title,
-                        permission.toolCall.rawInput,
-                        permission.toolCall.toolCallId,
-                      )}
-                    </p>
-                    <div className="composer-pending-actions">
-                      <button
-                        className="secondary"
-                        onClick={() => setPermissionDetail(permission)}
-                      >
-                        查看详情
-                      </button>
-                      {permission.options.map((option) => (
-                        <button
-                          key={option.optionId}
-                          className="secondary"
-                          onClick={() => resolvePermission(permission, option.optionId)}
-                        >
-                          {option.name}
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                );
-              })}
-            </div>
+            {activeSessionHasPendingPermission ? (
+              <>
+                <p className="composer-pending-title">待处理确认</p>
+                <div className="composer-pending-list">
+                  {activeSession?.permissions.map((permission) => {
+                    return (
+                      <section className="composer-pending-item" key={permission.requestId}>
+                        <p className="composer-pending-tool">
+                          {summarizeToolTitle(
+                            permission.toolCall.title,
+                            permission.toolCall.rawInput,
+                            permission.toolCall.toolCallId,
+                          )}
+                        </p>
+                        <div className="composer-pending-actions">
+                          <button
+                            className="secondary"
+                            onClick={() => setPermissionDetail(permission)}
+                          >
+                            查看详情
+                          </button>
+                          {permission.options.map((option) => (
+                            <button
+                              key={option.optionId}
+                              className="secondary"
+                              onClick={() => resolvePermission(permission, option.optionId)}
+                            >
+                              {option.name}
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+                    );
+                  })}
+                </div>
+              </>
+            ) : null}
+            {activeSessionHasPendingQuestion ? (
+              <>
+                <p className="composer-pending-title">待回答问题</p>
+                <div className="composer-pending-list">
+                  {activeSession?.questions.map((question) => (
+                    <QuestionPanel
+                      key={question.questionId}
+                      question={question}
+                      onAnswer={(answer) => answerQuestion(question, answer)}
+                    />
+                  ))}
+                </div>
+              </>
+            ) : null}
           </div>
         ) : (
           <div className="composer" ref={composerContainerRef}>
@@ -2688,7 +2749,7 @@ function toneForConnectionState(connectionState: string): "positive" | "negative
 }
 
 function isSessionRunning(session: SessionRecord) {
-  return session.busy || session.permissions.length > 0;
+  return session.busy || session.permissions.length > 0 || session.questions.length > 0;
 }
 
 function shouldKeepSessionRunningAfterPromptFinished(stopReason: string) {
@@ -2697,7 +2758,7 @@ function shouldKeepSessionRunningAfterPromptFinished(stopReason: string) {
 }
 
 function getSessionSidebarStatus(session: SessionRecord): SessionSidebarStatus | null {
-  if (session.permissions.length > 0) {
+  if (session.permissions.length > 0 || session.questions.length > 0) {
     return { label: "待处理", tone: "pending" };
   }
   if (isSessionRunning(session)) {
@@ -2990,6 +3051,7 @@ function normalizeSessionRecord(session: SessionRecord): SessionRecord {
     timeline: normalizeMergedTimeline(session.timeline.map(normalizeTimelineItem)),
     historyTotal: total,
     historyStart: start,
+    questions: Array.isArray(session.questions) ? session.questions : [],
     availableCommands: normalizeAvailableCommands(session.availableCommands),
   };
 }
@@ -3213,6 +3275,7 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
         ],
       },
     ],
+    questions: [],
     updatedAt: new Date().toISOString(),
   });
 
@@ -3279,6 +3342,7 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
       historyTotal: 1,
       historyStart: 0,
       permissions: [],
+      questions: [],
       updatedAt: new Date(Date.now() - sequence * 60_000).toISOString(),
     });
   });
@@ -3893,6 +3957,67 @@ function MessageModal(props: {
         </div>
       </div>
     </div>
+  );
+}
+
+function QuestionPanel(props: {
+  question: QuestionPayload;
+  onAnswer: (answer: string) => void;
+}) {
+  const [customAnswer, setCustomAnswer] = useState("");
+  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
+
+  function handleSubmitCustomAnswer() {
+    const trimmed = customAnswer.trim();
+    if (!trimmed) {
+      return;
+    }
+    props.onAnswer(trimmed);
+  }
+
+  return (
+    <section className="composer-pending-item question-panel">
+      <p className="composer-pending-tool question-text">{props.question.question}</p>
+      {props.question.options.length > 0 ? (
+        <div className="question-options">
+          {props.question.options.map((option) => (
+            <button
+              key={option.id}
+              className={`question-option-btn ${selectedOptionId === option.id ? "question-option-selected" : ""}`}
+              onClick={() => {
+                setSelectedOptionId(option.id);
+                props.onAnswer(option.label);
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {props.question.allowCustomAnswer || props.question.options.length === 0 ? (
+        <div className="question-custom-answer">
+          <input
+            type="text"
+            className="question-custom-input"
+            placeholder="输入自定义回答..."
+            value={customAnswer}
+            onChange={(event) => setCustomAnswer(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                handleSubmitCustomAnswer();
+              }
+            }}
+          />
+          <button
+            className="secondary"
+            onClick={handleSubmitCustomAnswer}
+            disabled={!customAnswer.trim()}
+          >
+            提交
+          </button>
+        </div>
+      ) : null}
+    </section>
   );
 }
 

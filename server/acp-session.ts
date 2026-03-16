@@ -6,6 +6,17 @@ import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type * as schema from "@agentclientprotocol/sdk/dist/schema/types.gen.js";
 
+export type AskQuestionOption = {
+  id: string;
+  label: string;
+};
+
+export type AskQuestionParams = {
+  question: string;
+  options: AskQuestionOption[];
+  allowCustomAnswer: boolean;
+};
+
 export type ServerEvent =
   | { type: "ready"; payload: { workspacePath: string; agentConnected: boolean } }
   | {
@@ -28,10 +39,28 @@ export type ServerEvent =
       };
     }
   | { type: "permission_resolved"; payload: { requestId: string; optionId: string } }
+  | {
+      type: "question_requested";
+      payload: {
+        questionId: string;
+        question: string;
+        options: AskQuestionOption[];
+        allowCustomAnswer: boolean;
+      };
+    }
+  | {
+      type: "question_answered";
+      payload: { questionId: string; answer: string };
+    }
   | { type: "error"; payload: { message: string } };
 
 type PendingPermission = {
   resolve: (value: schema.RequestPermissionResponse) => void;
+  reject: (reason?: unknown) => void;
+};
+
+type PendingQuestion = {
+  resolve: (value: Record<string, unknown>) => void;
   reject: (reason?: unknown) => void;
 };
 
@@ -46,6 +75,7 @@ export class ClaudeAcpSession {
   private readonly agentBinPath: string;
   private readonly onEvent: (event: ServerEvent) => void;
   private readonly pendingPermissions = new Map<string, PendingPermission>();
+  private readonly pendingQuestions = new Map<string, PendingQuestion>();
 
   private agentProcess: ChildProcessWithoutNullStreams | null = null;
   private connection: acp.ClientSideConnection | null = null;
@@ -95,6 +125,7 @@ export class ClaudeAcpSession {
         this.connectPromise = null;
         this.activePrompt = false;
         this.rejectPendingPermissions(new Error("Permission request cancelled because ACP agent exited."));
+        this.rejectPendingQuestions(new Error("Question cancelled because ACP agent exited."));
         this.onEvent({
           type: "error",
           payload: { message: `Claude ACP agent exited (${code ?? "null"} / ${signal ?? "null"}).` },
@@ -120,6 +151,7 @@ export class ClaudeAcpSession {
           await writeFile(filePath, params.content, "utf8");
           return {};
         },
+        extMethod: async (method, params) => this.handleExtMethod(method, params),
       };
 
       this.connection = new acp.ClientSideConnection(() => client, stream);
@@ -310,8 +342,20 @@ export class ClaudeAcpSession {
     this.onEvent({ type: "permission_resolved", payload: { requestId, optionId } });
   }
 
+  async answerQuestion(questionId: string, answer: string) {
+    const pending = this.pendingQuestions.get(questionId);
+    if (!pending) {
+      throw new Error("Question was not found or already answered.");
+    }
+
+    pending.resolve({ answer });
+    this.pendingQuestions.delete(questionId);
+    this.onEvent({ type: "question_answered", payload: { questionId, answer } });
+  }
+
   async dispose() {
     this.rejectPendingPermissions(new Error("Client disconnected."));
+    this.rejectPendingQuestions(new Error("Client disconnected."));
     if (this.agentProcess && !this.agentProcess.killed) {
       this.agentProcess.kill();
     }
@@ -368,6 +412,53 @@ export class ClaudeAcpSession {
       pending.reject(reason);
     }
     this.pendingPermissions.clear();
+  }
+
+  private rejectPendingQuestions(reason: Error) {
+    for (const pending of this.pendingQuestions.values()) {
+      pending.reject(reason);
+    }
+    this.pendingQuestions.clear();
+  }
+
+  private async handleExtMethod(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (method === "leduo/ask_question") {
+      return await this.handleAskQuestion(params);
+    }
+    throw new Error(`Unknown extension method: ${method}`);
+  }
+
+  private async handleAskQuestion(
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const questionId = randomUUID();
+    const question = typeof params.question === "string" ? params.question : "";
+    const rawOptions = Array.isArray(params.options) ? params.options : [];
+    const options: AskQuestionOption[] = rawOptions
+      .map((opt) => {
+        if (opt && typeof opt === "object" && !Array.isArray(opt)) {
+          const record = opt as Record<string, unknown>;
+          return {
+            id: typeof record.id === "string" ? record.id : "",
+            label: typeof record.label === "string" ? record.label : "",
+          };
+        }
+        return null;
+      })
+      .filter((opt): opt is AskQuestionOption => opt !== null && opt.id !== "" && opt.label !== "");
+    const allowCustomAnswer = params.allowCustomAnswer === true;
+
+    this.onEvent({
+      type: "question_requested",
+      payload: { questionId, question, options, allowCustomAnswer },
+    });
+
+    return await new Promise<Record<string, unknown>>((resolve, reject) => {
+      this.pendingQuestions.set(questionId, { resolve, reject });
+    });
   }
 
   private resolveWorkspacePath(targetPath: string) {

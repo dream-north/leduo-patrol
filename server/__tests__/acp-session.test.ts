@@ -71,3 +71,105 @@ test("ClaudeAcpSession.resolvePermission forwards optional note via _meta", asyn
     },
   });
 });
+
+test("ClaudeAcpSession.answerQuestion rejects unknown question", async () => {
+  const session = makeSession();
+  await assert.rejects(() => session.answerQuestion("missing", "yes"), /not found|already answered/);
+});
+
+test("ClaudeAcpSession.answerQuestion resolves pending question with answer", async () => {
+  const session = makeSession();
+  const calls: unknown[] = [];
+  (session as any).pendingQuestions.set("q-1", {
+    resolve: (value: unknown) => calls.push(value),
+    reject: () => undefined,
+  });
+
+  await session.answerQuestion("q-1", "选项A");
+
+  assert.deepEqual(calls[0], { answer: "选项A" });
+  assert.equal((session as any).pendingQuestions.size, 0);
+});
+
+test("ClaudeAcpSession.answerQuestion emits question_answered event", async () => {
+  const events: unknown[] = [];
+  const session = new ClaudeAcpSession({
+    workspacePath: "/tmp/workspace",
+    agentBinPath: "claude",
+    onEvent: (event) => events.push(event),
+  });
+  (session as any).pendingQuestions.set("q-2", {
+    resolve: () => undefined,
+    reject: () => undefined,
+  });
+
+  await session.answerQuestion("q-2", "自定义回答");
+
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0], {
+    type: "question_answered",
+    payload: { questionId: "q-2", answer: "自定义回答" },
+  });
+});
+
+test("ClaudeAcpSession.handleExtMethod routes leduo/ask_question", async () => {
+  const events: unknown[] = [];
+  const session = new ClaudeAcpSession({
+    workspacePath: "/tmp/workspace",
+    agentBinPath: "claude",
+    onEvent: (event) => events.push(event),
+  });
+
+  const resultPromise = (session as any).handleExtMethod("leduo/ask_question", {
+    question: "选择颜色",
+    options: [
+      { id: "red", label: "红色" },
+      { id: "blue", label: "蓝色" },
+    ],
+    allowCustomAnswer: true,
+  });
+
+  // Verify event was emitted
+  assert.equal(events.length, 1);
+  const event = events[0] as any;
+  assert.equal(event.type, "question_requested");
+  assert.equal(event.payload.question, "选择颜色");
+  assert.equal(event.payload.options.length, 2);
+  assert.equal(event.payload.allowCustomAnswer, true);
+
+  // Simulate user answering the question
+  const questionId = event.payload.questionId;
+  await session.answerQuestion(questionId, "红色");
+
+  const result = await resultPromise;
+  assert.deepEqual(result, { answer: "红色" });
+});
+
+test("ClaudeAcpSession.handleExtMethod rejects unknown method", async () => {
+  const session = makeSession();
+  await assert.rejects(
+    () => (session as any).handleExtMethod("unknown/method", {}),
+    /Unknown extension method/,
+  );
+});
+
+test("ClaudeAcpSession.handleExtMethod handles missing options gracefully", async () => {
+  const events: unknown[] = [];
+  const session = new ClaudeAcpSession({
+    workspacePath: "/tmp/workspace",
+    agentBinPath: "claude",
+    onEvent: (event) => events.push(event),
+  });
+
+  const resultPromise = (session as any).handleExtMethod("leduo/ask_question", {
+    question: "你的名字是？",
+  });
+
+  const event = events[0] as any;
+  assert.equal(event.payload.options.length, 0);
+  assert.equal(event.payload.allowCustomAnswer, false);
+
+  await session.answerQuestion(event.payload.questionId, "张三");
+  const result = await resultPromise;
+  assert.deepEqual(result, { answer: "张三" });
+});
