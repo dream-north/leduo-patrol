@@ -146,7 +146,7 @@ test("SessionManager.setSessionMode updates default and current mode together", 
 });
 
 
-test("sessionManagerTestables.enrichPromptWithToolHints appends ask_question hint", () => {
+test("sessionManagerTestables.enrichPromptWithToolHints appends leduo/ask_question hint", () => {
   const enriched = sessionManagerTestables.enrichPromptWithToolHints("请读取配置并写回");
   assert.ok(enriched.startsWith("请读取配置并写回"));
   assert.ok(enriched.includes("leduo/ask_question"));

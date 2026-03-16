@@ -151,6 +151,8 @@ export class ClaudeAcpSession {
           await writeFile(filePath, params.content, "utf8");
           return {};
         },
+        // Handles custom extension methods called by the agent (e.g. "leduo/ask_question").
+        // The ACP SDK routes any unrecognized method to this handler.
         extMethod: async (method, params) => this.handleExtMethod(method, params),
       };
 
