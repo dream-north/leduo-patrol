@@ -19,6 +19,7 @@ function makeSession(overrides: Partial<SidebarSession> = {}): SidebarSession {
     historyTotal: 0,
     historyStart: 0,
     permissions: [],
+    questions: [],
     updatedAt: "2026-03-11T00:00:00.000Z",
     ...overrides,
   };
@@ -111,6 +112,23 @@ test("app session sidebar status handles running, completed, error, connecting",
     tone: "connecting",
   });
   assert.equal(appTestables.getSessionSidebarStatus(makeSession()), null);
+});
+
+test("app session sidebar status shows pending for questions", () => {
+  const status = appTestables.getSessionSidebarStatus(
+    makeSession({
+      questions: [
+        {
+          clientSessionId: "s1",
+          questionId: "q1",
+          question: "选择颜色",
+          options: [{ id: "red", label: "红色" }],
+          allowCustomAnswer: false,
+        },
+      ],
+    }),
+  );
+  assert.deepEqual(status, { label: "待处理", tone: "pending" });
 });
 
 test("app relative updatedAt formatter uses minute hour and day buckets", () => {

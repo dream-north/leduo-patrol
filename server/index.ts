@@ -21,6 +21,7 @@ type ClientCommand =
   | { type: "set_mode"; payload: { clientSessionId: string; modeId: string } }
   | { type: "cancel"; payload: { clientSessionId: string } }
   | { type: "permission"; payload: { clientSessionId: string; requestId: string; optionId: string; note?: string } }
+  | { type: "answer_question"; payload: { clientSessionId: string; questionId: string; answer: string } }
   | { type: "close_session"; payload: { clientSessionId: string } }
   | { type: "shell_start"; payload: { clientSessionId: string; cols: number; rows: number } }
   | { type: "shell_input"; payload: { data: string } }
@@ -257,6 +258,13 @@ wss.on("connection", (socket, request) => {
             message.payload.requestId,
             message.payload.optionId,
             message.payload.note,
+          );
+          break;
+        case "answer_question":
+          await sessionManager.answerQuestion(
+            message.payload.clientSessionId,
+            message.payload.questionId,
+            message.payload.answer,
           );
           break;
         case "close_session":

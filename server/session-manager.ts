@@ -19,6 +19,14 @@ export type PermissionSnapshot = {
   options: Array<{ optionId: string; name: string; kind: string }>;
 };
 
+export type QuestionSnapshot = {
+  clientSessionId: string;
+  questionId: string;
+  question: string;
+  options: Array<{ id: string; label: string }>;
+  allowCustomAnswer: boolean;
+};
+
 export type AvailableCommandSnapshot = {
   name: string;
   description: string;
@@ -39,6 +47,7 @@ export type SessionSnapshot = {
   historyTotal: number;
   historyStart: number;
   permissions: PermissionSnapshot[];
+  questions: QuestionSnapshot[];
   availableCommands: AvailableCommandSnapshot[];
   updatedAt: string;
 };
@@ -128,6 +137,7 @@ export class SessionManager {
         historyTotal: 0,
         historyStart: 0,
         permissions: [],
+        questions: [],
         availableCommands: normalizeAvailableCommandsSnapshot(snapshot.availableCommands),
       };
       this.sessions.set(restoredSnapshot.clientSessionId, {
@@ -213,6 +223,7 @@ export class SessionManager {
       historyTotal: 0,
       historyStart: 0,
       permissions: [],
+      questions: [],
       availableCommands: [],
       updatedAt: new Date().toISOString(),
     };
@@ -281,6 +292,10 @@ export class SessionManager {
 
   async resolvePermission(clientSessionId: string, requestId: string, optionId: string, note?: string) {
     await this.getEntry(clientSessionId).acpSession?.resolvePermission(requestId, optionId, note);
+  }
+
+  async answerQuestion(clientSessionId: string, questionId: string, answer: string) {
+    await this.getEntry(clientSessionId).acpSession?.answerQuestion(questionId, answer);
   }
 
   async closeSession(clientSessionId: string) {
@@ -449,6 +464,32 @@ export class SessionManager {
       case "permission_resolved":
         entry.snapshot.permissions = entry.snapshot.permissions.filter(
           (permission) => permission.requestId !== event.payload.requestId,
+        );
+        break;
+      case "question_requested": {
+        const questionSnapshot: QuestionSnapshot = {
+          clientSessionId,
+          questionId: event.payload.questionId,
+          question: event.payload.question,
+          options: event.payload.options.map((opt) => ({
+            id: opt.id,
+            label: opt.label,
+          })),
+          allowCustomAnswer: event.payload.allowCustomAnswer,
+        };
+        entry.snapshot.questions.push(questionSnapshot);
+        this.appendTimeline(entry, {
+          id: event.payload.questionId,
+          kind: "system",
+          title: "提问",
+          body: event.payload.question,
+          meta: "pending",
+        });
+        break;
+      }
+      case "question_answered":
+        entry.snapshot.questions = entry.snapshot.questions.filter(
+          (q) => q.questionId !== event.payload.questionId,
         );
         break;
       case "error":
@@ -805,9 +846,22 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
+const PROMPT_HINTS = [
+  "[ACP Tool] mcp__acp__Read — 读取文件内容。参数：{ path: string }（绝对路径）。",
+  "[ACP Tool] mcp__acp__Write — 写入文件（如果文件已存在需要先读取）。参数：{ path: string, content: string }（绝对路径）。",
+  "[ACP Tool] mcp__acp__Edit — 编辑文件（必须先用 mcp__acp__Read 读取后才能编辑）。参数：{ path: string, old_string: string, new_string: string }（绝对路径）。",
+  "[Extension] 当你需要向用户提问（例如选择方案、确认操作、获取额外信息）时，" +
+    "请调用扩展方法 leduo/ask_question，参数格式：" +
+    '{ "question": "你的问题", "options": [{ "id": "a", "label": "选项A" }, { "id": "b", "label": "选项B" }], "allowCustomAnswer": true }。' +
+    "返回 { answer: string }。如果设置 allowCustomAnswer 为 true，用户可以输入自定义回答。",
+].join("\n");
+
 function enrichPromptWithToolHints(text: string) {
   const normalized = text.trim();
-  return normalized || text;
+  if (!normalized) {
+    return text;
+  }
+  return `${normalized}\n\n${PROMPT_HINTS}`;
 }
 
 function formatEditToolChangeMessage(message: string) {
