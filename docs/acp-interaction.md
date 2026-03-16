@@ -510,17 +510,21 @@ type QuestionSnapshot = {
 
 | 文件 | 关键位置 | 功能 |
 |------|---------|------|
-| `server/acp-session.ts:144-148` | Client 接口注册 | 注册 readTextFile / writeTextFile / requestPermission / extMethod |
-| `server/acp-session.ts:155-172` | clientCapabilities | 声明 fs 能力和自定义扩展 |
-| `server/acp-session.ts:477-508` | handleReadTextFile / handleWriteTextFile | 文件读写实现 |
-| `server/acp-session.ts:395-412` | handlePermissionRequest | 创建 Promise 等待用户审批 |
-| `server/acp-session.ts:332-347` | resolvePermission | 解决权限请求（含 _meta.note） |
-| `server/session-manager.ts:454-487` | permission_requested 处理 | 检测 AskUserQuestion 并转换 |
-| `server/session-manager.ts:300-324` | answerQuestion | 反向映射：question → permission |
-| `server/session-manager.ts:615-656` | tool_call/tool_call_update | 兜底：检测 AskUserQuestion |
-| `server/session-manager.ts:871-874` | normalizeAcpToolTitle | 剥离 mcp\_\_acp\_\_ 前缀 |
-| `server/session-manager.ts:1093-1098` | isAskUserQuestionTitle | 判断是否为 AskUserQuestion |
-| `server/index.ts:255-268` | WebSocket 消息路由 | 分发 permission / answer_question |
-| `src/App.tsx:1136-1154` | question_requested 处理 | 渲染 QuestionPanel |
-| `src/App.tsx:1373-1381` | answerQuestion | 发送回答命令 |
-| `src/App.tsx:4219` | QuestionPanel 组件 | 问答面板 UI |
+| `server/acp-session.ts` | L142–150 | Client 接口注册（readTextFile / writeTextFile / requestPermission / extMethod） |
+| `server/acp-session.ts` | L157–174 | clientCapabilities 声明（fs 能力 + 自定义扩展） |
+| `server/acp-session.ts` | L477–496 | handleReadTextFile — 文件读取实现 |
+| `server/acp-session.ts` | L498–508 | handleWriteTextFile — 文件写入实现 |
+| `server/acp-session.ts` | L395–412 | handlePermissionRequest — 创建 Promise 等待用户审批 |
+| `server/acp-session.ts` | L332–347 | resolvePermission — 解决权限请求（含 \_meta.note） |
+| `server/session-manager.ts` | L454–487 | permission\_requested 处理 — 检测 AskUserQuestion 并转换为问答流 |
+| `server/session-manager.ts` | L300–324 | answerQuestion — 反向映射：question → permission |
+| `server/session-manager.ts` | L615–656 | tool\_call / tool\_call\_update — 兜底检测 AskUserQuestion |
+| `server/session-manager.ts` | L871–874 | normalizeAcpToolTitle — 剥离 mcp\_\_acp\_\_ 前缀 |
+| `server/session-manager.ts` | L1125–1128 | isAskUserQuestionTitle — 判断是否为 AskUserQuestion |
+| `server/index.ts` | L255–268 | WebSocket 消息路由 — 分发 permission / answer\_question |
+| `src/App.tsx` | L1136–1154 | question\_requested 处理 — 添加到 session.questions 列表 |
+| `src/App.tsx` | L1373–1381 | answerQuestion — 发送回答命令到 WebSocket |
+| `src/App.tsx` | L4219 | QuestionPanel 组件 — 问答面板 UI |
+
+> **注意**：上述行号基于当前代码版本，后续代码变更可能导致行号偏移。
+> 建议搜索函数名或关键标识符来定位。
