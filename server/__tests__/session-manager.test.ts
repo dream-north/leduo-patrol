@@ -522,3 +522,56 @@ test("handleSessionEvent: AskUserQuestion tool_call_update with failed status sh
   // The meta should be "completed", not "failed"
   assert.equal(lastItem.meta, "completed");
 });
+
+test("handleSessionEvent: AskUserQuestion tool_call_update without title uses _meta.claudeCode.toolName fallback", () => {
+  const manager = new SessionManager({ allowedRoots: [process.cwd()], agentBinPath: "claude" });
+
+  (manager as any).sessions.set("s1", {
+    snapshot: {
+      clientSessionId: "s1",
+      title: "demo",
+      workspacePath: process.cwd(),
+      connectionState: "connected",
+      sessionId: "x",
+      modes: [],
+      defaultModeId: "default",
+      currentModeId: "default",
+      busy: true,
+      timeline: [],
+      historyTotal: 0,
+      historyStart: 0,
+      permissions: [],
+      questions: [],
+      availableCommands: [],
+      updatedAt: new Date().toISOString(),
+    },
+    acpSession: null,
+    connectPromise: null,
+    fullTimeline: [],
+  });
+
+  // Real ACP tool_call_update for AskUserQuestion: title is absent,
+  // but _meta.claudeCode.toolName is "AskUserQuestion".  The status
+  // override should still fire.
+  (manager as any).handleSessionEvent("s1", {
+    type: "session_update",
+    payload: {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "tc-ask-2",
+      // no title field — this is what actually happens in production
+      status: "failed",
+      rawOutput: "红色",
+      _meta: {
+        claudeCode: {
+          toolName: "AskUserQuestion",
+        },
+      },
+    },
+  });
+
+  const entry = (manager as any).sessions.get("s1");
+  assert.ok(entry.fullTimeline.length > 0, "timeline should have at least one entry");
+  const lastItem = entry.fullTimeline[entry.fullTimeline.length - 1];
+  // The meta should be "completed", not "failed"
+  assert.equal(lastItem.meta, "completed");
+});

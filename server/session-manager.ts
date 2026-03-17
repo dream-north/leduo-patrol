@@ -707,7 +707,13 @@ export class SessionManager {
       }
       case "tool_call":
       case "tool_call_update": {
-        const normalizedTitle = normalizeAcpToolTitle(update.title) || undefined;
+        // tool_call_update events for error/deny results may lack a `title`
+        // field (toolUpdateFromToolResult returns early without one).  Fall
+        // back to `_meta.claudeCode.toolName` which the ACP agent always
+        // includes so we can still detect tools like AskUserQuestion.
+        const claudeCodeMeta = asRecord(asRecord(update._meta)?.claudeCode);
+        const metaToolName = typeof claudeCodeMeta?.toolName === "string" ? claudeCodeMeta.toolName : undefined;
+        const normalizedTitle = normalizeAcpToolTitle(update.title) || normalizeAcpToolTitle(metaToolName) || undefined;
 
         // AskUserQuestion tool_call notifications arrive as stream events
         // BEFORE the corresponding permission_requested event from

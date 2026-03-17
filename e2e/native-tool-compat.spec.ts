@@ -105,12 +105,14 @@ test("Read + Write + AskUserQuestion all visible seamlessly", async ({ page }) =
 test("AskUserQuestion multi-question form enables submit after all answered", async ({ page }) => {
   await goDemo(page);
 
-  // Close any demo modals by clicking their backdrops
-  const backdrops = page.locator(".modal-backdrop");
-  const count = await backdrops.count();
-  for (let i = count - 1; i >= 0; i--) {
-    // Click the backdrop at (1,1) to avoid hitting inner content
-    await backdrops.nth(i).click({ position: { x: 1, y: 1 }, force: true });
+  // Close any demo modals that might overlap the question form.
+  // The demo may open a "新建会話" modal and/or a permission detail modal.
+  // Use force:true because modals may stack on top of each other.
+  for (const label of ["取消", "关闭"]) {
+    const btn = page.locator(".modal-backdrop").getByRole("button", { name: label });
+    if (await btn.count() > 0) {
+      await btn.first().click({ force: true });
+    }
   }
 
   const form = page.locator(".multi-question-form");
