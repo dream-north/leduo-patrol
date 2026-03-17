@@ -457,7 +457,10 @@ test("handleSessionEvent: AskUserQuestion permission_requested with questions ar
   assert.equal(entry.snapshot.questions[0].options.length, 2);
   assert.equal(entry.snapshot.questions[0].options[0].label, "已排序");
   assert.equal(entry.snapshot.questions[0].options[0].description, "直接取第一个");
-  assert.equal(entry.snapshot.questions[0].allowCustomAnswer, false);
+  assert.equal(entry.snapshot.questions[0].allowCustomAnswer, true);
+  // All questions in the same AskUserQuestion call should share a groupId
+  assert.ok(entry.snapshot.questions[0].groupId, "should have a groupId");
+  assert.equal(entry.snapshot.questions[0].groupId, entry.snapshot.questions[1].groupId);
   assert.equal(entry.snapshot.questions[1].question, "选择哪种状态的作业？");
   assert.equal(entry.snapshot.questions[1].header, "状态");
   assert.equal(entry.snapshot.questions[1].options.length, 2);

@@ -50,6 +50,7 @@ type PermissionPayload = {
 type QuestionPayload = {
   clientSessionId: string;
   questionId: string;
+  groupId?: string;
   question: string;
   header?: string;
   options: Array<{ id: string; label: string; description?: string }>;
@@ -1371,13 +1372,23 @@ export default function App() {
     });
   }
 
-  function answerQuestion(question: QuestionPayload, answer: string) {
+  function answerQuestionGroup(questions: QuestionPayload[], answers: Record<string, string>) {
+    // Format a structured answer with all Q&A pairs
+    const lines = questions.map((q) => {
+      const answer = answers[q.questionId] ?? "";
+      const prefix = q.header ? `【${q.header}】` : "";
+      return `${prefix}${q.question}\n→ ${answer}`;
+    });
+    const formattedAnswer = lines.join("\n\n");
+
+    // Send the combined answer using the first questionId.
+    // The server resolves the underlying permission for all siblings.
     sendCommand({
       type: "answer_question",
       payload: {
-        clientSessionId: question.clientSessionId,
-        questionId: question.questionId,
-        answer,
+        clientSessionId: questions[0].clientSessionId,
+        questionId: questions[0].questionId,
+        answer: formattedAnswer,
       },
     });
   }
@@ -1787,11 +1798,11 @@ export default function App() {
               <>
                 <p className="composer-pending-title">待回答问题</p>
                 <div className="composer-pending-list">
-                  {activeSession?.questions.map((question) => (
-                    <QuestionPanel
-                      key={question.questionId}
-                      question={question}
-                      onAnswer={(answer) => answerQuestion(question, answer)}
+                  {groupQuestionsByGroup(activeSession?.questions ?? []).map((group) => (
+                    <MultiQuestionForm
+                      key={group[0].groupId ?? group[0].questionId}
+                      questions={group}
+                      onSubmit={(answers) => answerQuestionGroup(group, answers)}
                     />
                   ))}
                 </div>
@@ -3553,6 +3564,7 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
       {
         clientSessionId: "demo-subagent-tree",
         questionId: "demo-question-1",
+        groupId: "demo-question-group-1",
         question: "GetVolumeJob 接口返回的作业列表是否已按时间排序？这会影响实现复杂度。",
         header: "作业排序",
         options: [
@@ -3560,11 +3572,12 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
           { id: "未排序", label: "未排序", description: "需要查询所有作业详情并按 create_time 排序，确保准确性" },
           { id: "不确定", label: "不确定", description: "不确定接口行为，按未排序处理以确保正确性" },
         ],
-        allowCustomAnswer: false,
+        allowCustomAnswer: true,
       },
       {
         clientSessionId: "demo-subagent-tree",
         questionId: "demo-question-2",
+        groupId: "demo-question-group-1",
         question: "应该选择哪种状态的作业作为\u201c最近一次扫描\u201d？",
         header: "作业状态",
         options: [
@@ -3572,18 +3585,19 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
           { id: "优先已完成", label: "优先已完成", description: "优先选已完成的，如果没有则选正在运行的作业" },
           { id: "选最新的", label: "选最新的", description: "选择创建时间最新的作业，无论状态如何" },
         ],
-        allowCustomAnswer: false,
+        allowCustomAnswer: true,
       },
       {
         clientSessionId: "demo-subagent-tree",
         questionId: "demo-question-3",
+        groupId: "demo-question-group-1",
         question: "错误类型参数是否必须指定？",
         header: "错误类型",
         options: [
           { id: "必须指定", label: "必须指定 (Recommended)", description: "用户必须指定错误类型，命令简单明确" },
           { id: "可选参数", label: "可选参数", description: "错误类型可选，不指定时显示所有错误类型的汇总" },
         ],
-        allowCustomAnswer: false,
+        allowCustomAnswer: true,
       },
     ],
     updatedAt: new Date().toISOString(),
@@ -4259,66 +4273,133 @@ function MessageModal(props: {
   );
 }
 
-function QuestionPanel(props: {
-  question: QuestionPayload;
-  onAnswer: (answer: string) => void;
-}) {
-  const [customAnswer, setCustomAnswer] = useState("");
+/** Group questions by groupId so related questions are answered together. */
+function groupQuestionsByGroup(questions: QuestionPayload[]): QuestionPayload[][] {
+  const groups: Map<string, QuestionPayload[]> = new Map();
+  for (const q of questions) {
+    const key = q.groupId ?? q.questionId; // ungrouped questions are their own group
+    const list = groups.get(key) ?? [];
+    list.push(q);
+    groups.set(key, list);
+  }
+  return [...groups.values()];
+}
 
-  function handleSubmitCustomAnswer() {
-    const trimmed = customAnswer.trim();
-    if (!trimmed) {
-      return;
+/**
+ * Multi-question form: renders all questions from one AskUserQuestion call.
+ * The user selects/types an answer for EACH question, then submits ALL at once.
+ */
+function MultiQuestionForm(props: {
+  questions: QuestionPayload[];
+  onSubmit: (answers: Record<string, string>) => void;
+}) {
+  // Track the selected answer per questionId
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  // Track which questions are in "custom input" mode
+  const [customMode, setCustomMode] = useState<Record<string, boolean>>({});
+  // Track custom input text per questionId
+  const [customTexts, setCustomTexts] = useState<Record<string, string>>({});
+
+  const allAnswered = props.questions.every((q) => {
+    const ans = answers[q.questionId];
+    return ans !== undefined && ans !== "";
+  });
+
+  function selectOption(questionId: string, label: string) {
+    setAnswers((prev) => ({ ...prev, [questionId]: label }));
+    setCustomMode((prev) => ({ ...prev, [questionId]: false }));
+  }
+
+  function toggleCustom(questionId: string) {
+    setCustomMode((prev) => ({ ...prev, [questionId]: true }));
+    // Clear the option selection; the custom text becomes the answer
+    setAnswers((prev) => {
+      const next = { ...prev };
+      delete next[questionId];
+      return next;
+    });
+  }
+
+  function setCustomText(questionId: string, text: string) {
+    setCustomTexts((prev) => ({ ...prev, [questionId]: text }));
+    if (text.trim()) {
+      setAnswers((prev) => ({ ...prev, [questionId]: text.trim() }));
+    } else {
+      setAnswers((prev) => {
+        const next = { ...prev };
+        delete next[questionId];
+        return next;
+      });
     }
-    props.onAnswer(trimmed);
+  }
+
+  function handleSubmit() {
+    if (!allAnswered) return;
+    props.onSubmit(answers);
   }
 
   return (
-    <section className="composer-pending-item question-panel">
-      {props.question.header ? (
-        <p className="question-header">{props.question.header}</p>
-      ) : null}
-      <p className="composer-pending-tool question-text">{props.question.question}</p>
-      {props.question.options.length > 0 ? (
-        <div className="question-options">
-          {props.question.options.map((option) => (
-            <button
-              key={option.id}
-              className="question-option-btn"
-              onClick={() => props.onAnswer(option.label)}
-              title={option.description}
-            >
-              <span className="question-option-label">{option.label}</span>
-              {option.description ? (
-                <span className="question-option-desc">{option.description}</span>
-              ) : null}
-            </button>
-          ))}
-        </div>
-      ) : null}
-      {props.question.allowCustomAnswer || props.question.options.length === 0 ? (
-        <div className="question-custom-answer">
-          <input
-            type="text"
-            className="question-custom-input"
-            placeholder="输入自定义回答..."
-            value={customAnswer}
-            onChange={(event) => setCustomAnswer(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                handleSubmitCustomAnswer();
-              }
-            }}
-          />
-          <button
-            className="secondary"
-            onClick={handleSubmitCustomAnswer}
-            disabled={!customAnswer.trim()}
-          >
-            提交
-          </button>
-        </div>
-      ) : null}
+    <section className="multi-question-form">
+      {props.questions.map((q) => {
+        const selectedAnswer = answers[q.questionId];
+        const isCustom = customMode[q.questionId] ?? false;
+        return (
+          <div key={q.questionId} className="question-panel" data-question-id={q.questionId}>
+            {q.header ? <p className="question-header">{q.header}</p> : null}
+            <p className="question-text">{q.question}</p>
+            {q.options.length > 0 ? (
+              <div className="question-options">
+                {q.options.map((option) => (
+                  <button
+                    key={option.id}
+                    className={
+                      "question-option-btn" +
+                      (selectedAnswer === option.label && !isCustom ? " selected" : "")
+                    }
+                    onClick={() => selectOption(q.questionId, option.label)}
+                    title={option.description}
+                  >
+                    <span className="question-option-label">{option.label}</span>
+                    {option.description ? (
+                      <span className="question-option-desc">{option.description}</span>
+                    ) : null}
+                  </button>
+                ))}
+                {/* Always show custom input toggle */}
+                <button
+                  className={"question-option-btn question-custom-toggle" + (isCustom ? " selected" : "")}
+                  onClick={() => toggleCustom(q.questionId)}
+                >
+                  <span className="question-option-label">✏️ 自定义回答</span>
+                </button>
+              </div>
+            ) : null}
+            {isCustom || q.options.length === 0 ? (
+              <div className="question-custom-answer">
+                <input
+                  type="text"
+                  className="question-custom-input"
+                  placeholder="输入自定义回答..."
+                  value={customTexts[q.questionId] ?? ""}
+                  onChange={(event) => setCustomText(q.questionId, event.target.value)}
+                />
+              </div>
+            ) : null}
+            {selectedAnswer && !isCustom ? (
+              <p className="question-selected-answer">✓ 已选：{selectedAnswer}</p>
+            ) : null}
+          </div>
+        );
+      })}
+      <button
+        className="question-submit-all"
+        onClick={handleSubmit}
+        disabled={!allAnswered}
+      >
+        {allAnswered
+          ? `提交全部 ${props.questions.length} 个回答`
+          : `请回答所有问题 (${Object.keys(answers).filter((k) => answers[k]).length}/${props.questions.length})`}
+      </button>
     </section>
   );
 }
@@ -4648,4 +4729,5 @@ export const appTestables = {
   parseExecutionPlanSteps,
   truncateUnknownText,
   shouldKeepSessionRunningAfterPromptFinished,
+  groupQuestionsByGroup,
 };

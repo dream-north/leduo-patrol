@@ -45,33 +45,38 @@ test("native Write tool renders with completed status in timeline", async ({ pag
   await captureFull(page, "docs/screenshots/e2e-native-write-tool.png");
 });
 
-// ─── AskUserQuestion renders as Question panel (seamless handling) ───────────────
-test("AskUserQuestion renders question panel with options", async ({ page }) => {
+// ─── AskUserQuestion renders grouped multi-question form ─────────────────────────
+test("AskUserQuestion renders grouped multi-question form with all 3 questions", async ({ page }) => {
   await goDemo(page);
 
-  // The demo data includes 3 questions from the real-world AskUserQuestion format
-  const questionPanel = page.locator(".question-panel");
-  await expect(questionPanel.first()).toBeVisible({ timeout: 5000 });
+  // Should have exactly 1 multi-question form (all 3 questions grouped)
+  const form = page.locator(".multi-question-form");
+  await expect(form).toBeVisible({ timeout: 5000 });
 
-  // Check headers are shown
-  const headerEl = page.locator(".question-header", { hasText: "作业排序" });
-  await expect(headerEl.first()).toBeVisible();
+  // Should have 3 question panels inside the form
+  const questionPanels = form.locator(".question-panel");
+  await expect(questionPanels).toHaveCount(3);
 
-  // Check the question text
-  const questionText = page.locator(".question-text", { hasText: "接口返回的作业列表" });
-  await expect(questionText.first()).toBeVisible();
+  // Verify headers
+  await expect(form.locator(".question-header", { hasText: "作业排序" })).toBeVisible();
+  await expect(form.locator(".question-header", { hasText: "作业状态" })).toBeVisible();
+  await expect(form.locator(".question-header", { hasText: "错误类型" })).toBeVisible();
 
-  // Check that option buttons with descriptions are shown
-  const optionBtns = page.locator(".question-option-btn");
-  await expect(optionBtns.first()).toBeVisible();
-  const optionLabel = page.locator(".question-option-label", { hasText: "已排序" });
-  await expect(optionLabel.first()).toBeVisible();
-  const optionDesc = page.locator(".question-option-desc");
-  await expect(optionDesc.first()).toBeVisible();
+  // Verify question texts
+  await expect(form.locator(".question-text", { hasText: "接口返回的作业列表" })).toBeVisible();
 
-  // With allowCustomAnswer=false, custom input should NOT be visible
-  const customInput = page.locator(".question-custom-input");
-  await expect(customInput).toHaveCount(0);
+  // Verify option buttons with descriptions are shown
+  await expect(form.locator(".question-option-label", { hasText: "已排序" }).first()).toBeVisible();
+  await expect(form.locator(".question-option-desc").first()).toBeVisible();
+
+  // Each question should have a custom input toggle
+  const customToggles = form.locator(".question-custom-toggle");
+  await expect(customToggles).toHaveCount(3);
+
+  // Submit button should be disabled until all questions are answered
+  const submitBtn = form.locator(".question-submit-all");
+  await expect(submitBtn).toBeDisabled();
+  await expect(submitBtn).toContainText("请回答所有问题");
 
   await captureFull(page, "docs/screenshots/e2e-native-ask-user-question.png");
 });
@@ -90,40 +95,46 @@ test("Read + Write + AskUserQuestion all visible seamlessly", async ({ page }) =
     page.locator(".timeline-row", { hasText: "Write /src/config.ts" }).first(),
   ).toBeVisible({ timeout: 5000 });
 
-  // Question panel visible
-  await expect(page.locator(".question-panel").first()).toBeVisible({ timeout: 5000 });
+  // Multi-question form visible
+  await expect(page.locator(".multi-question-form").first()).toBeVisible({ timeout: 5000 });
 
   await captureFull(page, "docs/screenshots/e2e-all-native-tools-combined.png");
 });
 
-// ─── Multi-question AskUserQuestion renders all 3 sub-questions with options ────
-test("AskUserQuestion multi-question renders all sub-questions with headers and options", async ({ page }) => {
+// ─── Multi-question form: select all answers, submit becomes enabled ─────────────
+test("AskUserQuestion multi-question form enables submit after all answered", async ({ page }) => {
   await goDemo(page);
 
-  // Should have 3 question panels (one per sub-question)
-  const questionPanels = page.locator(".question-panel");
-  await expect(questionPanels).toHaveCount(3, { timeout: 5000 });
+  // Close any demo modals by clicking their backdrops
+  const backdrops = page.locator(".modal-backdrop");
+  const count = await backdrops.count();
+  for (let i = count - 1; i >= 0; i--) {
+    // Click the backdrop at (1,1) to avoid hitting inner content
+    await backdrops.nth(i).click({ position: { x: 1, y: 1 }, force: true });
+  }
 
-  // Verify headers
-  await expect(page.locator(".question-header", { hasText: "作业排序" })).toBeVisible();
-  await expect(page.locator(".question-header", { hasText: "作业状态" })).toBeVisible();
-  await expect(page.locator(".question-header", { hasText: "错误类型" })).toBeVisible();
+  const form = page.locator(".multi-question-form");
+  await expect(form).toBeVisible({ timeout: 5000 });
 
-  // Verify first question's option buttons include descriptions
-  const firstPanel = questionPanels.nth(0);
-  const firstOptions = firstPanel.locator(".question-option-btn");
-  await expect(firstOptions).toHaveCount(3); // 已排序, 未排序, 不确定
-  await expect(firstPanel.locator(".question-option-label", { hasText: "已排序" })).toBeVisible();
-  await expect(firstPanel.locator(".question-option-desc").first()).toBeVisible();
+  // Initially disabled
+  const submitBtn = form.locator(".question-submit-all");
+  await expect(submitBtn).toBeDisabled();
 
-  // Verify second question
-  const secondPanel = questionPanels.nth(1);
-  await expect(secondPanel.locator(".question-option-btn")).toHaveCount(3);
-  await expect(secondPanel.locator(".question-option-label", { hasText: /Recommended/ })).toBeVisible();
+  // Select option for Q1
+  await form.locator(".question-option-btn", { hasText: "已排序" }).first().click();
+  await expect(form.locator(".question-selected-answer", { hasText: "已排序" })).toBeVisible();
+  await expect(submitBtn).toBeDisabled(); // still 1/3
 
-  // Verify third question
-  const thirdPanel = questionPanels.nth(2);
-  await expect(thirdPanel.locator(".question-option-btn")).toHaveCount(2);
+  // Select option for Q2
+  await form.locator(".question-option-btn", { hasText: /Recommended/ }).first().click();
+  await expect(submitBtn).toBeDisabled(); // still 2/3
+
+  // Select option for Q3
+  await form.locator(".question-option-btn", { hasText: "必须指定" }).first().click();
+
+  // Now all answered - submit button should be enabled
+  await expect(submitBtn).toBeEnabled();
+  await expect(submitBtn).toContainText("提交全部 3 个回答");
 
   await captureFull(page, "docs/screenshots/e2e-multi-question-ask-user.png");
 });

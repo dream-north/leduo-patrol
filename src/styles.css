@@ -782,10 +782,27 @@ h1 {
   padding: 6px 10px;
 }
 
+.multi-question-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 12px;
+  border: 1px solid rgba(58, 45, 33, 0.16);
+  border-radius: 10px;
+  background: rgba(255, 250, 242, 0.92);
+}
+
 .question-panel {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(58, 45, 33, 0.1);
+}
+
+.question-panel:last-of-type {
+  border-bottom: none;
+  padding-bottom: 0;
 }
 
 .question-header {
@@ -804,6 +821,7 @@ h1 {
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
+  margin: 0;
 }
 
 .question-options {
@@ -818,7 +836,7 @@ h1 {
   align-items: flex-start;
   gap: 2px;
   padding: 8px 12px;
-  border: 1px solid rgba(58, 45, 33, 0.2);
+  border: 2px solid rgba(58, 45, 33, 0.15);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.92);
   color: var(--text);
@@ -833,6 +851,12 @@ h1 {
   border-color: rgba(216, 91, 52, 0.4);
 }
 
+.question-option-btn.selected {
+  background: rgba(255, 243, 229, 0.98);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
 .question-option-label {
   font-weight: 600;
   font-size: 11px;
@@ -842,6 +866,10 @@ h1 {
   font-size: 10px;
   color: rgba(58, 45, 33, 0.6);
   line-height: 1.3;
+}
+
+.question-custom-toggle {
+  border-style: dashed;
 }
 
 .question-custom-answer {
@@ -859,6 +887,34 @@ h1 {
   background: rgba(255, 255, 255, 0.96);
   color: var(--text);
   font-size: 11px;
+}
+
+.question-selected-answer {
+  font-size: 11px;
+  color: var(--accent);
+  margin: 0;
+  font-weight: 500;
+}
+
+.question-submit-all {
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.question-submit-all:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.question-submit-all:not(:disabled):hover {
+  opacity: 0.9;
 }
 
 .question-custom-answer .secondary {

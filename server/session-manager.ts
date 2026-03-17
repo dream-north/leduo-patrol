@@ -22,6 +22,7 @@ export type PermissionSnapshot = {
 export type QuestionSnapshot = {
   clientSessionId: string;
   questionId: string;
+  groupId?: string;
   question: string;
   header?: string;
   options: Array<{ id: string; label: string; description?: string }>;
@@ -506,7 +507,7 @@ export class SessionManager {
                 question: questionStr,
                 header: headerStr,
                 options,
-                allowCustomAnswer: options.length === 0,
+                allowCustomAnswer: true,
               });
             }
           } else {
@@ -523,7 +524,9 @@ export class SessionManager {
           // Create one question snapshot per parsed question, all mapped to
           // the same underlying permission request.  We store them all and
           // use the *first* questionId as the primary key for the permission
-          // mapping.  When the user answers ANY of them, all are cleared.
+          // mapping.  The frontend groups questions by groupId and presents
+          // them in a single form; the user must answer ALL before submitting.
+          const groupId = randomUUID();
           const questionIds: string[] = [];
           for (const pq of parsedQuestions) {
             const questionId = randomUUID();
@@ -531,10 +534,11 @@ export class SessionManager {
             const questionSnapshot: QuestionSnapshot = {
               clientSessionId,
               questionId,
+              groupId,
               question: pq.question,
               header: pq.header,
               options: pq.options,
-              allowCustomAnswer: pq.allowCustomAnswer,
+              allowCustomAnswer: true,
             };
             entry.snapshot.questions.push(questionSnapshot);
             this.appendTimeline(entry, {
@@ -564,10 +568,11 @@ export class SessionManager {
               payload: {
                 clientSessionId,
                 questionId: questionIds[i],
+                groupId,
                 question: pq.question,
                 header: pq.header,
                 options: pq.options,
-                allowCustomAnswer: pq.allowCustomAnswer,
+                allowCustomAnswer: true,
               },
             } as unknown as SocketEvent);
           }
