@@ -5,6 +5,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
+import { userInfo } from "node:os";
 import { WebSocket, WebSocketServer } from "ws";
 import { SessionManager, type SocketEvent } from "./session-manager.js";
 import { formatError, resolveAllowedPath } from "./server-helpers.js";
@@ -48,6 +49,8 @@ const devWebPort = Number(process.env.LEDUO_PATROL_WEB_PORT ?? 5173);
 const isDevServer = process.env.npm_lifecycle_event === "dev:server";
 const bindMode = await resolveBindMode();
 const listenHost = bindMode === "local" ? "127.0.0.1" : "0.0.0.0";
+const launchHost = bindMode === "local" ? "127.0.0.1" : pickPreferredLanIp();
+const launchUser = userInfo().username;
 const agentBinPath = resolveAgentBinPath();
 const accessKey = process.env.LEDUO_PATROL_ACCESS_KEY?.trim() || createAccessKey();
 const enableShell = process.env.LEDUO_ENABLE_SHELL === "true";
@@ -104,6 +107,9 @@ app.get("/api/config", (_req, res) => {
     sshPath,
     vscodeRemoteUri,
     enableShell,
+    launchMode: bindMode,
+    launchHost,
+    launchUser,
   });
 });
 
@@ -331,7 +337,7 @@ await new Promise<void>((resolve) => {
   server.listen(listenPort, listenHost, () => resolve());
 });
 
-const displayHost = bindMode === "local" ? "127.0.0.1" : pickPreferredLanIp();
+const displayHost = launchHost;
 const accessPort = isDevServer ? devWebPort : listenPort;
 
 console.log(`Launch mode: ${bindMode === "local" ? "local (127.0.0.1 only)" : "server (remote accessible)"}`);
