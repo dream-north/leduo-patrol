@@ -790,6 +790,8 @@ h1 {
   border: 1px solid rgba(58, 45, 33, 0.16);
   border-radius: 10px;
   background: rgba(255, 250, 242, 0.92);
+  max-height: 50vh;
+  overflow-y: auto;
 }
 
 .question-panel {
@@ -897,6 +899,8 @@ h1 {
 }
 
 .question-submit-all {
+  position: sticky;
+  bottom: 0;
   padding: 10px 16px;
   border: none;
   border-radius: 8px;
@@ -906,6 +910,7 @@ h1 {
   font-weight: 600;
   cursor: pointer;
   transition: opacity 0.15s;
+  flex-shrink: 0;
 }
 
 .question-submit-all:disabled {
