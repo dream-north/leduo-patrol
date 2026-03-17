@@ -215,3 +215,363 @@ test("sessionManagerTestables.isAskUserQuestionTitle detects AskUserQuestion var
   assert.equal(sessionManagerTestables.isAskUserQuestionTitle(undefined), false);
   assert.equal(sessionManagerTestables.isAskUserQuestionTitle(""), false);
 });
+
+test("handleSessionEvent: AskUserQuestion tool_call does not create duplicate question snapshot", () => {
+  const manager = new SessionManager({ allowedRoots: [process.cwd()], agentBinPath: "claude" });
+
+  (manager as any).sessions.set("s1", {
+    snapshot: {
+      clientSessionId: "s1",
+      title: "demo",
+      workspacePath: process.cwd(),
+      connectionState: "connected",
+      sessionId: "x",
+      modes: [],
+      defaultModeId: "default",
+      currentModeId: "default",
+      busy: true,
+      timeline: [],
+      historyTotal: 0,
+      historyStart: 0,
+      permissions: [],
+      questions: [],
+      availableCommands: [],
+      updatedAt: new Date().toISOString(),
+    },
+    acpSession: null,
+    connectPromise: null,
+    fullTimeline: [],
+  });
+
+  // Simulate a session_update / tool_call for AskUserQuestion
+  (manager as any).handleSessionEvent("s1", {
+    type: "session_update",
+    payload: {
+      sessionUpdate: "tool_call",
+      toolCallId: "tc-ask-1",
+      title: "AskUserQuestion",
+      status: "pending",
+      rawInput: { question: "你好吗?" },
+    },
+  });
+
+  const entry = (manager as any).sessions.get("s1");
+  // Should NOT create a question snapshot from tool_call — the permission_requested
+  // handler will create it later.  This prevents duplicate questions.
+  assert.equal(entry.snapshot.questions.length, 0);
+  // Should still add a timeline entry for the tool call
+  assert.ok(entry.fullTimeline.length > 0);
+});
+
+test("handleSessionEvent: AskUserQuestion permission_requested still creates question snapshot", () => {
+  const manager = new SessionManager({ allowedRoots: [process.cwd()], agentBinPath: "claude" });
+
+  (manager as any).sessions.set("s1", {
+    snapshot: {
+      clientSessionId: "s1",
+      title: "demo",
+      workspacePath: process.cwd(),
+      connectionState: "connected",
+      sessionId: "x",
+      modes: [],
+      defaultModeId: "default",
+      currentModeId: "default",
+      busy: true,
+      timeline: [],
+      historyTotal: 0,
+      historyStart: 0,
+      permissions: [],
+      questions: [],
+      availableCommands: [],
+      updatedAt: new Date().toISOString(),
+    },
+    acpSession: null,
+    connectPromise: null,
+    fullTimeline: [],
+  });
+
+  // Simulate a permission_requested event for AskUserQuestion (from the
+  // patched canUseTool).  This should create a question snapshot.
+  (manager as any).handleSessionEvent("s1", {
+    type: "permission_requested",
+    payload: {
+      requestId: "req-ask-1",
+      toolCall: {
+        toolCallId: "tc-ask-1",
+        title: "AskUserQuestion",
+        status: "pending",
+        rawInput: { question: "选择颜色" },
+      },
+      options: [
+        { optionId: "allow", name: "Answer", kind: "allow_once" },
+        { optionId: "reject", name: "Reject", kind: "reject_once" },
+      ],
+    },
+  });
+
+  const entry = (manager as any).sessions.get("s1");
+  // Should create a question (not a permission)
+  assert.equal(entry.snapshot.questions.length, 1);
+  assert.equal(entry.snapshot.questions[0].question, "选择颜色");
+  assert.equal(entry.snapshot.permissions.length, 0);
+});
+
+test("handleSessionEvent: AskUserQuestion permission_requested emits question_requested (not permission_requested)", () => {
+  const manager = new SessionManager({ allowedRoots: [process.cwd()], agentBinPath: "claude" });
+
+  (manager as any).sessions.set("s1", {
+    snapshot: {
+      clientSessionId: "s1",
+      title: "demo",
+      workspacePath: process.cwd(),
+      connectionState: "connected",
+      sessionId: "x",
+      modes: [],
+      defaultModeId: "default",
+      currentModeId: "default",
+      busy: true,
+      timeline: [],
+      historyTotal: 0,
+      historyStart: 0,
+      permissions: [],
+      questions: [],
+      availableCommands: [],
+      updatedAt: new Date().toISOString(),
+    },
+    acpSession: null,
+    connectPromise: null,
+    fullTimeline: [],
+  });
+
+  // Capture emitted events
+  const emitted: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  (manager as any).subscribe((event: { type: string; payload: Record<string, unknown> }) => {
+    emitted.push(event);
+  });
+
+  (manager as any).handleSessionEvent("s1", {
+    type: "permission_requested",
+    payload: {
+      requestId: "req-ask-2",
+      toolCall: {
+        toolCallId: "tc-ask-2",
+        title: "AskUserQuestion",
+        status: "pending",
+        rawInput: { question: "你需要哪种颜色？" },
+      },
+      options: [
+        { optionId: "allow", name: "Answer", kind: "allow_once" },
+        { optionId: "reject", name: "Reject", kind: "reject_once" },
+      ],
+    },
+  });
+
+  // The emitted event should be question_requested, NOT permission_requested
+  assert.ok(emitted.length > 0, "should have emitted at least one event");
+  const questionEvent = emitted.find((e) => e.type === "question_requested");
+  assert.ok(questionEvent, "should emit question_requested event");
+  assert.equal((questionEvent!.payload as any).question, "你需要哪种颜色？");
+  assert.equal((questionEvent!.payload as any).allowCustomAnswer, true);
+  assert.equal((questionEvent!.payload as any).clientSessionId, "s1");
+  // Should NOT emit permission_requested to the frontend
+  const permissionEvent = emitted.find((e) => e.type === "permission_requested");
+  assert.equal(permissionEvent, undefined, "should NOT emit permission_requested for AskUserQuestion");
+});
+
+test("handleSessionEvent: AskUserQuestion permission_requested with questions array creates multiple question snapshots", () => {
+  const manager = new SessionManager({ allowedRoots: [process.cwd()], agentBinPath: "claude" });
+
+  (manager as any).sessions.set("s1", {
+    snapshot: {
+      clientSessionId: "s1",
+      title: "demo",
+      workspacePath: process.cwd(),
+      connectionState: "connected",
+      sessionId: "x",
+      modes: [],
+      defaultModeId: "default",
+      currentModeId: "default",
+      busy: true,
+      timeline: [],
+      historyTotal: 0,
+      historyStart: 0,
+      permissions: [],
+      questions: [],
+      availableCommands: [],
+      updatedAt: new Date().toISOString(),
+    },
+    acpSession: null,
+    connectPromise: null,
+    fullTimeline: [],
+  });
+
+  const emitted: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  (manager as any).subscribe((event: { type: string; payload: Record<string, unknown> }) => {
+    emitted.push(event);
+  });
+
+  // Simulate the real-world rawInput format with questions array
+  (manager as any).handleSessionEvent("s1", {
+    type: "permission_requested",
+    payload: {
+      requestId: "req-multi-1",
+      toolCall: {
+        toolCallId: "tc-multi-1",
+        title: "AskUserQuestion",
+        status: "pending",
+        rawInput: {
+          questions: [
+            {
+              question: "接口是否已排序？",
+              header: "排序",
+              multiSelect: false,
+              options: [
+                { label: "已排序", description: "直接取第一个" },
+                { label: "未排序", description: "需要手动排序" },
+              ],
+            },
+            {
+              question: "选择哪种状态的作业？",
+              header: "状态",
+              multiSelect: false,
+              options: [
+                { label: "只选已完成的", description: "确保数据完整" },
+                { label: "选最新的", description: "无论状态如何" },
+              ],
+            },
+          ],
+        },
+      },
+      options: [
+        { optionId: "allow", name: "Answer", kind: "allow_once" },
+        { optionId: "reject", name: "Reject", kind: "reject_once" },
+      ],
+    },
+  });
+
+  const entry = (manager as any).sessions.get("s1");
+  // Should create 2 questions (one per item in questions array)
+  assert.equal(entry.snapshot.questions.length, 2);
+  assert.equal(entry.snapshot.questions[0].question, "接口是否已排序？");
+  assert.equal(entry.snapshot.questions[0].header, "排序");
+  assert.equal(entry.snapshot.questions[0].options.length, 2);
+  assert.equal(entry.snapshot.questions[0].options[0].label, "已排序");
+  assert.equal(entry.snapshot.questions[0].options[0].description, "直接取第一个");
+  assert.equal(entry.snapshot.questions[0].allowCustomAnswer, true);
+  // All questions in the same AskUserQuestion call should share a groupId
+  assert.ok(entry.snapshot.questions[0].groupId, "should have a groupId");
+  assert.equal(entry.snapshot.questions[0].groupId, entry.snapshot.questions[1].groupId);
+  assert.equal(entry.snapshot.questions[1].question, "选择哪种状态的作业？");
+  assert.equal(entry.snapshot.questions[1].header, "状态");
+  assert.equal(entry.snapshot.questions[1].options.length, 2);
+  assert.equal(entry.snapshot.permissions.length, 0);
+
+  // Should emit 2 question_requested events
+  const questionEvents = emitted.filter((e) => e.type === "question_requested");
+  assert.equal(questionEvents.length, 2);
+  assert.equal((questionEvents[0].payload as any).question, "接口是否已排序？");
+  assert.equal((questionEvents[0].payload as any).header, "排序");
+  assert.equal((questionEvents[1].payload as any).question, "选择哪种状态的作业？");
+});
+
+test("handleSessionEvent: AskUserQuestion tool_call_update with failed status shows as completed", () => {
+  const manager = new SessionManager({ allowedRoots: [process.cwd()], agentBinPath: "claude" });
+
+  (manager as any).sessions.set("s1", {
+    snapshot: {
+      clientSessionId: "s1",
+      title: "demo",
+      workspacePath: process.cwd(),
+      connectionState: "connected",
+      sessionId: "x",
+      modes: [],
+      defaultModeId: "default",
+      currentModeId: "default",
+      busy: true,
+      timeline: [],
+      historyTotal: 0,
+      historyStart: 0,
+      permissions: [],
+      questions: [],
+      availableCommands: [],
+      updatedAt: new Date().toISOString(),
+    },
+    acpSession: null,
+    connectPromise: null,
+    fullTimeline: [],
+  });
+
+  // Simulate the tool_call_update that arrives after canUseTool returns
+  // "deny" with the user's answer.  The SDK marks it as "failed" but the
+  // session-manager should override this to "completed" for AskUserQuestion.
+  (manager as any).handleSessionEvent("s1", {
+    type: "session_update",
+    payload: {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "tc-ask-1",
+      title: "AskUserQuestion",
+      status: "failed",
+      rawInput: { question: "选择颜色" },
+      rawOutput: "红色",
+    },
+  });
+
+  const entry = (manager as any).sessions.get("s1");
+  assert.ok(entry.fullTimeline.length > 0, "timeline should have at least one entry");
+  const lastItem = entry.fullTimeline[entry.fullTimeline.length - 1];
+  // The meta should be "completed", not "failed"
+  assert.equal(lastItem.meta, "completed");
+});
+
+test("handleSessionEvent: AskUserQuestion tool_call_update without title uses _meta.claudeCode.toolName fallback", () => {
+  const manager = new SessionManager({ allowedRoots: [process.cwd()], agentBinPath: "claude" });
+
+  (manager as any).sessions.set("s1", {
+    snapshot: {
+      clientSessionId: "s1",
+      title: "demo",
+      workspacePath: process.cwd(),
+      connectionState: "connected",
+      sessionId: "x",
+      modes: [],
+      defaultModeId: "default",
+      currentModeId: "default",
+      busy: true,
+      timeline: [],
+      historyTotal: 0,
+      historyStart: 0,
+      permissions: [],
+      questions: [],
+      availableCommands: [],
+      updatedAt: new Date().toISOString(),
+    },
+    acpSession: null,
+    connectPromise: null,
+    fullTimeline: [],
+  });
+
+  // Real ACP tool_call_update for AskUserQuestion: title is absent,
+  // but _meta.claudeCode.toolName is "AskUserQuestion".  The status
+  // override should still fire.
+  (manager as any).handleSessionEvent("s1", {
+    type: "session_update",
+    payload: {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "tc-ask-2",
+      // no title field — this is what actually happens in production
+      status: "failed",
+      rawOutput: "红色",
+      _meta: {
+        claudeCode: {
+          toolName: "AskUserQuestion",
+        },
+      },
+    },
+  });
+
+  const entry = (manager as any).sessions.get("s1");
+  assert.ok(entry.fullTimeline.length > 0, "timeline should have at least one entry");
+  const lastItem = entry.fullTimeline[entry.fullTimeline.length - 1];
+  // The meta should be "completed", not "failed"
+  assert.equal(lastItem.meta, "completed");
+});

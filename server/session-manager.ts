@@ -22,8 +22,10 @@ export type PermissionSnapshot = {
 export type QuestionSnapshot = {
   clientSessionId: string;
   questionId: string;
+  groupId?: string;
   question: string;
-  options: Array<{ id: string; label: string }>;
+  header?: string;
+  options: Array<{ id: string; label: string; description?: string }>;
   allowCustomAnswer: boolean;
 };
 
@@ -303,21 +305,34 @@ export class SessionManager {
     // the question channel.
     const mappedPermission = this.askUserQuestionMap.get(questionId);
     if (mappedPermission) {
-      this.askUserQuestionMap.delete(questionId);
+      // Collect all questionIds that share the same requestId (multi-question)
+      const siblingIds: string[] = [];
+      for (const [qId, mapping] of this.askUserQuestionMap.entries()) {
+        if (mapping.requestId === mappedPermission.requestId) {
+          siblingIds.push(qId);
+        }
+      }
+      for (const qId of siblingIds) {
+        this.askUserQuestionMap.delete(qId);
+      }
       await this.getEntry(clientSessionId).acpSession?.resolvePermission(
         mappedPermission.requestId,
         "allow",
         answer,
       );
-      // Remove the question snapshot from the session so the UI clears it.
+      // Remove all sibling question snapshots from the session so the UI clears them.
       const entry = this.getEntry(clientSessionId);
+      const siblingSet = new Set(siblingIds);
       entry.snapshot.questions = entry.snapshot.questions.filter(
-        (q) => q.questionId !== questionId,
+        (q) => !siblingSet.has(q.questionId),
       );
-      this.emit({
-        type: "question_answered",
-        payload: { clientSessionId, questionId, answer },
-      } as unknown as SocketEvent);
+      // Emit question_answered for each sibling so the frontend clears all panels.
+      for (const qId of siblingIds) {
+        this.emit({
+          type: "question_answered",
+          payload: { clientSessionId, questionId: qId, answer },
+        } as unknown as SocketEvent);
+      }
       return;
     }
     await this.getEntry(clientSessionId).acpSession?.answerQuestion(questionId, answer);
@@ -460,30 +475,108 @@ export class SessionManager {
         // proper question panel instead of a raw permission dialog.
         if (isAskUserQuestionTitle(normalizedTitle)) {
           const rawInput = asRecord(event.payload.toolCall.rawInput);
-          const questionText = typeof rawInput?.question === "string" ? rawInput.question : "";
-          const questionId = randomUUID();
-          const questionSnapshot: QuestionSnapshot = {
-            clientSessionId,
-            questionId,
-            question: questionText,
-            options: [],
-            allowCustomAnswer: true,
-          };
-          entry.snapshot.questions.push(questionSnapshot);
-          this.appendTimeline(entry, {
-            id: questionId,
-            kind: "system",
-            title: "提问",
-            body: questionText,
-            meta: "pending",
-          });
-          // Map the question to the permission request so we can resolve it
-          // when the user answers.
-          this.askUserQuestionMap.set(questionId, {
-            clientSessionId,
-            requestId: event.payload.requestId,
-          });
-          break;
+
+          // Parse the questions from rawInput.  Claude may send either:
+          //   { question: "single question text" }
+          //   { questions: [ { question, header?, options?, multiSelect? }, ... ] }
+          const rawQuestions = Array.isArray(rawInput?.questions) ? rawInput.questions : [];
+          const parsedQuestions: Array<{
+            question: string;
+            header?: string;
+            options: Array<{ id: string; label: string; description?: string }>;
+            allowCustomAnswer: boolean;
+          }> = [];
+
+          if (rawQuestions.length > 0) {
+            for (const rawQ of rawQuestions) {
+              const q = asRecord(rawQ);
+              if (!q) continue;
+              const questionStr = typeof q.question === "string" ? q.question : "";
+              const headerStr = typeof q.header === "string" ? q.header : undefined;
+              const rawOpts = Array.isArray(q.options) ? q.options : [];
+              const options = rawOpts
+                .map((opt) => {
+                  const o = asRecord(opt);
+                  if (!o) return null;
+                  const label = typeof o.label === "string" ? o.label : "";
+                  const description = typeof o.description === "string" ? o.description : undefined;
+                  return label ? { id: label, label, description } : null;
+                })
+                .filter((o): o is NonNullable<typeof o> => o !== null);
+              parsedQuestions.push({
+                question: questionStr,
+                header: headerStr,
+                options,
+                allowCustomAnswer: true,
+              });
+            }
+          } else {
+            // Fallback: single question string
+            const questionText = typeof rawInput?.question === "string" ? rawInput.question : "";
+            parsedQuestions.push({
+              question: questionText,
+              header: undefined,
+              options: [],
+              allowCustomAnswer: true,
+            });
+          }
+
+          // Create one question snapshot per parsed question, all mapped to
+          // the same underlying permission request.  We store them all and
+          // use the *first* questionId as the primary key for the permission
+          // mapping.  The frontend groups questions by groupId and presents
+          // them in a single form; the user must answer ALL before submitting.
+          const groupId = randomUUID();
+          const questionIds: string[] = [];
+          for (const pq of parsedQuestions) {
+            const questionId = randomUUID();
+            questionIds.push(questionId);
+            const questionSnapshot: QuestionSnapshot = {
+              clientSessionId,
+              questionId,
+              groupId,
+              question: pq.question,
+              header: pq.header,
+              options: pq.options,
+              allowCustomAnswer: true,
+            };
+            entry.snapshot.questions.push(questionSnapshot);
+            this.appendTimeline(entry, {
+              id: questionId,
+              kind: "system",
+              title: "提问",
+              body: pq.header ? `【${pq.header}】${pq.question}` : pq.question,
+              meta: "pending",
+            });
+            // Map every question to the permission request so that answering
+            // any one of them resolves the permission.
+            this.askUserQuestionMap.set(questionId, {
+              clientSessionId,
+              requestId: event.payload.requestId,
+            });
+          }
+
+          // Emit question_requested for each parsed question so the frontend
+          // shows the proper question panel.  Return early to skip the
+          // default re-emission of the original permission_requested event.
+          entry.snapshot.updatedAt = new Date().toISOString();
+          this.schedulePersist();
+          for (let i = 0; i < parsedQuestions.length; i++) {
+            const pq = parsedQuestions[i];
+            this.emit({
+              type: "question_requested",
+              payload: {
+                clientSessionId,
+                questionId: questionIds[i],
+                groupId,
+                question: pq.question,
+                header: pq.header,
+                options: pq.options,
+                allowCustomAnswer: true,
+              },
+            } as unknown as SocketEvent);
+          }
+          return;
         }
 
         const permission: PermissionSnapshot = {
@@ -614,46 +707,34 @@ export class SessionManager {
       }
       case "tool_call":
       case "tool_call_update": {
-        const normalizedTitle = normalizeAcpToolTitle(update.title) || undefined;
+        // tool_call_update events for error/deny results may lack a `title`
+        // field (toolUpdateFromToolResult returns early without one).  Fall
+        // back to `_meta.claudeCode.toolName` which the ACP agent always
+        // includes so we can still detect tools like AskUserQuestion.
+        const claudeCodeMeta = asRecord(asRecord(update._meta)?.claudeCode);
+        const metaToolName = typeof claudeCodeMeta?.toolName === "string" ? claudeCodeMeta.toolName : undefined;
+        const normalizedTitle = normalizeAcpToolTitle(update.title) || normalizeAcpToolTitle(metaToolName) || undefined;
 
-        // When AskUserQuestion appears as a tool_call (e.g. the agent
-        // streams the tool use before the SDK rejects it as disallowed),
-        // surface it as a question so the user can answer it.  Only the
-        // initial ("pending") call triggers the question; subsequent
-        // updates (e.g. "failed") are ignored once the question exists.
-        if (isAskUserQuestionTitle(normalizedTitle) && update.status === "pending") {
-          const rawInput = asRecord(update.rawInput);
-          const questionText = typeof rawInput?.question === "string" ? rawInput.question : "";
-          if (questionText) {
-            const questionId = randomUUID();
-            const questionSnapshot: QuestionSnapshot = {
-              clientSessionId: entry.snapshot.clientSessionId,
-              questionId,
-              question: questionText,
-              options: [],
-              allowCustomAnswer: true,
-            };
-            entry.snapshot.questions.push(questionSnapshot);
-            this.appendTimeline(entry, {
-              id: questionId,
-              kind: "system",
-              title: "提问",
-              body: questionText,
-              meta: "pending",
-            });
-            this.emit({
-              type: "question_requested",
-              payload: {
-                clientSessionId: entry.snapshot.clientSessionId,
-                questionId,
-                question: questionText,
-                options: [],
-                allowCustomAnswer: true,
-              },
-            } as unknown as SocketEvent);
-            break;
-          }
-        }
+        // AskUserQuestion tool_call notifications arrive as stream events
+        // BEFORE the corresponding permission_requested event from
+        // canUseTool().  The vendored ACP agent patch
+        // (vendor/claude-code-acp/dist/acp-agent.js, canUseTool method)
+        // ensures that canUseTool() always fires a requestPermission for
+        // AskUserQuestion, which the permission_requested handler below
+        // converts into a proper question flow.  We therefore skip
+        // creating a question here to avoid duplicates — just display
+        // the tool call in the timeline like any other tool.
+        //
+        // Because the native AskUserQuestion handler can't run in ACP
+        // (it uses stdin), the patched canUseTool returns "deny" with
+        // the user's answer.  The SDK marks this as "failed", but from
+        // the user's perspective the question was answered successfully.
+        // Override the status to "completed" so the timeline shows it
+        // seamlessly — identical to any other successful tool call.
+        const effectiveStatus =
+          isAskUserQuestionTitle(normalizedTitle) && update.status === "failed"
+            ? "completed"
+            : update.status;
 
         this.appendTimeline(entry, {
           id: randomUUID(),
@@ -662,11 +743,11 @@ export class SessionManager {
           body: formatToolDetails({
             toolCallId: update.toolCallId,
             title: normalizedTitle,
-            status: update.status,
+            status: effectiveStatus,
             rawInput: update.rawInput,
             rawOutput: update.rawOutput,
           }),
-          meta: String(update.status ?? update.sessionUpdate),
+          meta: String(effectiveStatus ?? update.sessionUpdate),
         });
         break;
       }

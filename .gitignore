@@ -1,5 +1,7 @@
+# Build output — only the project root /dist is ignored.
+# vendor/claude-code-acp/dist/ is committed as pre-built vendored code.
+/dist
 node_modules
-dist
 .DS_Store
 .env
 test-results/
