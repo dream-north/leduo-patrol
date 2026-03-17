@@ -49,21 +49,29 @@ test("native Write tool renders with completed status in timeline", async ({ pag
 test("AskUserQuestion renders question panel with options", async ({ page }) => {
   await goDemo(page);
 
-  // The demo data includes a question: "发布前需要确认：是否已完成回滚测试？"
+  // The demo data includes 3 questions from the real-world AskUserQuestion format
   const questionPanel = page.locator(".question-panel");
   await expect(questionPanel.first()).toBeVisible({ timeout: 5000 });
 
+  // Check headers are shown
+  const headerEl = page.locator(".question-header", { hasText: "作业排序" });
+  await expect(headerEl.first()).toBeVisible();
+
   // Check the question text
-  const questionText = page.locator(".question-text", { hasText: "发布前需要确认" });
+  const questionText = page.locator(".question-text", { hasText: "接口返回的作业列表" });
   await expect(questionText.first()).toBeVisible();
 
-  // Check that option buttons are shown
+  // Check that option buttons with descriptions are shown
   const optionBtns = page.locator(".question-option-btn");
   await expect(optionBtns.first()).toBeVisible();
+  const optionLabel = page.locator(".question-option-label", { hasText: "已排序" });
+  await expect(optionLabel.first()).toBeVisible();
+  const optionDesc = page.locator(".question-option-desc");
+  await expect(optionDesc.first()).toBeVisible();
 
-  // Check custom answer input is also visible (allowCustomAnswer=true)
+  // With allowCustomAnswer=false, custom input should NOT be visible
   const customInput = page.locator(".question-custom-input");
-  await expect(customInput.first()).toBeVisible();
+  await expect(customInput).toHaveCount(0);
 
   await captureFull(page, "docs/screenshots/e2e-native-ask-user-question.png");
 });
@@ -86,4 +94,36 @@ test("Read + Write + AskUserQuestion all visible seamlessly", async ({ page }) =
   await expect(page.locator(".question-panel").first()).toBeVisible({ timeout: 5000 });
 
   await captureFull(page, "docs/screenshots/e2e-all-native-tools-combined.png");
+});
+
+// ─── Multi-question AskUserQuestion renders all 3 sub-questions with options ────
+test("AskUserQuestion multi-question renders all sub-questions with headers and options", async ({ page }) => {
+  await goDemo(page);
+
+  // Should have 3 question panels (one per sub-question)
+  const questionPanels = page.locator(".question-panel");
+  await expect(questionPanels).toHaveCount(3, { timeout: 5000 });
+
+  // Verify headers
+  await expect(page.locator(".question-header", { hasText: "作业排序" })).toBeVisible();
+  await expect(page.locator(".question-header", { hasText: "作业状态" })).toBeVisible();
+  await expect(page.locator(".question-header", { hasText: "错误类型" })).toBeVisible();
+
+  // Verify first question's option buttons include descriptions
+  const firstPanel = questionPanels.nth(0);
+  const firstOptions = firstPanel.locator(".question-option-btn");
+  await expect(firstOptions).toHaveCount(3); // 已排序, 未排序, 不确定
+  await expect(firstPanel.locator(".question-option-label", { hasText: "已排序" })).toBeVisible();
+  await expect(firstPanel.locator(".question-option-desc").first()).toBeVisible();
+
+  // Verify second question
+  const secondPanel = questionPanels.nth(1);
+  await expect(secondPanel.locator(".question-option-btn")).toHaveCount(3);
+  await expect(secondPanel.locator(".question-option-label", { hasText: /Recommended/ })).toBeVisible();
+
+  // Verify third question
+  const thirdPanel = questionPanels.nth(2);
+  await expect(thirdPanel.locator(".question-option-btn")).toHaveCount(2);
+
+  await captureFull(page, "docs/screenshots/e2e-multi-question-ask-user.png");
 });

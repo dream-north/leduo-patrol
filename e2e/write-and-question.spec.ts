@@ -36,21 +36,21 @@ test("Write tool timeline item appears with normalised title", async ({ page }) 
 test("AskUserQuestion demo renders question panel with options", async ({ page }) => {
   await goDemo(page);
 
-  // The demo data includes a question: "发布前需要确认：是否已完成回滚测试？"
+  // The demo data includes 3 real-world multi-question panels
   const questionPanel = page.locator(".question-panel");
   await expect(questionPanel.first()).toBeVisible({ timeout: 5000 });
 
-  // Check the question text
-  const questionText = page.locator(".question-text", { hasText: "发布前需要确认" });
+  // Check the first question has header and text
+  const headerEl = page.locator(".question-header", { hasText: "作业排序" });
+  await expect(headerEl.first()).toBeVisible();
+  const questionText = page.locator(".question-text", { hasText: "接口返回的作业列表" });
   await expect(questionText.first()).toBeVisible();
 
-  // Check that option buttons are shown
+  // Check that option buttons with labels and descriptions are shown
   const optionBtns = page.locator(".question-option-btn");
   await expect(optionBtns.first()).toBeVisible();
-
-  // Check custom answer input is also visible (allowCustomAnswer=true)
-  const customInput = page.locator(".question-custom-input");
-  await expect(customInput.first()).toBeVisible();
+  const optionDesc = page.locator(".question-option-desc");
+  await expect(optionDesc.first()).toBeVisible();
 
   await captureFull(page, "docs/screenshots/e2e-ask-user-question.png");
 });

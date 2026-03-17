@@ -23,7 +23,8 @@ export type QuestionSnapshot = {
   clientSessionId: string;
   questionId: string;
   question: string;
-  options: Array<{ id: string; label: string }>;
+  header?: string;
+  options: Array<{ id: string; label: string; description?: string }>;
   allowCustomAnswer: boolean;
 };
 
@@ -303,21 +304,34 @@ export class SessionManager {
     // the question channel.
     const mappedPermission = this.askUserQuestionMap.get(questionId);
     if (mappedPermission) {
-      this.askUserQuestionMap.delete(questionId);
+      // Collect all questionIds that share the same requestId (multi-question)
+      const siblingIds: string[] = [];
+      for (const [qId, mapping] of this.askUserQuestionMap.entries()) {
+        if (mapping.requestId === mappedPermission.requestId) {
+          siblingIds.push(qId);
+        }
+      }
+      for (const qId of siblingIds) {
+        this.askUserQuestionMap.delete(qId);
+      }
       await this.getEntry(clientSessionId).acpSession?.resolvePermission(
         mappedPermission.requestId,
         "allow",
         answer,
       );
-      // Remove the question snapshot from the session so the UI clears it.
+      // Remove all sibling question snapshots from the session so the UI clears them.
       const entry = this.getEntry(clientSessionId);
+      const siblingSet = new Set(siblingIds);
       entry.snapshot.questions = entry.snapshot.questions.filter(
-        (q) => q.questionId !== questionId,
+        (q) => !siblingSet.has(q.questionId),
       );
-      this.emit({
-        type: "question_answered",
-        payload: { clientSessionId, questionId, answer },
-      } as unknown as SocketEvent);
+      // Emit question_answered for each sibling so the frontend clears all panels.
+      for (const qId of siblingIds) {
+        this.emit({
+          type: "question_answered",
+          payload: { clientSessionId, questionId: qId, answer },
+        } as unknown as SocketEvent);
+      }
       return;
     }
     await this.getEntry(clientSessionId).acpSession?.answerQuestion(questionId, answer);
@@ -460,46 +474,103 @@ export class SessionManager {
         // proper question panel instead of a raw permission dialog.
         if (isAskUserQuestionTitle(normalizedTitle)) {
           const rawInput = asRecord(event.payload.toolCall.rawInput);
-          const questionText = typeof rawInput?.question === "string" ? rawInput.question : "";
-          const questionId = randomUUID();
-          const questionSnapshot: QuestionSnapshot = {
-            clientSessionId,
-            questionId,
-            question: questionText,
-            options: [],
-            allowCustomAnswer: true,
-          };
-          entry.snapshot.questions.push(questionSnapshot);
-          this.appendTimeline(entry, {
-            id: questionId,
-            kind: "system",
-            title: "提问",
-            body: questionText,
-            meta: "pending",
-          });
-          // Map the question to the permission request so we can resolve it
-          // when the user answers.
-          this.askUserQuestionMap.set(questionId, {
-            clientSessionId,
-            requestId: event.payload.requestId,
-          });
-          // Emit question_requested (NOT the original permission_requested) so
-          // the frontend shows the proper question panel with a text input
-          // instead of a raw permission dialog.  Return early to skip the
-          // default re-emission of the original event at the bottom of this
-          // method.
-          entry.snapshot.updatedAt = new Date().toISOString();
-          this.schedulePersist();
-          this.emit({
-            type: "question_requested",
-            payload: {
+
+          // Parse the questions from rawInput.  Claude may send either:
+          //   { question: "single question text" }
+          //   { questions: [ { question, header?, options?, multiSelect? }, ... ] }
+          const rawQuestions = Array.isArray(rawInput?.questions) ? rawInput.questions : [];
+          const parsedQuestions: Array<{
+            question: string;
+            header?: string;
+            options: Array<{ id: string; label: string; description?: string }>;
+            allowCustomAnswer: boolean;
+          }> = [];
+
+          if (rawQuestions.length > 0) {
+            for (const rawQ of rawQuestions) {
+              const q = asRecord(rawQ);
+              if (!q) continue;
+              const questionStr = typeof q.question === "string" ? q.question : "";
+              const headerStr = typeof q.header === "string" ? q.header : undefined;
+              const rawOpts = Array.isArray(q.options) ? q.options : [];
+              const options = rawOpts
+                .map((opt) => {
+                  const o = asRecord(opt);
+                  if (!o) return null;
+                  const label = typeof o.label === "string" ? o.label : "";
+                  const description = typeof o.description === "string" ? o.description : undefined;
+                  return label ? { id: label, label, description } : null;
+                })
+                .filter((o): o is NonNullable<typeof o> => o !== null);
+              parsedQuestions.push({
+                question: questionStr,
+                header: headerStr,
+                options,
+                allowCustomAnswer: options.length === 0,
+              });
+            }
+          } else {
+            // Fallback: single question string
+            const questionText = typeof rawInput?.question === "string" ? rawInput.question : "";
+            parsedQuestions.push({
+              question: questionText,
+              header: undefined,
+              options: [],
+              allowCustomAnswer: true,
+            });
+          }
+
+          // Create one question snapshot per parsed question, all mapped to
+          // the same underlying permission request.  We store them all and
+          // use the *first* questionId as the primary key for the permission
+          // mapping.  When the user answers ANY of them, all are cleared.
+          const questionIds: string[] = [];
+          for (const pq of parsedQuestions) {
+            const questionId = randomUUID();
+            questionIds.push(questionId);
+            const questionSnapshot: QuestionSnapshot = {
               clientSessionId,
               questionId,
-              question: questionText,
-              options: [] as Array<{ id: string; label: string }>,
-              allowCustomAnswer: true,
-            },
-          } as unknown as SocketEvent);
+              question: pq.question,
+              header: pq.header,
+              options: pq.options,
+              allowCustomAnswer: pq.allowCustomAnswer,
+            };
+            entry.snapshot.questions.push(questionSnapshot);
+            this.appendTimeline(entry, {
+              id: questionId,
+              kind: "system",
+              title: "提问",
+              body: pq.header ? `【${pq.header}】${pq.question}` : pq.question,
+              meta: "pending",
+            });
+            // Map every question to the permission request so that answering
+            // any one of them resolves the permission.
+            this.askUserQuestionMap.set(questionId, {
+              clientSessionId,
+              requestId: event.payload.requestId,
+            });
+          }
+
+          // Emit question_requested for each parsed question so the frontend
+          // shows the proper question panel.  Return early to skip the
+          // default re-emission of the original permission_requested event.
+          entry.snapshot.updatedAt = new Date().toISOString();
+          this.schedulePersist();
+          for (let i = 0; i < parsedQuestions.length; i++) {
+            const pq = parsedQuestions[i];
+            this.emit({
+              type: "question_requested",
+              payload: {
+                clientSessionId,
+                questionId: questionIds[i],
+                question: pq.question,
+                header: pq.header,
+                options: pq.options,
+                allowCustomAnswer: pq.allowCustomAnswer,
+              },
+            } as unknown as SocketEvent);
+          }
           return;
         }
 

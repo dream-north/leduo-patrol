@@ -788,6 +788,16 @@ h1 {
   gap: 8px;
 }
 
+.question-header {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  margin: 0;
+  padding: 2px 0;
+  letter-spacing: 0.5px;
+  text-transform: none;
+}
+
 .question-text {
   font-size: 12px;
   font-weight: 500;
@@ -798,12 +808,16 @@ h1 {
 
 .question-options {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 6px;
 }
 
 .question-option-btn {
-  padding: 6px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 12px;
   border: 1px solid rgba(58, 45, 33, 0.2);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.92);
@@ -811,11 +825,23 @@ h1 {
   font-size: 11px;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
+  text-align: left;
 }
 
 .question-option-btn:hover {
   background: rgba(255, 243, 229, 0.96);
   border-color: rgba(216, 91, 52, 0.4);
+}
+
+.question-option-label {
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.question-option-desc {
+  font-size: 10px;
+  color: rgba(58, 45, 33, 0.6);
+  line-height: 1.3;
 }
 
 .question-custom-answer {

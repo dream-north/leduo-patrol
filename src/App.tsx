@@ -51,7 +51,8 @@ type QuestionPayload = {
   clientSessionId: string;
   questionId: string;
   question: string;
-  options: Array<{ id: string; label: string }>;
+  header?: string;
+  options: Array<{ id: string; label: string; description?: string }>;
   allowCustomAnswer: boolean;
 };
 
@@ -3552,12 +3553,37 @@ function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoF
       {
         clientSessionId: "demo-subagent-tree",
         questionId: "demo-question-1",
-        question: "发布前需要确认：是否已完成回滚测试？",
+        question: "GetVolumeJob 接口返回的作业列表是否已按时间排序？这会影响实现复杂度。",
+        header: "作业排序",
         options: [
-          { id: "yes", label: "是，已完成" },
-          { id: "no", label: "否，尚未完成" },
+          { id: "已排序", label: "已排序", description: "接口已按时间倒序返回，直接取第一个作业即可，实现简单高效" },
+          { id: "未排序", label: "未排序", description: "需要查询所有作业详情并按 create_time 排序，确保准确性" },
+          { id: "不确定", label: "不确定", description: "不确定接口行为，按未排序处理以确保正确性" },
         ],
-        allowCustomAnswer: true,
+        allowCustomAnswer: false,
+      },
+      {
+        clientSessionId: "demo-subagent-tree",
+        questionId: "demo-question-2",
+        question: "应该选择哪种状态的作业作为\u201c最近一次扫描\u201d？",
+        header: "作业状态",
+        options: [
+          { id: "只选已完成的", label: "只选已完成的 (Recommended)", description: "只选择 JOB_STATUS_SUCC 状态的作业，确保数据完整性" },
+          { id: "优先已完成", label: "优先已完成", description: "优先选已完成的，如果没有则选正在运行的作业" },
+          { id: "选最新的", label: "选最新的", description: "选择创建时间最新的作业，无论状态如何" },
+        ],
+        allowCustomAnswer: false,
+      },
+      {
+        clientSessionId: "demo-subagent-tree",
+        questionId: "demo-question-3",
+        question: "错误类型参数是否必须指定？",
+        header: "错误类型",
+        options: [
+          { id: "必须指定", label: "必须指定 (Recommended)", description: "用户必须指定错误类型，命令简单明确" },
+          { id: "可选参数", label: "可选参数", description: "错误类型可选，不指定时显示所有错误类型的汇总" },
+        ],
+        allowCustomAnswer: false,
       },
     ],
     updatedAt: new Date().toISOString(),
@@ -4249,6 +4275,9 @@ function QuestionPanel(props: {
 
   return (
     <section className="composer-pending-item question-panel">
+      {props.question.header ? (
+        <p className="question-header">{props.question.header}</p>
+      ) : null}
       <p className="composer-pending-tool question-text">{props.question.question}</p>
       {props.question.options.length > 0 ? (
         <div className="question-options">
@@ -4257,8 +4286,12 @@ function QuestionPanel(props: {
               key={option.id}
               className="question-option-btn"
               onClick={() => props.onAnswer(option.label)}
+              title={option.description}
             >
-              {option.label}
+              <span className="question-option-label">{option.label}</span>
+              {option.description ? (
+                <span className="question-option-desc">{option.description}</span>
+              ) : null}
             </button>
           ))}
         </div>

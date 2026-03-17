@@ -378,6 +378,99 @@ test("handleSessionEvent: AskUserQuestion permission_requested emits question_re
   assert.equal(permissionEvent, undefined, "should NOT emit permission_requested for AskUserQuestion");
 });
 
+test("handleSessionEvent: AskUserQuestion permission_requested with questions array creates multiple question snapshots", () => {
+  const manager = new SessionManager({ allowedRoots: [process.cwd()], agentBinPath: "claude" });
+
+  (manager as any).sessions.set("s1", {
+    snapshot: {
+      clientSessionId: "s1",
+      title: "demo",
+      workspacePath: process.cwd(),
+      connectionState: "connected",
+      sessionId: "x",
+      modes: [],
+      defaultModeId: "default",
+      currentModeId: "default",
+      busy: true,
+      timeline: [],
+      historyTotal: 0,
+      historyStart: 0,
+      permissions: [],
+      questions: [],
+      availableCommands: [],
+      updatedAt: new Date().toISOString(),
+    },
+    acpSession: null,
+    connectPromise: null,
+    fullTimeline: [],
+  });
+
+  const emitted: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  (manager as any).subscribe((event: { type: string; payload: Record<string, unknown> }) => {
+    emitted.push(event);
+  });
+
+  // Simulate the real-world rawInput format with questions array
+  (manager as any).handleSessionEvent("s1", {
+    type: "permission_requested",
+    payload: {
+      requestId: "req-multi-1",
+      toolCall: {
+        toolCallId: "tc-multi-1",
+        title: "AskUserQuestion",
+        status: "pending",
+        rawInput: {
+          questions: [
+            {
+              question: "接口是否已排序？",
+              header: "排序",
+              multiSelect: false,
+              options: [
+                { label: "已排序", description: "直接取第一个" },
+                { label: "未排序", description: "需要手动排序" },
+              ],
+            },
+            {
+              question: "选择哪种状态的作业？",
+              header: "状态",
+              multiSelect: false,
+              options: [
+                { label: "只选已完成的", description: "确保数据完整" },
+                { label: "选最新的", description: "无论状态如何" },
+              ],
+            },
+          ],
+        },
+      },
+      options: [
+        { optionId: "allow", name: "Answer", kind: "allow_once" },
+        { optionId: "reject", name: "Reject", kind: "reject_once" },
+      ],
+    },
+  });
+
+  const entry = (manager as any).sessions.get("s1");
+  // Should create 2 questions (one per item in questions array)
+  assert.equal(entry.snapshot.questions.length, 2);
+  assert.equal(entry.snapshot.questions[0].question, "接口是否已排序？");
+  assert.equal(entry.snapshot.questions[0].header, "排序");
+  assert.equal(entry.snapshot.questions[0].options.length, 2);
+  assert.equal(entry.snapshot.questions[0].options[0].label, "已排序");
+  assert.equal(entry.snapshot.questions[0].options[0].description, "直接取第一个");
+  assert.equal(entry.snapshot.questions[0].allowCustomAnswer, false);
+  assert.equal(entry.snapshot.questions[1].question, "选择哪种状态的作业？");
+  assert.equal(entry.snapshot.questions[1].header, "状态");
+  assert.equal(entry.snapshot.questions[1].options.length, 2);
+  assert.equal(entry.snapshot.permissions.length, 0);
+
+  // Should emit 2 question_requested events
+  const questionEvents = emitted.filter((e) => e.type === "question_requested");
+  assert.equal(questionEvents.length, 2);
+  assert.equal((questionEvents[0].payload as any).question, "接口是否已排序？");
+  assert.equal((questionEvents[0].payload as any).header, "排序");
+  assert.equal((questionEvents[1].payload as any).question, "选择哪种状态的作业？");
+});
+
 test("handleSessionEvent: AskUserQuestion tool_call_update with failed status shows as completed", () => {
   const manager = new SessionManager({ allowedRoots: [process.cwd()], agentBinPath: "claude" });
 
