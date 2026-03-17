@@ -626,6 +626,8 @@ h1 {
   margin-bottom: 6px;
   color: var(--text);
   font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .composer-mode-row {
@@ -2294,25 +2296,6 @@ h1 {
 }
 
 
-.vscode-settings-help {
-  margin-bottom: 10px;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.75);
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.vscode-settings-help p {
-  margin: 0 0 4px;
-  color: var(--text);
-}
-
-.vscode-settings-help ul {
-  margin: 0;
-  padding-left: 16px;
-}
 
 @media (max-width: 1360px) {
   .session-meta-actions {
@@ -2330,5 +2313,28 @@ h1 {
   height: 36px;
   padding: 0;
   border-radius: 10px;
-  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.session-settings-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.permission-command-textarea {
+  width: 100%;
+  min-height: 160px;
+  resize: vertical;
+  margin-top: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text);
+  white-space: pre;
 }

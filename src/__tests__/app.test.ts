@@ -354,8 +354,49 @@ test("app canMergeToolTimelineItem only merges same toolCallId", () => {
     meta: "completed",
   };
 
-  assert.equal(appTestables.canMergeToolTimelineItem(existing, incomingSame, "tc-1"), true);
+  assert.equal(appTestables.canMergeToolTimelineItem(existing, incomingSame, "tc-1"), false);
   assert.equal(appTestables.canMergeToolTimelineItem(existing, incomingChild, "tc-1"), false);
+});
+
+
+test("app timeline tree keeps subagent children nested and updates root to completed", () => {
+  const rows = appTestables.buildTimelineTreeRows([
+    {
+      id: "task-root-running",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-4", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "task-child-1",
+      kind: "agent",
+      title: "子任务输出",
+      body: "正在处理",
+      meta: "running",
+    },
+    {
+      id: "task-root-completed",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-4", title: "Task", status: "completed" }),
+      meta: "completed",
+    },
+    {
+      id: "main-agent",
+      kind: "agent",
+      title: "主代理",
+      body: "回到主会话",
+      meta: "ok",
+    },
+  ]);
+
+  assert.equal(rows[0]?.item.id, "task-root-running");
+  assert.equal(rows[0]?.item.meta, "completed");
+  assert.equal(rows[1]?.depth, 1);
+  assert.equal(rows[1]?.rootId, "task-root-running");
+  assert.equal(rows[2]?.item.id, "main-agent");
+  assert.equal(rows[2]?.depth, 0);
 });
 test("app timeline tree helpers use first child title for Task parent summary when toolCallId matches", () => {
   const rows = appTestables.buildTimelineTreeRows([

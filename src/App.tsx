@@ -11,6 +11,9 @@ type AppConfig = {
   sshPath: string;
   vscodeRemoteUri: string;
   enableShell: boolean;
+  launchMode: "server" | "local";
+  launchHost: string;
+  launchUser: string;
 };
 
 type SessionUpdate = {
@@ -212,8 +215,6 @@ type VscodeOpenMode = "remote" | "local";
 type VscodeLaunchConfig = {
   mode: VscodeOpenMode;
   sshHost: string;
-  sshBasePath: string;
-  localBasePath: string;
 };
 
 const VSCODE_LAUNCH_CONFIG_STORAGE_KEY = "leduo-patrol:vscode-launch-config";
@@ -249,11 +250,13 @@ function withAccessKey(path: string, keyOverride?: string) {
 }
 
 function createDefaultVscodeLaunchConfig(config: AppConfig | null): VscodeLaunchConfig {
+  const defaultSshHost =
+    config?.launchMode === "server" && config.launchHost
+      ? `${config.launchUser || "user"}@${config.launchHost}`
+      : (config?.sshHost ?? "");
   return {
-    mode: config?.sshHost ? "remote" : "local",
-    sshHost: config?.sshHost ?? "",
-    sshBasePath: config?.sshPath || config?.workspacePath || "",
-    localBasePath: config?.workspacePath || "",
+    mode: config?.launchMode === "server" ? "remote" : "local",
+    sshHost: defaultSshHost,
   };
 }
 
@@ -272,8 +275,6 @@ function readStoredVscodeLaunchConfig(config: AppConfig | null): VscodeLaunchCon
     return {
       mode,
       sshHost: typeof parsed.sshHost === "string" ? parsed.sshHost : fallback.sshHost,
-      sshBasePath: typeof parsed.sshBasePath === "string" ? parsed.sshBasePath : fallback.sshBasePath,
-      localBasePath: typeof parsed.localBasePath === "string" ? parsed.localBasePath : fallback.localBasePath,
     };
   } catch {
     return fallback;
@@ -296,31 +297,9 @@ function createVscodeOpenUri(config: VscodeLaunchConfig, workspacePath: string) 
   return `vscode://vscode-remote/${remoteAuthority}${normalizedWorkspacePath}`;
 }
 
-function trimTrailingSlash(value: string) {
-  const normalized = value.trim();
-  if (normalized.length <= 1) {
-    return normalized;
-  }
-  return normalized.replace(/\/+$/, "");
-}
 
-function mapWorkspacePathForVscode(workspacePath: string, config: VscodeLaunchConfig) {
-  const normalizedWorkspacePath = workspacePath.trim();
-  if (config.mode !== "remote") {
-    return normalizedWorkspacePath;
-  }
-  const localBase = trimTrailingSlash(config.localBasePath);
-  const remoteBase = trimTrailingSlash(config.sshBasePath);
-  if (!localBase || !remoteBase) {
-    return normalizedWorkspacePath;
-  }
-  if (normalizedWorkspacePath === localBase) {
-    return remoteBase;
-  }
-  if (normalizedWorkspacePath.startsWith(`${localBase}/`)) {
-    return `${remoteBase}${normalizedWorkspacePath.slice(localBase.length)}`;
-  }
-  return normalizedWorkspacePath;
+function mapWorkspacePathForVscode(workspacePath: string, _config: VscodeLaunchConfig) {
+  return workspacePath.trim();
 }
 
 export default function App() {
@@ -351,6 +330,7 @@ export default function App() {
   const [showGlobalErrors, setShowGlobalErrors] = useState(false);
   const [vscodeSettingsOpen, setVscodeSettingsOpen] = useState(false);
   const [vscodeLaunchError, setVscodeLaunchError] = useState("");
+  const [vscodeLaunchNotice, setVscodeLaunchNotice] = useState("");
   const [selectedItem, setSelectedItem] = useState<{ sessionTitle: string; item: TimelineItem } | null>(null);
   const [sessionDiff, setSessionDiff] = useState<SessionDiffResponse | null>(null);
   const [sessionDiffError, setSessionDiffError] = useState("");
@@ -585,13 +565,6 @@ export default function App() {
     setVscodeLaunchConfig(readStoredVscodeLaunchConfig(config));
     vscodeConfigHydratedRef.current = true;
   }, [config]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(VSCODE_LAUNCH_CONFIG_STORAGE_KEY, JSON.stringify(vscodeLaunchConfig));
-  }, [vscodeLaunchConfig]);
 
   useEffect(() => {
     if (!accessKey) {
@@ -1518,11 +1491,21 @@ export default function App() {
     const mappedWorkspacePath = mapWorkspacePathForVscode(workspacePath, vscodeLaunchConfig);
     const uri = createVscodeOpenUri(vscodeLaunchConfig, mappedWorkspacePath);
     if (!uri) {
-      setVscodeLaunchError("请先配置 VSCode 打开参数（模式、主机或目录映射）。");
+      setVscodeLaunchError("请先配置 VSCode 打开参数（模式、SSH 主机）。");
       return;
     }
+    setVscodeLaunchNotice("");
     setVscodeLaunchError("");
     window.open(uri, "_self");
+  }
+
+  function saveVscodeLaunchConfig() {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(VSCODE_LAUNCH_CONFIG_STORAGE_KEY, JSON.stringify(vscodeLaunchConfig));
+    setVscodeLaunchError("");
+    setVscodeLaunchNotice("配置已保存。");
   }
 
   function applyAccessKey() {
@@ -1607,7 +1590,16 @@ export default function App() {
             aria-label="打开 VSCode 配置"
             title="VSCode 配置"
           >
-            ⚙️
+            <svg className="session-settings-icon" viewBox="0 0 1024 1024" aria-hidden="true">
+              <path
+                d="M463.36 149.211l-21.504 3.146-7.607 1.901a57.417 57.417 0 0 0-39.497 43.667l-8.923 45.348-0.659 0.366a316.312 316.312 0 0 0-52.15 28.599l-1.39 0.95-47.836-16.09a59.465 59.465 0 0 0-57.417 10.97l-6.729 6.803a362.277 362.277 0 0 0-61.806 95.378l-8.045 19.749-2.195 7.607a56.32 56.32 0 0 0 19.749 55.734l37.595 30.428-1.024 11.995a287.525 287.525 0 0 0-0.439 16.238l0.44 16.238 1.023 11.922-37.449 30.354a56.247 56.247 0 0 0-19.822 56.028l2.926 9.289c13.532 35.767 32.476 68.754 56.466 98.523l13.898 16.311 5.558 5.34c15.58 13.165 37.303 17.48 57.052 10.971l48.128-16.238 1.39 1.024c16.457 11.191 33.938 20.773 52.662 28.819l8.997 45.568c4.023 20.845 19.53 37.302 39.497 43.593l9.728 2.194a405.211 405.211 0 0 0 113.591 3.218l24.65-3.584 7.68-1.828a57.417 57.417 0 0 0 39.496-43.667l8.777-45.129 0.732-0.292a313.576 313.576 0 0 0 52.663-28.745l1.243-1.098 47.543 16.092c19.895 6.583 41.765 2.34 57.344-10.972l6.875-6.948c25.82-28.818 46.52-60.855 61.733-95.378l8.046-19.749 2.267-7.534a56.32 56.32 0 0 0-19.748-55.588l-37.01-29.989 1.096-12.507c0.293-5.413 0.44-10.825 0.44-16.238l-0.44-16.238-1.097-12.58 36.864-29.843a56.247 56.247 0 0 0 19.749-55.954l-2.853-9.362a358.107 358.107 0 0 0-56.466-98.45l-13.97-16.311-5.56-5.34a59.538 59.538 0 0 0-57.05-10.971l-47.69 16.018-1.463-1.024a312.832 312.832 0 0 0-34.377-20.26l-18.87-8.778-8.778-45.129a57.71 57.71 0 0 0-47.104-45.495l-2.12-0.365a407.918 407.918 0 0 0-116.737-2.78z m86.674 65.683l15.287 2.194 14.702 75.19 17.847 6.364a246.155 246.155 0 0 1 68.973 37.669l14.044 10.971 76.068-25.6 10.021 11.703c14.994 19.017 27.575 39.497 37.376 61.367l4.827 11.557-60.854 49.298 3.291 19.163a219.721 219.721 0 0 1 0 74.533l-3.291 19.236 60.708 49.152-4.754 11.703a293.157 293.157 0 0 1-37.376 61.22l-9.948 11.63-76.068-25.6-14.117 11.045c-20.626 16.092-43.74 28.745-68.9 37.669l-17.847 6.363-14.702 75.191 3.292-0.439a337.335 337.335 0 0 1-56.54 4.754l-19.017-0.512a339.017 339.017 0 0 1-19.017-1.609l-15.36-2.267-14.629-75.41-17.92-6.364a244.81 244.81 0 0 1-68.315-37.522l-14.117-10.972-76.58 25.747-9.948-11.776a292.498 292.498 0 0 1-37.376-61.294l-4.9-11.703 61.586-49.664-3.365-19.236a212.992 212.992 0 0 1 0-73.363l3.365-19.236-61.586-49.737 4.9-11.703c9.801-21.65 22.382-42.204 37.45-61.22l9.874-11.85 76.58 25.82 14.117-10.972c20.553-15.945 43.593-28.526 68.388-37.522l17.774-6.29 14.775-75.484-3.291 0.512a340.7 340.7 0 0 1 94.573-2.633z"
+                fill="currentColor"
+              />
+              <path
+                d="M512 365.714a146.286 146.286 0 1 1 0 292.572 146.286 146.286 0 0 1 0-292.572z m0 48.787a97.5 97.5 0 1 0 0 194.998 97.5 97.5 0 0 0 0-194.998z"
+                fill="currentColor"
+              />
+            </svg>
           </button>
           <button
             className="primary"
@@ -1730,7 +1722,7 @@ export default function App() {
                           })
                       : undefined
                   }
-                  displayRunningHint={Boolean(activeSessionIsRunning && row.item.kind === "tool" && childCount > 0 && Boolean(collapsedSubagentRoots[row.item.id]))}
+                  statusHint={resolveCollapsedSubagentStatusHint(row.item, childCount, Boolean(collapsedSubagentRoots[row.item.id]), activeSessionIsRunning)}
                   onOpen={() => setSelectedItem({ sessionTitle: activeSession ? formatSessionTitleForDisplay(activeSession.title) : "当前会话", item: row.item })}
                 />
               );
@@ -1752,11 +1744,20 @@ export default function App() {
                   {activeSession?.permissions.map((permission) => {
                     return (
                       <section className="composer-pending-item" key={permission.requestId}>
-                        <p className="composer-pending-tool">
-                          {summarizeToolTitle(
+                        <p
+                          className="composer-pending-tool"
+                          title={summarizeToolTitle(
                             permission.toolCall.title,
                             permission.toolCall.rawInput,
                             permission.toolCall.toolCallId,
+                          )}
+                        >
+                          {truncatePendingToolLabel(
+                            summarizeToolTitle(
+                              permission.toolCall.title,
+                              permission.toolCall.rawInput,
+                              permission.toolCall.toolCallId,
+                            ),
                           )}
                         </p>
                         <div className="composer-pending-actions">
@@ -2007,10 +2008,6 @@ export default function App() {
       </main>
 
       <aside className="panel approvals">
-        <div className="transcript-header">
-          <h2>会话详情</h2>
-          <p>当前会话会持久化到服务器用户目录，浏览器刷新后会自动恢复。</p>
-        </div>
         {activeSession ? (
           <>
             <section className="details session-meta session-meta-card">
@@ -2075,7 +2072,7 @@ export default function App() {
             <div className="modal-header">
               <div>
                 <h3>VSCode 打开配置</h3>
-                <p className="modal-meta">远程模式需要填写 SSH 用户与主机（如 <code>dev@10.0.0.8</code>）以及目录映射；本地模式只需目录路径。</p>
+                <p className="modal-meta">远程模式需要 SSH 用户与主机（如 <code>dev@10.0.0.8</code>）；本地模式会直接打开当前目录。</p>
               </div>
               <button className="secondary" onClick={() => setVscodeSettingsOpen(false)}>
                 关闭
@@ -2083,15 +2080,6 @@ export default function App() {
             </div>
             <div className="modal-scroll-body">
               <div className="details">
-                <div className="vscode-settings-help">
-                  <p><strong>需要配置的内容：</strong></p>
-                  <ul>
-                    <li><code>打开模式</code>：远程 SSH 或本地目录。</li>
-                    <li><code>SSH 主机</code>：远程模式必填，格式如 <code>user@host</code>。</li>
-                    <li><code>本地根目录</code>：当前 patrol 里的目录前缀。</li>
-                    <li><code>远程根目录</code>：远端服务器上对应的目录前缀。</li>
-                  </ul>
-                </div>
                 <label htmlFor="vscode-open-mode">打开模式</label>
                 <select
                   id="vscode-open-mode"
@@ -2099,53 +2087,41 @@ export default function App() {
                   onChange={(event) => {
                     const nextMode = event.target.value === "remote" ? "remote" : "local";
                     setVscodeLaunchConfig((current) => ({ ...current, mode: nextMode }));
+                    setVscodeLaunchNotice("");
                   }}
                 >
                   <option value="remote">远程 SSH</option>
                   <option value="local">本地目录</option>
                 </select>
 
-                <label htmlFor="vscode-open-ssh-host">SSH 主机</label>
-                <input
-                  id="vscode-open-ssh-host"
-                  placeholder="如 user@server"
-                  value={vscodeLaunchConfig.sshHost}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setVscodeLaunchConfig((current) => ({ ...current, sshHost: value }));
-                  }}
-                />
-
-                <label htmlFor="vscode-open-local-base">本地根目录（用于映射）</label>
-                <input
-                  id="vscode-open-local-base"
-                  placeholder="如 /workspace/leduo-patrol"
-                  value={vscodeLaunchConfig.localBasePath}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setVscodeLaunchConfig((current) => ({ ...current, localBasePath: value }));
-                  }}
-                />
-
-                <label htmlFor="vscode-open-remote-base">远程根目录（用于映射）</label>
-                <input
-                  id="vscode-open-remote-base"
-                  placeholder="如 /home/dev/leduo-patrol"
-                  value={vscodeLaunchConfig.sshBasePath}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setVscodeLaunchConfig((current) => ({ ...current, sshBasePath: value }));
-                  }}
-                />
+                {vscodeLaunchConfig.mode === "remote" ? (
+                  <>
+                    <label htmlFor="vscode-open-ssh-host">SSH 主机</label>
+                    <input
+                      id="vscode-open-ssh-host"
+                      placeholder="如 user@server"
+                      value={vscodeLaunchConfig.sshHost}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setVscodeLaunchConfig((current) => ({ ...current, sshHost: value }));
+                        setVscodeLaunchNotice("");
+                      }}
+                    />
+                  </>
+                ) : null}
 
                 <div className="session-meta-item session-meta-item-wide">
                   <span>当前一键打开目标</span>
                   <code>{workspaceForLaunch || "(未选择目录)"}</code>
                 </div>
                 {vscodeLaunchError ? <p className="modal-meta">{vscodeLaunchError}</p> : null}
+                {vscodeLaunchNotice ? <p className="modal-meta">{vscodeLaunchNotice}</p> : null}
                 <div className="session-meta-actions vscode-settings-actions">
                   <button className="secondary" onClick={() => openWorkspaceInVscode(activeSession?.workspacePath ?? config?.workspacePath ?? "")} disabled={!canOpenWorkspaceInVscode}>
                     立即打开当前目录
+                  </button>
+                  <button className="secondary" onClick={saveVscodeLaunchConfig}>
+                    保存配置
                   </button>
                 </div>
               </div>
@@ -2396,7 +2372,7 @@ function TimelineRow(props: {
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   onOpen: () => void;
-  displayRunningHint?: boolean;
+  statusHint?: "running" | "completed" | null;
 }) {
   const kindLabel = labelForKind(props.item.kind, props.item.title);
   const expandedPreview = shouldUseExpandedPreview(props.item);
@@ -2418,7 +2394,7 @@ function TimelineRow(props: {
               props.onToggleCollapse?.();
             }}
           >
-            {props.collapsed ? "▸" : "▾"} 子项 {props.childCount}{props.displayRunningHint ? " · 运行中" : ""}
+            {props.collapsed ? "▸" : "▾"} 子项 {props.childCount}{props.statusHint === "running" ? " · 运行中" : props.statusHint === "completed" ? " · 已完成" : ""}
           </span>
         ) : null}
       </span>
@@ -2494,19 +2470,13 @@ function canMergeToolTimelineItem(existingItem: TimelineItem, incomingItem: Time
   if (existingMeta?.toolCallId !== toolCallId || incomingMeta?.toolCallId !== toolCallId) {
     return false;
   }
-  const existingTitle = normalizeToolTitleForMerge(existingMeta.title ?? existingItem.title);
-  const incomingTitle = normalizeToolTitleForMerge(incomingMeta.title ?? incomingItem.title);
   const existingIsSubagent = isSubagentToolTitle(existingMeta.title);
   const incomingIsSubagent = isSubagentToolTitle(incomingMeta.title);
 
   if (existingIsSubagent || incomingIsSubagent) {
-    return existingIsSubagent && incomingIsSubagent && existingTitle === incomingTitle;
+    return false;
   }
   return true;
-}
-
-function normalizeToolTitleForMerge(title: string | null) {
-  return (title ?? "").trim().toLowerCase();
 }
 
 function mergeToolTimelineItems(existingItem: TimelineItem, incomingItem: TimelineItem) {
@@ -2543,8 +2513,15 @@ function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
     }
 
     const isTerminalByToolCall = Boolean(toolMeta?.toolCallId && isTerminalToolStatus(toolMeta.status));
-    if (isTerminalByToolCall && closeSubagentRoot(activeRoots, toolMeta?.toolCallId ?? null, false)) {
-      continue;
+    if (isTerminalByToolCall) {
+      const closedRoot = closeSubagentRoot(activeRoots, toolMeta?.toolCallId ?? null, false);
+      if (closedRoot) {
+        const row = rows[closedRoot.rowIndex];
+        if (row) {
+          row.item = { ...item, id: row.item.id };
+        }
+        continue;
+      }
     }
 
     if (!shouldHandleAsSubagent) {
@@ -2565,8 +2542,12 @@ function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
     const isTerminal = isTerminalToolStatus(subagentToolMeta.status);
 
     if (isTerminal) {
-      const closed = closeSubagentRoot(activeRoots, subagentToolMeta.toolCallId ?? null);
-      if (closed) {
+      const closedRoot = closeSubagentRoot(activeRoots, subagentToolMeta.toolCallId ?? null);
+      if (closedRoot) {
+        const row = rows[closedRoot.rowIndex];
+        if (row) {
+          row.item = { ...item, id: row.item.id };
+        }
         continue;
       }
     }
@@ -2590,22 +2571,21 @@ function closeSubagentRoot(
   activeRoots: Array<{ rootId: string; toolCallId: string | null; rowIndex: number }>,
   toolCallId: string | null,
   allowFallback = true,
-) {
+): { rootId: string; toolCallId: string | null; rowIndex: number } | null {
   if (toolCallId) {
     for (let i = activeRoots.length - 1; i >= 0; i -= 1) {
       if (activeRoots[i]?.toolCallId === toolCallId) {
-        activeRoots.splice(i, 1);
-        return true;
+        const [closedRoot] = activeRoots.splice(i, 1);
+        return closedRoot ?? null;
       }
     }
   }
 
   if (allowFallback && activeRoots.length > 0) {
-    activeRoots.pop();
-    return true;
+    return activeRoots.pop() ?? null;
   }
 
-  return false;
+  return null;
 }
 
 
@@ -2621,6 +2601,29 @@ function buildSubagentSummaryFromChild(title: string | null) {
     return null;
   }
   return normalized;
+}
+
+
+function resolveCollapsedSubagentStatusHint(item: TimelineItem, childCount: number, collapsed: boolean, sessionRunning: boolean): "running" | "completed" | null {
+  if (item.kind !== "tool" || childCount < 1 || !collapsed) {
+    return null;
+  }
+  const status = readToolMeta(item)?.status?.toLowerCase() ?? "";
+  if (status === "completed") {
+    return "completed";
+  }
+  if (status === "running" || sessionRunning) {
+    return "running";
+  }
+  return null;
+}
+
+function truncatePendingToolLabel(label: string, max = 220) {
+  const normalized = toSingleLine(label);
+  if (normalized.length <= max) {
+    return normalized;
+  }
+  return `${normalized.slice(0, max - 1)}…`;
 }
 
 function countChildrenByRoot(rows: TimelineTreeRow[]) {
@@ -4291,6 +4294,7 @@ function PermissionModal(props: {
     rawInput: props.permission.toolCall.rawInput,
   });
   const planText = extractPlanText(props.permission.toolCall.rawInput);
+  const rawCommandText = extractPermissionRawCommand(props.permission.toolCall.rawInput);
   return (
     <div className="modal-backdrop" onClick={props.onClose}>
       <div className="modal-card" onClick={(event) => event.stopPropagation()}>
@@ -4310,6 +4314,12 @@ function PermissionModal(props: {
           ) : (
             <ToolCallDetailView body={body} />
           )}
+          {rawCommandText ? (
+            <>
+              <label htmlFor="permission-raw-command">完整命令</label>
+              <textarea id="permission-raw-command" className="permission-command-textarea" value={rawCommandText} readOnly />
+            </>
+          ) : null}
         </div>
         <div className="modal-footer">
           {props.permission.options.map((option) => (
@@ -4538,6 +4548,27 @@ function classNameForDiffLine(line: string) {
   }
   if (line.startsWith("-")) {
     return "diff-line-remove";
+  }
+  return "";
+}
+
+
+function extractPermissionRawCommand(rawInput: unknown): string {
+  const candidates: unknown[] = [rawInput];
+  const rootRecord = asRecord(rawInput) ?? asRecord(tryParseJson(rawInput));
+  if (rootRecord) {
+    candidates.push(rootRecord.command, rootRecord.cmd, rootRecord.text, rootRecord.script);
+    for (const nestedKey of ["rawInput", "input", "args", "payload", "params"]) {
+      const nested = asRecord(rootRecord[nestedKey]) ?? asRecord(tryParseJson(rootRecord[nestedKey]));
+      if (nested) {
+        candidates.push(nested.command, nested.cmd, nested.text, nested.script);
+      }
+    }
+  }
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
   }
   return "";
 }
