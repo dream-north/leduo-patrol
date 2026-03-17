@@ -483,7 +483,24 @@ export class SessionManager {
             clientSessionId,
             requestId: event.payload.requestId,
           });
-          break;
+          // Emit question_requested (NOT the original permission_requested) so
+          // the frontend shows the proper question panel with a text input
+          // instead of a raw permission dialog.  Return early to skip the
+          // default re-emission of the original event at the bottom of this
+          // method.
+          entry.snapshot.updatedAt = new Date().toISOString();
+          this.schedulePersist();
+          this.emit({
+            type: "question_requested",
+            payload: {
+              clientSessionId,
+              questionId,
+              question: questionText,
+              options: [] as Array<{ id: string; label: string }>,
+              allowCustomAnswer: true,
+            },
+          } as unknown as SocketEvent);
+          return;
         }
 
         const permission: PermissionSnapshot = {

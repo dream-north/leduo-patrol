@@ -316,6 +316,68 @@ test("handleSessionEvent: AskUserQuestion permission_requested still creates que
   assert.equal(entry.snapshot.permissions.length, 0);
 });
 
+test("handleSessionEvent: AskUserQuestion permission_requested emits question_requested (not permission_requested)", () => {
+  const manager = new SessionManager({ allowedRoots: [process.cwd()], agentBinPath: "claude" });
+
+  (manager as any).sessions.set("s1", {
+    snapshot: {
+      clientSessionId: "s1",
+      title: "demo",
+      workspacePath: process.cwd(),
+      connectionState: "connected",
+      sessionId: "x",
+      modes: [],
+      defaultModeId: "default",
+      currentModeId: "default",
+      busy: true,
+      timeline: [],
+      historyTotal: 0,
+      historyStart: 0,
+      permissions: [],
+      questions: [],
+      availableCommands: [],
+      updatedAt: new Date().toISOString(),
+    },
+    acpSession: null,
+    connectPromise: null,
+    fullTimeline: [],
+  });
+
+  // Capture emitted events
+  const emitted: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  (manager as any).subscribe((event: { type: string; payload: Record<string, unknown> }) => {
+    emitted.push(event);
+  });
+
+  (manager as any).handleSessionEvent("s1", {
+    type: "permission_requested",
+    payload: {
+      requestId: "req-ask-2",
+      toolCall: {
+        toolCallId: "tc-ask-2",
+        title: "AskUserQuestion",
+        status: "pending",
+        rawInput: { question: "你需要哪种颜色？" },
+      },
+      options: [
+        { optionId: "allow", name: "Answer", kind: "allow_once" },
+        { optionId: "reject", name: "Reject", kind: "reject_once" },
+      ],
+    },
+  });
+
+  // The emitted event should be question_requested, NOT permission_requested
+  assert.ok(emitted.length > 0, "should have emitted at least one event");
+  const questionEvent = emitted.find((e) => e.type === "question_requested");
+  assert.ok(questionEvent, "should emit question_requested event");
+  assert.equal((questionEvent!.payload as any).question, "你需要哪种颜色？");
+  assert.equal((questionEvent!.payload as any).allowCustomAnswer, true);
+  assert.equal((questionEvent!.payload as any).clientSessionId, "s1");
+  // Should NOT emit permission_requested to the frontend
+  const permissionEvent = emitted.find((e) => e.type === "permission_requested");
+  assert.equal(permissionEvent, undefined, "should NOT emit permission_requested for AskUserQuestion");
+});
+
 test("handleSessionEvent: AskUserQuestion tool_call_update with failed status shows as completed", () => {
   const manager = new SessionManager({ allowedRoots: [process.cwd()], agentBinPath: "claude" });
 
