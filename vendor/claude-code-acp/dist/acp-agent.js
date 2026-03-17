@@ -582,9 +582,9 @@ export class ClaudeAcpAgent {
                 };
             }
             // ── leduo-patrol patch: intercept native Read/Write/AskUserQuestion ──
-            // When the LLM ignores disallowedTools and still calls the native
-            // tools (Read, Write, AskUserQuestion), handle them so the user
-            // experience is identical to the mcp__acp__-prefixed counterparts.
+            // When the LLM calls native tools (Read, Write, AskUserQuestion)
+            // instead of the mcp__acp__-prefixed counterparts, handle them so
+            // the user experience is identical.
 
             // Native Read / Write: simply allow — the native handler executes
             // on the local filesystem (same machine as the ACP agent) and
@@ -604,12 +604,13 @@ export class ClaudeAcpAgent {
                 };
             }
 
-            // Native AskUserQuestion: the native handler uses stdin which
-            // doesn't work in ACP, so we must intercept it.  We route it
-            // through requestPermission → session-manager converts to the
-            // question panel.  We return "deny" with the user's answer so
-            // Claude receives it; the session-manager overrides the status
-            // to "completed" in the timeline for a seamless display.
+            // Native AskUserQuestion: we keep it visible to Claude (not in
+            // disallowedTools) so it can call it.  The native handler uses
+            // stdin which doesn't work in ACP, so we intercept it here and
+            // route it through requestPermission → session-manager converts
+            // to the question panel.  We return "deny" with the user's answer
+            // so Claude receives the answer; the session-manager overrides the
+            // status to "completed" in the timeline for a seamless display.
             if (toolName === "AskUserQuestion") {
                 const response = await this.client.requestPermission({
                     options: [
@@ -892,8 +893,12 @@ export class ClaudeAcpAgent {
             options.sessionId = sessionId;
         }
         const allowedTools = [];
-        // Disable this for now, not a great way to expose this over ACP at the moment (in progress work so we can revisit)
-        const disallowedTools = ["AskUserQuestion"];
+        // leduo-patrol: AskUserQuestion is NOT disallowed here — we keep
+        // it visible to Claude so it can call it.  The canUseTool() patch
+        // intercepts the call and routes it through requestPermission →
+        // session-manager question panel, giving the user a seamless
+        // question UI.  (The native stdin-based handler never runs.)
+        const disallowedTools = [];
         // Check if built-in tools should be disabled
         const disableBuiltInTools = params._meta?.disableBuiltInTools === true;
         if (!disableBuiltInTools) {

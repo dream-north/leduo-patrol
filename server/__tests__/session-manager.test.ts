@@ -359,6 +359,7 @@ test("handleSessionEvent: AskUserQuestion tool_call_update with failed status sh
   });
 
   const entry = (manager as any).sessions.get("s1");
+  assert.ok(entry.fullTimeline.length > 0, "timeline should have at least one entry");
   const lastItem = entry.fullTimeline[entry.fullTimeline.length - 1];
   // The meta should be "completed", not "failed"
   assert.equal(lastItem.meta, "completed");
