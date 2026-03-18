@@ -34,6 +34,7 @@ type TimelineItem = {
   body: string;
   meta?: string;
   images?: Array<{ data: string; mimeType: string }>;
+  parentToolCallId?: string;
 };
 
 type TimelineTreeRow = {
@@ -46,7 +47,7 @@ type TimelineTreeRow = {
 type PermissionPayload = {
   clientSessionId: string;
   requestId: string;
-  toolCall: { toolCallId: string; title?: string; status?: string; rawInput?: unknown };
+  toolCall: { toolCallId: string; title?: string; status?: string; rawInput?: unknown; _meta?: unknown };
   options: Array<{ optionId: string; name: string; kind: string }>;
 };
 
@@ -363,6 +364,7 @@ export default function App() {
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
   const toastTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const completionCollapsedRef = useRef<Set<string>>(new Set());
 
   const activeSession = sessions.find((session) => session.clientSessionId === activeSessionId) ?? null;
   const promptText = activeSessionId ? (promptDraftBySessionId[activeSessionId] ?? "") : "";
@@ -546,7 +548,24 @@ export default function App() {
           continue;
         }
         const childCount = rootChildCount[row.item.id] ?? 0;
-        if (childCount < 1 || !isSubagentToolTitle(row.item.title) || row.item.id in next) {
+        if (childCount < 1 || !isSubagentToolTitle(row.item.title)) {
+          continue;
+        }
+
+        // Force-collapse once when a sub-agent task completes
+        const status = readToolMeta(row.item)?.status ?? null;
+        const isCompleted = isTerminalToolStatus(status);
+        if (isCompleted && !completionCollapsedRef.current.has(row.item.id)) {
+          completionCollapsedRef.current.add(row.item.id);
+          if (next[row.item.id] !== true) {
+            next[row.item.id] = true;
+            changed = true;
+          }
+          continue;
+        }
+
+        // Initialize new roots as collapsed
+        if (row.item.id in next) {
           continue;
         }
         next[row.item.id] = true;
@@ -892,6 +911,7 @@ export default function App() {
             }
           }
           if (existingIndex >= 0) {
+            console.debug("[subagent-tree] upsert toolCallId=%s action=merge existingIndex=%d", nextToolCallId, existingIndex);
             const updatedTimeline = [...session.timeline];
             updatedTimeline[existingIndex] = mergeToolTimelineItems(updatedTimeline[existingIndex] ?? nextItem, nextItem);
             return {
@@ -902,6 +922,7 @@ export default function App() {
           }
         }
 
+        console.debug("[subagent-tree] upsert toolCallId=%s action=append parentToolCallId=%s", nextToolCallId, nextItem.parentToolCallId ?? "none");
         return {
           ...session,
           timeline: [...session.timeline, normalizeTimelineItem(nextItem)],
@@ -912,14 +933,14 @@ export default function App() {
     );
   }
 
-  function appendSessionTextChunk(clientSessionId: string, kind: TimelineItem["kind"], title: string, text: string) {
+  function appendSessionTextChunk(clientSessionId: string, kind: TimelineItem["kind"], title: string, text: string, parentToolCallId?: string) {
     setSessions((current) =>
       current.map((session) => {
         if (session.clientSessionId !== clientSessionId) {
           return session;
         }
         const lastItem = session.timeline.at(-1);
-        if (lastItem && lastItem.kind === kind && lastItem.title === title && !lastItem.meta) {
+        if (lastItem && lastItem.kind === kind && lastItem.title === title && !lastItem.meta && (lastItem.parentToolCallId ?? undefined) === parentToolCallId) {
           return {
             ...session,
             timeline: [
@@ -941,6 +962,7 @@ export default function App() {
               kind,
               title,
               body: text,
+              parentToolCallId,
               },
             ],
             historyTotal: session.historyTotal + 1,
@@ -1100,6 +1122,7 @@ export default function App() {
           title: message.payload.toolCall.title,
           status: message.payload.toolCall.status ?? "pending",
           rawInput: message.payload.toolCall.rawInput,
+          _meta: message.payload.toolCall._meta,
         });
         break;
       case "permission_resolved":
@@ -1199,7 +1222,8 @@ export default function App() {
       case "agent_message_chunk": {
         const chunkText = extractChunkText(update.content);
         if (chunkText) {
-          appendSessionTextChunk(clientSessionId, "agent", "Claude", chunkText);
+          const parentToolCallId = extractParentToolCallId(update as Record<string, unknown>);
+          appendSessionTextChunk(clientSessionId, "agent", "Claude", chunkText, parentToolCallId);
         }
         break;
       }
@@ -1213,7 +1237,8 @@ export default function App() {
       case "agent_thought_chunk": {
         const chunkText = extractChunkText(update.content);
         if (chunkText) {
-          appendSessionTextChunk(clientSessionId, "thought", "思路", chunkText);
+          const parentToolCallId = extractParentToolCallId(update as Record<string, unknown>);
+          appendSessionTextChunk(clientSessionId, "thought", "思路", chunkText, parentToolCallId);
         }
         break;
       }
@@ -1221,14 +1246,17 @@ export default function App() {
       case "tool_call_update":
         upsertToolTimeline(clientSessionId, update);
         break;
-      case "plan":
+      case "plan": {
+        const parentToolCallId = extractParentToolCallId(update as Record<string, unknown>);
         appendSessionTimeline(clientSessionId, {
           id: makeId(),
           kind: "system",
           title: "执行计划",
           body: stringifyMaybe(update.entries ?? update),
+          parentToolCallId,
         });
         break;
+      }
       case "current_mode_update": {
         const nextModeId = String(update.currentModeId ?? "").trim();
         updateSession(clientSessionId, (session) => ({
@@ -1726,9 +1754,7 @@ export default function App() {
                       ? () =>
                           setCollapsedSubagentRoots((current) => {
                             if (current[row.item.id]) {
-                              const next = { ...current };
-                              delete next[row.item.id];
-                              return next;
+                              return { ...current, [row.item.id]: false };
                             }
                             return { ...current, [row.item.id]: true };
                           })
@@ -2423,6 +2449,10 @@ function TimelineRow(props: {
 
 function buildToolTimelineItem(update: SessionUpdate): TimelineItem {
   const normalizedTitle = normalizeAcpToolTitle(update.title) || undefined;
+  const parentToolCallId = extractParentToolCallId(update as Record<string, unknown>);
+  console.debug("[subagent-tree] buildToolItem toolCallId=%s parentToolCallId=%s _meta=%s",
+    update.toolCallId, parentToolCallId ?? "none",
+    JSON.stringify(asRecord(update._meta)));
   return {
     id: makeId(),
     kind: "tool",
@@ -2433,8 +2463,10 @@ function buildToolTimelineItem(update: SessionUpdate): TimelineItem {
       status: update.status,
       rawInput: update.rawInput,
       rawOutput: update.rawOutput,
+      parentToolCallId,
     }),
     meta: String(update.status ?? update.sessionUpdate),
+    parentToolCallId,
   };
 }
 
@@ -2495,17 +2527,27 @@ function mergeToolTimelineItems(existingItem: TimelineItem, incomingItem: Timeli
   const existingEntries = parseToolTimelineEntries(existingItem.body);
   const incomingEntries = parseToolTimelineEntries(incomingItem.body);
   const mergedEntries = [...existingEntries, ...incomingEntries];
+  const mergedParent = incomingItem.parentToolCallId ?? existingItem.parentToolCallId;
+  if (existingItem.parentToolCallId && !incomingItem.parentToolCallId) {
+    console.debug("[subagent-tree] merge preserved parentToolCallId=%s from=existing", existingItem.parentToolCallId);
+  }
   return {
     ...incomingItem,
     id: existingItem.id,
     title: resolveToolDisplayTitle(mergedEntries, incomingItem.title),
     body: stringifyMaybe(mergedEntries),
+    parentToolCallId: mergedParent,
   } satisfies TimelineItem;
 }
 
 function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
   const rows: TimelineTreeRow[] = [];
-  const activeRoots: Array<{ rootId: string; toolCallId: string | null; rowIndex: number }> = [];
+  const activeRoots: Array<{ rootId: string; toolCallId: string | null; rowIndex: number; depth: number }> = [];
+  // Track the most-recently-matched root for temporal-locality fallback.
+  // When parent_tool_use_id is missing from the stream, consecutive items
+  // from the same sub-agent context tend to arrive together — so re-using
+  // the last matched root is a reasonable heuristic.
+  let lastMatchedRoot: { rootId: string; toolCallId: string | null; rowIndex: number; depth: number } | null = null;
 
   for (const item of items) {
     const toolMeta = readToolMeta(item);
@@ -2514,7 +2556,7 @@ function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
     if (toolMeta?.toolCallId) {
       const candidateSummary = buildSubagentSummaryFromChild(toolMeta.title);
       if (candidateSummary) {
-        const matchedRoot = [...activeRoots].reverse().find((root) => root.toolCallId === toolMeta.toolCallId);
+        const matchedRoot = findParentRoot(activeRoots, item.parentToolCallId, toolMeta.toolCallId);
         if (matchedRoot) {
           const row = rows[matchedRoot.rowIndex];
           if (row && !row.displayTitle) {
@@ -2532,16 +2574,40 @@ function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
         if (row) {
           row.item = { ...item, id: row.item.id };
         }
+        // If the closed root was the lastMatchedRoot, clear it so we don't
+        // route subsequent items to a closed root.
+        if (lastMatchedRoot?.rootId === closedRoot.rootId) {
+          lastMatchedRoot = null;
+        }
         continue;
       }
     }
 
     if (!shouldHandleAsSubagent) {
-      const activeRootId = activeRoots.at(-1)?.rootId ?? null;
+      let parentRoot = findParentRoot(activeRoots, item.parentToolCallId, toolMeta?.toolCallId);
+      // Temporal-locality fallback: if findParentRoot returned null because
+      // of multi-root ambiguity, check whether the lastMatchedRoot is still
+      // active and re-use it.  This covers the common case where
+      // parent_tool_use_id is missing from the Claude Code stream.
+      if (!parentRoot && activeRoots.length > 1 && lastMatchedRoot) {
+        const stillActive = activeRoots.some((r) => r.rootId === lastMatchedRoot!.rootId);
+        if (stillActive) {
+          parentRoot = lastMatchedRoot;
+          console.debug("[subagent-tree] child id=%s kind=%s → root=%s depth=%d (temporal fallback)", item.id, item.kind, parentRoot.rootId, parentRoot.depth + 1);
+        }
+      }
+      if (parentRoot) {
+        if (parentRoot !== lastMatchedRoot) {
+          console.debug("[subagent-tree] child id=%s kind=%s → root=%s depth=%d", item.id, item.kind, parentRoot.rootId, parentRoot.depth + 1);
+        }
+        lastMatchedRoot = parentRoot;
+      } else if (activeRoots.length > 0) {
+        console.debug("[subagent-tree] orphan id=%s kind=%s parentToolCallId=%s activeRoots=%d", item.id, item.kind, item.parentToolCallId ?? "none", activeRoots.length);
+      }
       rows.push({
         item,
-        depth: activeRootId ? activeRoots.length : 0,
-        rootId: activeRootId,
+        depth: parentRoot ? parentRoot.depth + 1 : 0,
+        rootId: parentRoot?.rootId ?? null,
       });
       continue;
     }
@@ -2560,19 +2626,24 @@ function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
         if (row) {
           row.item = { ...item, id: row.item.id };
         }
+        if (lastMatchedRoot?.rootId === closedRoot.rootId) {
+          lastMatchedRoot = null;
+        }
         continue;
       }
     }
 
-    const activeRootId = activeRoots.at(-1)?.rootId ?? null;
+    const parentRoot = findParentRoot(activeRoots, item.parentToolCallId, subagentToolMeta.toolCallId, false);
+    const depth = parentRoot ? parentRoot.depth + 1 : 0;
     rows.push({
       item,
-      depth: activeRootId ? activeRoots.length : 0,
-      rootId: activeRootId,
+      depth,
+      rootId: parentRoot?.rootId ?? null,
     });
 
     if (!isTerminal) {
-      activeRoots.push({ rootId: item.id, toolCallId: subagentToolMeta.toolCallId, rowIndex: rows.length - 1 });
+      activeRoots.push({ rootId: item.id, toolCallId: subagentToolMeta.toolCallId, rowIndex: rows.length - 1, depth });
+      console.debug("[subagent-tree] open root id=%s toolCallId=%s depth=%d", item.id, subagentToolMeta.toolCallId, depth);
     }
   }
 
@@ -2580,23 +2651,68 @@ function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
 }
 
 function closeSubagentRoot(
-  activeRoots: Array<{ rootId: string; toolCallId: string | null; rowIndex: number }>,
+  activeRoots: Array<{ rootId: string; toolCallId: string | null; rowIndex: number; depth: number }>,
   toolCallId: string | null,
   allowFallback = true,
-): { rootId: string; toolCallId: string | null; rowIndex: number } | null {
+): { rootId: string; toolCallId: string | null; rowIndex: number; depth: number } | null {
   if (toolCallId) {
     for (let i = activeRoots.length - 1; i >= 0; i -= 1) {
       if (activeRoots[i]?.toolCallId === toolCallId) {
         const [closedRoot] = activeRoots.splice(i, 1);
+        console.debug("[subagent-tree] close root id=%s toolCallId=%s", closedRoot?.rootId, toolCallId);
         return closedRoot ?? null;
       }
     }
   }
 
-  if (allowFallback && activeRoots.length > 0) {
-    return activeRoots.pop() ?? null;
+  if (allowFallback && activeRoots.length === 1) {
+    const closedRoot = activeRoots.pop() ?? null;
+    console.debug("[subagent-tree] close root fallback=used id=%s", closedRoot?.rootId);
+    return closedRoot;
   }
 
+  if (allowFallback && activeRoots.length > 1) {
+    console.debug("[subagent-tree] close root fallback=rejected activeRoots=%d toolCallId=%s", activeRoots.length, toolCallId);
+  }
+
+  return null;
+}
+
+/**
+ * Find the parent root for a child item.
+ * Priority: parentToolCallId (explicit) > toolCallId (self-match) > single active root (fallback).
+ * When allowFallback is false, only explicit matches are considered (used for subagent nesting).
+ * Fallback is only used when exactly one root is active to prevent misattribution with concurrent sub-agents.
+ */
+function findParentRoot(
+  activeRoots: Array<{ rootId: string; toolCallId: string | null; rowIndex: number; depth: number }>,
+  parentToolCallId: string | undefined,
+  toolCallId: string | null | undefined,
+  allowFallback = true,
+): { rootId: string; toolCallId: string | null; rowIndex: number; depth: number } | null {
+  if (parentToolCallId) {
+    for (let i = activeRoots.length - 1; i >= 0; i -= 1) {
+      if (activeRoots[i]?.toolCallId === parentToolCallId) {
+        console.debug("[subagent-tree] findParent matched=%s method=parentToolCallId activeRoots=%d", activeRoots[i]?.rootId, activeRoots.length);
+        return activeRoots[i]!;
+      }
+    }
+  }
+  if (toolCallId) {
+    for (let i = activeRoots.length - 1; i >= 0; i -= 1) {
+      if (activeRoots[i]?.toolCallId === toolCallId) {
+        console.debug("[subagent-tree] findParent matched=%s method=toolCallId activeRoots=%d", activeRoots[i]?.rootId, activeRoots.length);
+        return activeRoots[i]!;
+      }
+    }
+  }
+  if (allowFallback && activeRoots.length === 1) {
+    console.debug("[subagent-tree] findParent fallback=used activeRoots=1 root=%s", activeRoots[0]?.rootId);
+    return activeRoots[0]!;
+  }
+  if (allowFallback && activeRoots.length > 1) {
+    console.debug("[subagent-tree] findParent fallback=rejected activeRoots=%d (multi-root, no match)", activeRoots.length);
+  }
   return null;
 }
 
@@ -2768,6 +2884,7 @@ function formatToolDetails(details: {
   status?: unknown;
   rawInput?: unknown;
   rawOutput?: unknown;
+  parentToolCallId?: string;
 }) {
   return stringifyMaybe({
     toolCallId: details.toolCallId,
@@ -2775,6 +2892,7 @@ function formatToolDetails(details: {
     status: details.status,
     rawInput: details.rawInput,
     rawOutput: details.rawOutput,
+    ...(details.parentToolCallId ? { parentToolCallId: details.parentToolCallId } : undefined),
   });
 }
 
@@ -2790,6 +2908,13 @@ function formatToolBody(details: {
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function extractParentToolCallId(update: Record<string, unknown>): string | undefined {
+  const meta = asRecord(update._meta);
+  const claudeCode = asRecord(meta?.claudeCode);
+  const parentId = claudeCode?.parentToolUseId;
+  return typeof parentId === "string" && parentId ? parentId : undefined;
 }
 
 function extractPlanText(value: unknown) {
@@ -4761,4 +4886,7 @@ export const appTestables = {
   truncateUnknownText,
   shouldKeepSessionRunningAfterPromptFinished,
   groupQuestionsByGroup,
+  mergeToolTimelineItems,
+  readToolMeta,
+  isTerminalToolStatus,
 };

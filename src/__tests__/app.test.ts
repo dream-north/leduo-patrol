@@ -329,6 +329,184 @@ test("app timeline tree helpers support concurrent subagent roots by toolCallId"
   assert.equal(rows[2]?.rootId, "task-2");
 });
 
+test("app timeline tree parallel subagents are siblings at same depth with children routed by toolCallId", () => {
+  // Children share the same toolCallId as their parent (legacy / self-match path)
+  const rows = appTestables.buildTimelineTreeRows([
+    {
+      id: "task-1",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-1", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "task-2",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-2", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "task-3",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-3", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "child-of-1",
+      kind: "tool",
+      title: "Read",
+      body: JSON.stringify({ toolCallId: "tc-1", title: "Read", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "child-of-2",
+      kind: "tool",
+      title: "Bash",
+      body: JSON.stringify({ toolCallId: "tc-2", title: "Bash", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "child-of-3",
+      kind: "tool",
+      title: "Write",
+      body: JSON.stringify({ toolCallId: "tc-3", title: "Write", status: "running" }),
+      meta: "running",
+    },
+  ]);
+
+  // All three tasks should be at depth 0 (siblings, not nested)
+  assert.equal(rows[0]?.depth, 0);
+  assert.equal(rows[0]?.rootId, null);
+  assert.equal(rows[1]?.depth, 0);
+  assert.equal(rows[1]?.rootId, null);
+  assert.equal(rows[2]?.depth, 0);
+  assert.equal(rows[2]?.rootId, null);
+
+  // Children should be at depth 1 under the correct parent
+  assert.equal(rows[3]?.depth, 1);
+  assert.equal(rows[3]?.rootId, "task-1");
+  assert.equal(rows[4]?.depth, 1);
+  assert.equal(rows[4]?.rootId, "task-2");
+  assert.equal(rows[5]?.depth, 1);
+  assert.equal(rows[5]?.rootId, "task-3");
+
+  // Each root should have exactly 1 child
+  const counts = appTestables.countChildrenByRoot(rows);
+  assert.equal(counts["task-1"], 1);
+  assert.equal(counts["task-2"], 1);
+  assert.equal(counts["task-3"], 1);
+});
+
+test("app timeline tree parallel subagents route children via parentToolCallId", () => {
+  // Realistic scenario: children have their OWN toolCallId and use
+  // parentToolCallId to link to the parent Task.
+  const rows = appTestables.buildTimelineTreeRows([
+    {
+      id: "task-a",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-a", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "task-b",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-b", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "task-c",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-c", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    // child tool calls have their own IDs and explicit parentToolCallId
+    {
+      id: "agent-text-a",
+      kind: "agent",
+      title: "Claude",
+      body: "Working on task A",
+      parentToolCallId: "tc-a",
+    },
+    {
+      id: "read-a",
+      kind: "tool",
+      title: "Read",
+      body: JSON.stringify({ toolCallId: "child-read-1", title: "Read", status: "running" }),
+      meta: "running",
+      parentToolCallId: "tc-a",
+    },
+    {
+      id: "agent-text-b",
+      kind: "agent",
+      title: "Claude",
+      body: "Working on task B",
+      parentToolCallId: "tc-b",
+    },
+    {
+      id: "grep-b",
+      kind: "tool",
+      title: "Grep",
+      body: JSON.stringify({ toolCallId: "child-grep-1", title: "Grep", status: "running" }),
+      meta: "running",
+      parentToolCallId: "tc-b",
+    },
+    {
+      id: "agent-text-c",
+      kind: "agent",
+      title: "Claude",
+      body: "Working on task C",
+      parentToolCallId: "tc-c",
+    },
+    {
+      id: "bash-c",
+      kind: "tool",
+      title: "Bash",
+      body: JSON.stringify({ toolCallId: "child-bash-1", title: "Bash", status: "completed" }),
+      meta: "completed",
+      parentToolCallId: "tc-c",
+    },
+    // More interleaved children
+    {
+      id: "read-a2",
+      kind: "tool",
+      title: "Read",
+      body: JSON.stringify({ toolCallId: "child-read-2", title: "Read", status: "completed" }),
+      meta: "completed",
+      parentToolCallId: "tc-a",
+    },
+  ]);
+
+  // All three tasks at depth 0
+  assert.equal(rows[0]?.depth, 0, "task-a depth");
+  assert.equal(rows[1]?.depth, 0, "task-b depth");
+  assert.equal(rows[2]?.depth, 0, "task-c depth");
+
+  // Agent text + tool children routed to correct parents
+  assert.equal(rows[3]?.rootId, "task-a", "agent-text-a → task-a");
+  assert.equal(rows[4]?.rootId, "task-a", "read-a → task-a");
+  assert.equal(rows[5]?.rootId, "task-b", "agent-text-b → task-b");
+  assert.equal(rows[6]?.rootId, "task-b", "grep-b → task-b");
+  assert.equal(rows[7]?.rootId, "task-c", "agent-text-c → task-c");
+  assert.equal(rows[8]?.rootId, "task-c", "bash-c → task-c");
+  assert.equal(rows[9]?.rootId, "task-a", "read-a2 → task-a");
+
+  // All children at depth 1
+  for (let i = 3; i <= 9; i++) {
+    assert.equal(rows[i]?.depth, 1, `row ${i} depth`);
+  }
+
+  // Child counts
+  const counts = appTestables.countChildrenByRoot(rows);
+  assert.equal(counts["task-a"], 3); // agent-text-a, read-a, read-a2
+  assert.equal(counts["task-b"], 2); // agent-text-b, grep-b
+  assert.equal(counts["task-c"], 2); // agent-text-c, bash-c
+});
+
 
 
 test("app canMergeToolTimelineItem only merges same toolCallId", () => {
@@ -728,4 +906,237 @@ test("app findLatestExecutionPlanBody returns untruncated raw body", () => {
   ]);
 
   assert.equal(body, rawBody);
+});
+
+test("app mergeToolTimelineItems preserves parentToolCallId when incoming lacks it", () => {
+  const existing = {
+    id: "t1",
+    kind: "tool" as const,
+    title: "Read",
+    body: JSON.stringify({ toolCallId: "child-read-1", title: "Read", status: "running" }),
+    meta: "running",
+    parentToolCallId: "tc-parent",
+  };
+  const incoming = {
+    id: "t1-update",
+    kind: "tool" as const,
+    title: "Read",
+    body: JSON.stringify({ toolCallId: "child-read-1", title: "Read", status: "completed" }),
+    meta: "completed",
+    // parentToolCallId intentionally missing — simulates vendor hook callback without it
+  };
+
+  const merged = appTestables.mergeToolTimelineItems(existing, incoming);
+  assert.equal(merged.parentToolCallId, "tc-parent", "should preserve existing parentToolCallId");
+  assert.equal(merged.id, "t1", "should keep existing id");
+  assert.equal(merged.meta, "completed", "should use incoming status");
+});
+
+test("app mergeToolTimelineItems uses incoming parentToolCallId when both present", () => {
+  const existing = {
+    id: "t1",
+    kind: "tool" as const,
+    title: "Read",
+    body: JSON.stringify({ toolCallId: "child-read-1", title: "Read", status: "running" }),
+    meta: "running",
+    parentToolCallId: "tc-old",
+  };
+  const incoming = {
+    id: "t1-update",
+    kind: "tool" as const,
+    title: "Read",
+    body: JSON.stringify({ toolCallId: "child-read-1", title: "Read", status: "completed" }),
+    meta: "completed",
+    parentToolCallId: "tc-new",
+  };
+
+  const merged = appTestables.mergeToolTimelineItems(existing, incoming);
+  assert.equal(merged.parentToolCallId, "tc-new", "should prefer incoming parentToolCallId");
+});
+
+test("app buildTimelineTreeRows does not misattribute children across multiple concurrent roots without parentToolCallId", () => {
+  // Three concurrent Task roots, an unmatched child (no parentToolCallId, different toolCallId)
+  // should NOT be assigned to any root — it should remain at depth 0 (orphaned).
+  const rows = appTestables.buildTimelineTreeRows([
+    {
+      id: "task-1",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-1", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "task-2",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-2", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "task-3",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-3", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    {
+      // This item has no parentToolCallId and a unique toolCallId that doesn't match any root.
+      // With the old buggy fallback it would go under task-3; now it should be orphaned at depth 0.
+      id: "orphan-tool",
+      kind: "tool",
+      title: "Grep",
+      body: JSON.stringify({ toolCallId: "tc-unknown", title: "Grep", status: "running" }),
+      meta: "running",
+    },
+  ]);
+
+  const orphanRow = rows.find((r) => r.item.id === "orphan-tool");
+  assert.equal(orphanRow?.depth, 0, "orphan should stay at depth 0 in multi-root scenario");
+  assert.equal(orphanRow?.rootId, null, "orphan should have no rootId");
+});
+
+test("app buildTimelineTreeRows single-root fallback still works", () => {
+  // With only one active root the fallback should still route unmatched children to it.
+  const rows = appTestables.buildTimelineTreeRows([
+    {
+      id: "task-solo",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-solo", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "child-unmatched",
+      kind: "agent",
+      title: "Claude",
+      body: "some output",
+      // no parentToolCallId, toolCallId won't match root
+    },
+  ]);
+
+  const childRow = rows.find((r) => r.item.id === "child-unmatched");
+  assert.equal(childRow?.depth, 1, "single-root fallback should nest child at depth 1");
+  assert.equal(childRow?.rootId, "task-solo", "single-root fallback should use the only active root");
+});
+
+test("app readToolMeta and isTerminalToolStatus parse tool status correctly", () => {
+  const item = {
+    id: "t1",
+    kind: "tool" as const,
+    title: "Read",
+    body: JSON.stringify({ toolCallId: "tc-1", title: "Read", status: "completed" }),
+    meta: "completed",
+  };
+  const meta = appTestables.readToolMeta(item);
+  assert.equal(meta?.toolCallId, "tc-1");
+  assert.equal(meta?.status, "completed");
+  assert.equal(appTestables.isTerminalToolStatus("completed"), true);
+  assert.equal(appTestables.isTerminalToolStatus("failed"), true);
+  assert.equal(appTestables.isTerminalToolStatus("canceled"), true);
+  assert.equal(appTestables.isTerminalToolStatus("error"), false);
+  assert.equal(appTestables.isTerminalToolStatus("running"), false);
+  assert.equal(appTestables.isTerminalToolStatus(null), false);
+});
+
+test("app buildTimelineTreeRows temporal-locality fallback routes consecutive items to last matched root", () => {
+  // Simulate: 2 active roots, one child matched via parentToolCallId,
+  // then subsequent children WITHOUT parentToolCallId use temporal-locality
+  // to land under the same root.
+  const rows = appTestables.buildTimelineTreeRows([
+    {
+      id: "task-a",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-a", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "task-b",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-b", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    // First child explicitly matched to task-a via parentToolCallId
+    {
+      id: "child-1",
+      kind: "tool",
+      title: "Read",
+      body: JSON.stringify({ toolCallId: "child-tc-1", title: "Read", status: "running" }),
+      meta: "running",
+      parentToolCallId: "tc-a",
+    },
+    // Subsequent child has NO parentToolCallId — temporal-locality should
+    // assign it to task-a (last matched root).
+    {
+      id: "child-2",
+      kind: "agent",
+      title: "Claude",
+      body: "output from subagent a",
+    },
+    {
+      id: "child-3",
+      kind: "tool",
+      title: "Bash",
+      body: JSON.stringify({ toolCallId: "child-tc-3", title: "Bash", status: "completed" }),
+      meta: "completed",
+    },
+  ]);
+
+  assert.equal(rows[2]?.item.id, "child-1");
+  assert.equal(rows[2]?.rootId, "task-a", "child-1 matched via parentToolCallId");
+  assert.equal(rows[3]?.item.id, "child-2");
+  assert.equal(rows[3]?.rootId, "task-a", "child-2 should use temporal-locality fallback to task-a");
+  assert.equal(rows[4]?.item.id, "child-3");
+  assert.equal(rows[4]?.rootId, "task-a", "child-3 should use temporal-locality fallback to task-a");
+});
+
+test("app buildTimelineTreeRows temporal-locality clears when root closes", () => {
+  // When a root closes, subsequent unmatched items should NOT fall back
+  // to the closed root.
+  const rows = appTestables.buildTimelineTreeRows([
+    {
+      id: "task-a",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-a", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    {
+      id: "task-b",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-b", title: "Task", status: "running" }),
+      meta: "running",
+    },
+    // Child matched to task-a
+    {
+      id: "child-a",
+      kind: "tool",
+      title: "Read",
+      body: JSON.stringify({ toolCallId: "child-tc-a", title: "Read", status: "running" }),
+      meta: "running",
+      parentToolCallId: "tc-a",
+    },
+    // task-a closes
+    {
+      id: "task-a-done",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-a", title: "Task", status: "completed" }),
+      meta: "completed",
+    },
+    // Unmatched item after task-a closes — lastMatchedRoot was task-a but
+    // it's no longer active.  Single root fallback should kick in (task-b).
+    {
+      id: "child-after-close",
+      kind: "agent",
+      title: "Claude",
+      body: "some output",
+    },
+  ]);
+
+  const childRow = rows.find((r) => r.item.id === "child-after-close");
+  assert.equal(childRow?.rootId, "task-b", "should fall back to single remaining root, not closed task-a");
+  assert.equal(childRow?.depth, 1);
 });

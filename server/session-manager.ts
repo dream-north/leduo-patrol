@@ -10,6 +10,7 @@ export type TimelineItem = {
   title: string;
   body: string;
   meta?: string;
+  parentToolCallId?: string;
 };
 
 export type PermissionSnapshot = {
@@ -694,14 +695,16 @@ export class SessionManager {
       case "agent_message_chunk": {
         const chunkText = extractChunkText(update.content);
         if (chunkText) {
-          this.appendTextChunk(entry, "agent", "Claude", chunkText);
+          const parentId = extractParentToolCallId(update);
+          this.appendTextChunk(entry, "agent", "Claude", chunkText, parentId);
         }
         break;
       }
       case "agent_thought_chunk": {
         const chunkText = extractChunkText(update.content);
         if (chunkText) {
-          this.appendTextChunk(entry, "thought", "思路", chunkText);
+          const parentId = extractParentToolCallId(update);
+          this.appendTextChunk(entry, "thought", "思路", chunkText, parentId);
         }
         break;
       }
@@ -714,6 +717,7 @@ export class SessionManager {
         const claudeCodeMeta = asRecord(asRecord(update._meta)?.claudeCode);
         const metaToolName = typeof claudeCodeMeta?.toolName === "string" ? claudeCodeMeta.toolName : undefined;
         const normalizedTitle = normalizeAcpToolTitle(update.title) || normalizeAcpToolTitle(metaToolName) || undefined;
+        const parentToolCallId = extractParentToolCallId(update);
 
         // AskUserQuestion tool_call notifications arrive as stream events
         // BEFORE the corresponding permission_requested event from
@@ -746,19 +750,24 @@ export class SessionManager {
             status: effectiveStatus,
             rawInput: update.rawInput,
             rawOutput: update.rawOutput,
+            parentToolCallId,
           }),
           meta: String(effectiveStatus ?? update.sessionUpdate),
+          parentToolCallId,
         });
         break;
       }
-      case "plan":
+      case "plan": {
+        const parentToolCallId = extractParentToolCallId(update);
         this.appendTimeline(entry, {
           id: randomUUID(),
           kind: "system",
           title: "执行计划",
           body: stringifyMaybe(update.entries ?? update),
+          parentToolCallId,
         });
         break;
+      }
       case "current_mode_update":
         snapshot.currentModeId = String(update.currentModeId ?? snapshot.currentModeId ?? "default");
         this.appendTimeline(entry, {
@@ -778,10 +787,17 @@ export class SessionManager {
     kind: TimelineItem["kind"],
     title: string,
     text: string,
+    parentToolCallId?: string,
   ) {
     const fullTimeline = this.ensureFullTimeline(entry);
     const lastItem = fullTimeline.at(-1);
-    if (lastItem && lastItem.kind === kind && lastItem.title === title && !lastItem.meta) {
+    if (
+      lastItem &&
+      lastItem.kind === kind &&
+      lastItem.title === title &&
+      !lastItem.meta &&
+      (lastItem.parentToolCallId ?? undefined) === parentToolCallId
+    ) {
       lastItem.body += text;
       this.syncVisibleTimeline(entry);
       return;
@@ -791,6 +807,7 @@ export class SessionManager {
       kind,
       title,
       body: text,
+      parentToolCallId,
     });
   }
 
@@ -928,6 +945,7 @@ function formatToolDetails(details: {
   status?: unknown;
   rawInput?: unknown;
   rawOutput?: unknown;
+  parentToolCallId?: string;
 }) {
   return stringifyMaybe({
     toolCallId: details.toolCallId,
@@ -935,6 +953,7 @@ function formatToolDetails(details: {
     status: details.status,
     rawInput: details.rawInput,
     rawOutput: details.rawOutput,
+    ...(details.parentToolCallId ? { parentToolCallId: details.parentToolCallId } : undefined),
   });
 }
 
@@ -1042,6 +1061,13 @@ function tryParseJson(value: unknown) {
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function extractParentToolCallId(update: Record<string, unknown>): string | undefined {
+  const meta = asRecord(update._meta);
+  const claudeCode = asRecord(meta?.claudeCode);
+  const parentId = claudeCode?.parentToolUseId;
+  return typeof parentId === "string" && parentId ? parentId : undefined;
 }
 
 

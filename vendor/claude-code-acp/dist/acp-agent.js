@@ -455,7 +455,29 @@ export class ClaudeAcpAgent {
                         ? // Handled by stream events above
                             message.message.content.filter((item) => !["text", "thinking"].includes(item.type))
                         : message.message.content;
-                    for (const notification of toAcpNotifications(content, message.message.role, params.sessionId, this.toolUseCache, this.client, this.logger)) {
+                    const parentOpts = message.parent_tool_use_id ? { parentToolUseId: message.parent_tool_use_id } : undefined;
+                    // Record the parent mapping in toolUseCache so that
+                    // stream_events processed *before* this assistant message
+                    // (and tool_results processed *after*) can look up the
+                    // parent relationship even when stream_event itself lacks
+                    // parent_tool_use_id.
+                    if (message.parent_tool_use_id) {
+                        for (const block of (message.message.content ?? [])) {
+                            if (block && block.id) {
+                                if (this.toolUseCache[block.id]) {
+                                    this.toolUseCache[block.id]._inferredParentToolUseId = message.parent_tool_use_id;
+                                } else {
+                                    this.toolUseCache[block.id] = { ...block, _inferredParentToolUseId: message.parent_tool_use_id };
+                                }
+                            }
+                        }
+                    }
+                    if (this.logger && this.logger.info) {
+                        this.logger.info(`[claude-code-acp][diag] ${message.type} parent_tool_use_id=${message.parent_tool_use_id ?? "NONE"} content_types=${content.map(c => c.type).join(",")}`);
+                    } else {
+                        console.debug("[claude-code-acp][diag] %s parent_tool_use_id=%s content_types=%s", message.type, message.parent_tool_use_id ?? "NONE", content.map(c => c.type).join(","));
+                    }
+                    for (const notification of toAcpNotifications(content, message.message.role, params.sessionId, this.toolUseCache, this.client, this.logger, parentOpts)) {
                         await this.client.sessionUpdate(notification);
                     }
                     break;
@@ -1136,17 +1158,29 @@ export function promptToClaude(prompt) {
  */
 export function toAcpNotifications(content, role, sessionId, toolUseCache, client, logger, options) {
     const registerHooks = options?.registerHooks !== false;
+    const parentToolUseId = options?.parentToolUseId ?? null;
+    // Helper: resolve the effective parentToolUseId, falling back to the
+    // inferred mapping that the assistant-message handler recorded in
+    // toolUseCache when stream_event lacked parent_tool_use_id.
+    const resolveParent = (chunkId) => {
+        if (parentToolUseId) return parentToolUseId;
+        return (chunkId && toolUseCache[chunkId]?._inferredParentToolUseId) || null;
+    };
     if (typeof content === "string") {
+        const textUpdate = {
+            sessionUpdate: role === "assistant" ? "agent_message_chunk" : "user_message_chunk",
+            content: {
+                type: "text",
+                text: content,
+            },
+        };
+        if (parentToolUseId) {
+            textUpdate._meta = { claudeCode: { parentToolUseId } };
+        }
         return [
             {
                 sessionId,
-                update: {
-                    sessionUpdate: role === "assistant" ? "agent_message_chunk" : "user_message_chunk",
-                    content: {
-                        type: "text",
-                        text: content,
-                    },
-                },
+                update: textUpdate,
             },
         ];
     }
@@ -1164,6 +1198,9 @@ export function toAcpNotifications(content, role, sessionId, toolUseCache, clien
                         text: chunk.text,
                     },
                 };
+                if (parentToolUseId) {
+                    update._meta = { claudeCode: { parentToolUseId } };
+                }
                 break;
             case "image":
                 update = {
@@ -1175,6 +1212,9 @@ export function toAcpNotifications(content, role, sessionId, toolUseCache, clien
                         uri: chunk.source.type === "url" ? chunk.source.url : undefined,
                     },
                 };
+                if (parentToolUseId) {
+                    update._meta = { claudeCode: { parentToolUseId } };
+                }
                 break;
             case "thinking":
             case "thinking_delta":
@@ -1185,6 +1225,9 @@ export function toAcpNotifications(content, role, sessionId, toolUseCache, clien
                         text: chunk.thinking,
                     },
                 };
+                if (parentToolUseId) {
+                    update._meta = { claudeCode: { parentToolUseId } };
+                }
                 break;
             case "tool_use":
             case "server_tool_use":
@@ -1197,6 +1240,9 @@ export function toAcpNotifications(content, role, sessionId, toolUseCache, clien
                             sessionUpdate: "plan",
                             entries: planEntries(chunk.input),
                         };
+                        if (parentToolUseId) {
+                            update._meta = { claudeCode: { parentToolUseId } };
+                        }
                     }
                 }
                 else {
@@ -1205,11 +1251,13 @@ export function toAcpNotifications(content, role, sessionId, toolUseCache, clien
                             onPostToolUseHook: async (toolUseId, toolInput, toolResponse) => {
                                 const toolUse = toolUseCache[toolUseId];
                                 if (toolUse) {
+                                    const hookParent = resolveParent(toolUseId);
                                     const update = {
                                         _meta: {
                                             claudeCode: {
                                                 toolResponse,
                                                 toolName: toolUse.name,
+                                                ...(hookParent ? { parentToolUseId: hookParent } : undefined),
                                             },
                                         },
                                         toolCallId: toolUseId,
@@ -1233,10 +1281,12 @@ export function toAcpNotifications(content, role, sessionId, toolUseCache, clien
                     catch {
                         // ignore if we can't turn it to JSON
                     }
+                    const effectiveParentForCall = resolveParent(chunk.id);
                     update = {
                         _meta: {
                             claudeCode: {
                                 toolName: chunk.name,
+                                ...(effectiveParentForCall ? { parentToolUseId: effectiveParentForCall } : undefined),
                             },
                         },
                         toolCallId: chunk.id,
@@ -1262,10 +1312,12 @@ export function toAcpNotifications(content, role, sessionId, toolUseCache, clien
                     break;
                 }
                 if (toolUse.name !== "TodoWrite") {
+                    const effectiveParent = resolveParent(chunk.tool_use_id);
                     update = {
                         _meta: {
                             claudeCode: {
                                 toolName: toolUse.name,
+                                ...(effectiveParent ? { parentToolUseId: effectiveParent } : undefined),
                             },
                         },
                         toolCallId: chunk.tool_use_id,
@@ -1298,12 +1350,19 @@ export function toAcpNotifications(content, role, sessionId, toolUseCache, clien
     return output;
 }
 export function streamEventToAcpNotifications(message, sessionId, toolUseCache, client, logger) {
+    const parentToolUseId = message.parent_tool_use_id || null;
+    if (logger && logger.info) {
+        logger.info(`[claude-code-acp][diag] stream_event parent_tool_use_id=${parentToolUseId ?? "NONE"} event.type=${message.event?.type}`);
+    } else {
+        console.debug("[claude-code-acp][diag] stream_event parent_tool_use_id=%s event.type=%s", parentToolUseId ?? "NONE", message.event?.type);
+    }
+    const opts = parentToolUseId ? { parentToolUseId } : undefined;
     const event = message.event;
     switch (event.type) {
         case "content_block_start":
-            return toAcpNotifications([event.content_block], "assistant", sessionId, toolUseCache, client, logger);
+            return toAcpNotifications([event.content_block], "assistant", sessionId, toolUseCache, client, logger, opts);
         case "content_block_delta":
-            return toAcpNotifications([event.delta], "assistant", sessionId, toolUseCache, client, logger);
+            return toAcpNotifications([event.delta], "assistant", sessionId, toolUseCache, client, logger, opts);
         // No content
         case "message_start":
         case "message_delta":
