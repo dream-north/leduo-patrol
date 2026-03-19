@@ -41,7 +41,7 @@ const TOOL_ARG_ACCESSORS = {
     mcp__acp__Read: (input) => input?.file_path,
     mcp__acp__Edit: (input) => input?.file_path,
     mcp__acp__Write: (input) => input?.file_path,
-    mcp__acp__Bash: (input) => input?.command,
+    Bash: (input) => input?.command,
 };
 /**
  * Parses a permission rule string into its components
@@ -104,7 +104,7 @@ function matchesRule(rule, toolName, toolInput, cwd) {
     // - "Edit rules apply to all built-in tools that edit files."
     // - "Claude will make a best-effort attempt to apply Read rules to all built-in tools
     //    that read files like Grep, Glob, and LS."
-    const ruleAppliesToTool = (rule.toolName === "Bash" && toolName === acpToolNames.bash) ||
+    const ruleAppliesToTool = (rule.toolName === "Bash" && toolName === "Bash") ||
         (rule.toolName === "Edit" && FILE_EDITING_TOOLS.includes(toolName)) ||
         (rule.toolName === "Read" && FILE_READING_TOOLS.includes(toolName));
     if (!ruleAppliesToTool) {
@@ -121,7 +121,7 @@ function matchesRule(rule, toolName, toolInput, cwd) {
     if (!actualArg) {
         return false;
     }
-    if (toolName === acpToolNames.bash) {
+    if (toolName === "Bash") {
         // Per Claude Code docs: https://code.claude.com/docs/en/iam#tool-specific-permission-rules
         // - Bash(npm run build) matches the EXACT command "npm run build"
         // - Bash(npm run test:*) matches commands STARTING WITH "npm run test"
@@ -354,7 +354,7 @@ export class SettingsManager {
      * @returns The permission decision and matching rule info
      */
     checkPermission(toolName, toolInput) {
-        if (!toolName.startsWith(ACP_TOOL_NAME_PREFIX)) {
+        if (!toolName.startsWith(ACP_TOOL_NAME_PREFIX) && toolName !== "Bash") {
             return { decision: "ask" };
         }
         const permissions = this.mergedSettings.permissions;

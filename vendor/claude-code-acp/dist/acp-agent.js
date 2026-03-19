@@ -926,14 +926,12 @@ export class ClaudeAcpAgent {
             if (this.clientCapabilities?.fs?.writeTextFile) {
                 disallowedTools.push("Write", "Edit");
             }
-            if (this.clientCapabilities?.terminal) {
-                allowedTools.push(acpToolNames.bashOutput, acpToolNames.killShell);
-                disallowedTools.push("Bash", "BashOutput", "KillShell");
-            }
+            // Native Bash/BashOutput/KillShell are kept available (not disallowed)
+            // so Claude uses the original tools directly.
         }
         else {
             // When built-in tools are disabled, explicitly disallow all of them
-            disallowedTools.push(acpToolNames.read, acpToolNames.write, acpToolNames.edit, acpToolNames.bash, acpToolNames.bashOutput, acpToolNames.killShell, "Read", "Write", "Edit", "Bash", "BashOutput", "KillShell", "Glob", "Grep", "Task", "TodoWrite", "ExitPlanMode", "WebSearch", "WebFetch", "AskUserQuestion", "SlashCommand", "Skill", "NotebookEdit");
+            disallowedTools.push(acpToolNames.read, acpToolNames.write, acpToolNames.edit, "Read", "Write", "Edit", "Bash", "BashOutput", "KillShell", "Glob", "Grep", "Task", "TodoWrite", "ExitPlanMode", "WebSearch", "WebFetch", "AskUserQuestion", "SlashCommand", "Skill", "NotebookEdit");
         }
         if (allowedTools.length > 0) {
             options.allowedTools = allowedTools;

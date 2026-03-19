@@ -4,18 +4,12 @@ const acpUnqualifiedToolNames = {
     read: "Read",
     edit: "Edit",
     write: "Write",
-    bash: "Bash",
-    killShell: "KillShell",
-    bashOutput: "BashOutput",
 };
 export const ACP_TOOL_NAME_PREFIX = "mcp__acp__";
 export const acpToolNames = {
     read: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.read,
     edit: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.edit,
     write: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.write,
-    bash: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.bash,
-    killShell: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.killShell,
-    bashOutput: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.bashOutput,
 };
 export const EDIT_TOOL_NAMES = [acpToolNames.edit, acpToolNames.write];
 export function toolInfoFromToolUse(toolUse) {
@@ -57,7 +51,6 @@ export function toolInfoFromToolUse(toolUse) {
                 locations: input?.notebook_path ? [{ path: input.notebook_path }] : [],
             };
         case "Bash":
-        case acpToolNames.bash:
             return {
                 title: input?.command ? "`" + input.command.replaceAll("`", "\\`") + "`" : "Terminal",
                 kind: "execute",
@@ -71,14 +64,12 @@ export function toolInfoFromToolUse(toolUse) {
                     : [],
             };
         case "BashOutput":
-        case acpToolNames.bashOutput:
             return {
                 title: "Tail Logs",
                 kind: "execute",
                 content: [],
             };
         case "KillShell":
-        case acpToolNames.killShell:
             return {
                 title: "Kill Process",
                 kind: "execute",
@@ -416,7 +407,7 @@ export function toolUpdateFromToolResult(toolResult, toolUse) {
             }
             return result;
         }
-        case acpToolNames.bash:
+        case "Bash":
         case "edit":
         case "Edit":
         case acpToolNames.write:
