@@ -66,6 +66,7 @@ type EventMessage =
   | { type: "cli_output"; payload: { clientSessionId: string; data: string } }
   | { type: "cli_exited"; payload: { clientSessionId: string; exitCode: number } }
   | { type: "session_activity"; payload: { clientSessionId: string; activityState: ActivityState } }
+  | { type: "session_id_updated"; payload: { clientSessionId: string; newSessionId: string } }
   | { type: "shell_output"; payload: { data: string } }
   | { type: "shell_exited"; payload: { exitCode: number } }
   | { type: "error"; payload: { message: string; fatal: boolean; clientSessionId?: string } };
@@ -300,6 +301,16 @@ export default function App() {
         );
         break;
 
+      case "session_id_updated":
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.clientSessionId === message.payload.clientSessionId
+              ? { ...s, sessionId: message.payload.newSessionId }
+              : s,
+          ),
+        );
+        break;
+
       case "shell_output": {
         // Handled by the bottom shell terminal xterm instance directly
         break;
@@ -366,9 +377,9 @@ export default function App() {
         term.focus();
       });
 
-      // Notify server we're viewing this session
+      // Notify server of current size (no replay — cached terminal already has output)
       sendCommand({
-        type: "cli_start",
+        type: "cli_resize",
         payload: { clientSessionId: activeSessionId, cols: term.cols, rows: term.rows },
       });
       return;
@@ -742,9 +753,12 @@ export default function App() {
           <>
             <div className="cli-toolbar">
               <div className="cli-toolbar-info">
-                <h3 className="cli-toolbar-title" title={activeSession.title}>
-                  {formatSessionTitleForDisplay(activeSession.title)}
-                </h3>
+                <div className="cli-toolbar-title-group">
+                  <h3 className="cli-toolbar-title" title={activeSession.title}>
+                    {formatSessionTitleForDisplay(activeSession.title)}
+                  </h3>
+                  <code className="cli-toolbar-session-id" title={activeSession.sessionId}>session: {activeSession.sessionId}</code>
+                </div>
                 <code className="cli-toolbar-path" title={activeSession.workspacePath}>{activeSession.workspacePath}</code>
               </div>
               <div className="cli-toolbar-actions">
@@ -943,7 +957,7 @@ export default function App() {
               <span>终端</span>
             </button>
             <span className="terminal-drawer-note">
-              限制模式 · 工作目录：{activeSession?.workspacePath ?? config.workspacePath}
+              工作目录：{activeSession?.workspacePath ?? config.workspacePath}
             </span>
           </div>
           {terminalOpen ? (

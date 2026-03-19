@@ -19,14 +19,11 @@ function resolveBashPath(): string {
 }
 
 /**
- * A restricted interactive shell session backed by a PTY.
+ * An interactive shell session backed by a PTY.
  *
- * Security model:
- *  - Spawns `bash --restricted` (rbash): prevents `cd`, modifying PATH,
- *    output redirections, and running commands with slashes in the name.
- *  - Starts in `workspacePath` – with rbash's cd restriction users remain there.
- *  - Strips sensitive environment variables (API keys, tokens, etc.).
- *  - Inherits PATH so common tools (git, npm, etc.) stay available.
+ * Spawns a login shell (`bash --login`) that inherits the full user
+ * environment and loads ~/.bash_profile / ~/.bashrc so that tools like
+ * pyenv, nvm, brew, cargo, aliases, etc. are all available.
  */
 export class ShellSession extends EventEmitter {
   private pty: IPty;
@@ -35,30 +32,23 @@ export class ShellSession extends EventEmitter {
   constructor(workspacePath: string, cols = 80, rows = 24) {
     super();
 
-    const safeEnv: Record<string, string> = {
+    const env: Record<string, string> = {
+      ...Object.fromEntries(
+        Object.entries(process.env).filter(
+          (entry): entry is [string, string] => entry[1] != null,
+        ),
+      ),
       TERM: "xterm-256color",
       COLORTERM: "truecolor",
-      HOME: workspacePath,
       PWD: workspacePath,
-      // Inherit PATH so tools like git, npm, etc. are available
-      PATH: process.env.PATH ?? "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      LANG: process.env.LANG ?? "en_US.UTF-8",
-      // Pass through locale/user info if available
-      ...(process.env.USER ? { USER: process.env.USER } : {}),
-      ...(process.env.LOGNAME ? { LOGNAME: process.env.LOGNAME } : {}),
-      // Git user info so commits work inside the terminal
-      ...(process.env.GIT_AUTHOR_NAME ? { GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME } : {}),
-      ...(process.env.GIT_AUTHOR_EMAIL ? { GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL } : {}),
-      ...(process.env.GIT_COMMITTER_NAME ? { GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME } : {}),
-      ...(process.env.GIT_COMMITTER_EMAIL ? { GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL } : {}),
     };
 
-    this.pty = spawn(resolveBashPath(), ["--restricted", "--norc", "--noprofile"], {
+    this.pty = spawn(resolveBashPath(), ["--login"], {
       name: "xterm-256color",
       cols,
       rows,
       cwd: workspacePath,
-      env: safeEnv,
+      env,
     });
 
     this.pty.onData((data) => {

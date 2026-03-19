@@ -1,9 +1,10 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdir, readFile, writeFile, access } from "node:fs/promises";
+import { mkdir, readFile, writeFile, access, readdir, open, stat } from "node:fs/promises";
+import { watch, type FSWatcher } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { ClaudeCliSession } from "./claude-cli-session.js";
-import { ActivityMonitor, type ActivityState } from "./activity-monitor.js";
+import { ActivityMonitor, projectDirPath, type ActivityState } from "./activity-monitor.js";
 
 export type { ActivityState } from "./activity-monitor.js";
 
@@ -75,6 +76,13 @@ export type SocketEvent =
         clientSessionId: string;
         activityState: ActivityState;
       };
+    }
+  | {
+      type: "session_id_updated";
+      payload: {
+        clientSessionId: string;
+        newSessionId: string;
+      };
     };
 
 type PersistedState = {
@@ -102,14 +110,31 @@ export class SessionManager {
   private readonly activityMonitor: ActivityMonitor;
   /** Reverse index: Claude sessionId → clientSessionId */
   private readonly sessionIdIndex = new Map<string, string>();
+  /** Timers for discovering new session IDs after /clear */
+  private readonly discoveryTimers = new Map<string, NodeJS.Timeout>();
   private persistTimer: NodeJS.Timeout | null = null;
   /** Maximum bytes of PTY output to keep per session for replay on reconnect. */
   private static readonly OUTPUT_BUFFER_MAX = 256 * 1024;
+  private static readonly DISCOVERY_POLL_MS = 2000;
+  private static readonly DISCOVERY_MAX_POLLS = 300; // ~10 minutes
+
+  // history.jsonl monitoring for /clear detection
+  private readonly historyFilePath: string;
+  private historyWatcher: FSWatcher | null = null;
+  private historyPollTimer: NodeJS.Timeout | null = null;
+  private historyDebounceTimer: NodeJS.Timeout | null = null;
+  private lastHistorySize = 0;
+  private static readonly HISTORY_DEBOUNCE_MS = 200;
+  private static readonly HISTORY_POLL_MS = 3000;
 
   constructor(options: SessionManagerOptions) {
     this.allowedRoots = options.allowedRoots;
     this.claudeBin = options.claudeBin;
     this.stateFilePath = path.join(os.homedir(), ".leduo-patrol", "state.json");
+    this.historyFilePath = path.join(
+      process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude"),
+      "history.jsonl",
+    );
     this.activityMonitor = new ActivityMonitor((sessionId, activityState) => {
       const clientSessionId = this.sessionIdIndex.get(sessionId);
       if (!clientSessionId) return;
@@ -149,6 +174,9 @@ export class SessionManager {
         this.handleManagerError(entry.snapshot.clientSessionId, error);
       });
     }
+
+    // Start monitoring ~/.claude/history.jsonl for /clear commands
+    await this.startHistoryMonitor();
   }
 
   subscribe(listener: (event: SocketEvent) => void) {
@@ -243,6 +271,7 @@ export class SessionManager {
     if (!entry) {
       return;
     }
+    this.clearDiscoveryTimer(clientSessionId);
     entry.cliSession?.kill();
     this.activityMonitor.unwatch(entry.snapshot.sessionId);
     this.sessionIdIndex.delete(entry.snapshot.sessionId);
@@ -279,6 +308,7 @@ export class SessionManager {
       });
 
       cliSession.on("exit", (exitCode: number) => {
+        this.clearDiscoveryTimer(snapshot.clientSessionId);
         snapshot.connectionState = "error";
         snapshot.updatedAt = new Date().toISOString();
         this.schedulePersist();
@@ -364,6 +394,253 @@ export class SessionManager {
 
     await access(resolvedWorkspacePath);
     return resolvedWorkspacePath;
+  }
+
+  // ---------------------------------------------------------------------------
+  // /clear detection → session ID discovery
+  // ---------------------------------------------------------------------------
+
+  private handleSessionClear(oldSessionId: string, workspacePath: string) {
+    const clientSessionId = this.sessionIdIndex.get(oldSessionId);
+    if (!clientSessionId) {
+      console.log(`[SessionManager] handleSessionClear: no clientSessionId found for ${oldSessionId}`);
+      return;
+    }
+    const entry = this.sessions.get(clientSessionId);
+    if (!entry) {
+      console.log(`[SessionManager] handleSessionClear: no entry found for clientSessionId ${clientSessionId}`);
+      return;
+    }
+
+    console.log(`[SessionManager] handleSessionClear: oldSessionId=${oldSessionId}, clientSessionId=${clientSessionId}, workspace=${workspacePath}`);
+
+    // Immediately mark as idle — the old session is done
+    entry.snapshot.activityState = "idle";
+    this.emit({
+      type: "session_activity",
+      payload: { clientSessionId, activityState: "idle" },
+    });
+
+    this.startNewSessionDiscovery(clientSessionId, oldSessionId, workspacePath);
+  }
+
+  private startNewSessionDiscovery(clientSessionId: string, oldSessionId: string, workspacePath: string) {
+    // Cancel any previous discovery for this session (handles rapid /clear)
+    this.clearDiscoveryTimer(clientSessionId);
+
+    const dirPath = projectDirPath(workspacePath);
+    let pollCount = 0;
+
+    console.log(`[SessionManager] startNewSessionDiscovery: dir=${dirPath}, oldSession=${oldSessionId}`);
+
+    // Wait 1 second before the first check — the new session file is created
+    // almost simultaneously with /clear, so we need a short delay.
+    const initialDelay = setTimeout(() => {
+      const timer = setInterval(async () => {
+        pollCount++;
+        if (pollCount > SessionManager.DISCOVERY_MAX_POLLS) {
+          this.clearDiscoveryTimer(clientSessionId);
+          return;
+        }
+
+        try {
+          const files = (await readdir(dirPath)).filter((f) => f.endsWith(".jsonl"));
+
+          // Stat each file (except old session) to find the most recently modified ones
+          const candidates: { name: string; mtimeMs: number }[] = [];
+          for (const f of files) {
+            const sid = f.replace(/\.jsonl$/, "");
+            if (sid === oldSessionId) continue;
+            try {
+              const s = await stat(path.join(dirPath, f));
+              candidates.push({ name: f, mtimeMs: s.mtimeMs });
+            } catch {
+              // skip unreadable
+            }
+          }
+          candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+          // Check the top 3 newest files for /clear content
+          for (const candidate of candidates.slice(0, 3)) {
+            const filePath = path.join(dirPath, candidate.name);
+            let fd;
+            try {
+              fd = await open(filePath, "r");
+              const buf = Buffer.alloc(4096);
+              const { bytesRead } = await fd.read(buf, 0, 4096, 0);
+              const head = buf.toString("utf8", 0, bytesRead);
+              if (head.includes("<command-name>/clear</command-name>")) {
+                const newSessionId = candidate.name.replace(/\.jsonl$/, "");
+                console.log(`[SessionManager] discovery confirmed new session: ${candidate.name} (contains /clear)`);
+                this.clearDiscoveryTimer(clientSessionId);
+                this.completeSessionSwitch(clientSessionId, oldSessionId, newSessionId, workspacePath);
+                return;
+              }
+            } catch {
+              // skip
+            } finally {
+              await fd?.close();
+            }
+          }
+        } catch {
+          // Directory may not exist yet — keep polling
+        }
+      }, SessionManager.DISCOVERY_POLL_MS);
+
+      // Replace the initial timeout ref with the interval ref in the map
+      this.discoveryTimers.set(clientSessionId, timer);
+    }, 1000);
+
+    // Store the timeout so it can be cleared
+    this.discoveryTimers.set(clientSessionId, initialDelay as unknown as NodeJS.Timeout);
+  }
+
+  private completeSessionSwitch(
+    clientSessionId: string,
+    oldSessionId: string,
+    newSessionId: string,
+    workspacePath: string,
+  ) {
+    const entry = this.sessions.get(clientSessionId);
+    if (!entry) return;
+
+    console.log(`[SessionManager] completeSessionSwitch: ${oldSessionId} → ${newSessionId} (client=${clientSessionId})`);
+
+    // Update reverse index
+    this.sessionIdIndex.delete(oldSessionId);
+    this.sessionIdIndex.set(newSessionId, clientSessionId);
+
+    // Update snapshot
+    entry.snapshot.sessionId = newSessionId;
+    entry.snapshot.updatedAt = new Date().toISOString();
+
+    // Switch activity monitor to watch the new JSONL file
+    this.activityMonitor.switchWatch(oldSessionId, newSessionId, workspacePath);
+
+    // Persist so --resume uses the new session ID
+    this.schedulePersist();
+
+    // Notify frontend
+    this.emit({
+      type: "session_id_updated",
+      payload: { clientSessionId, newSessionId },
+    });
+  }
+
+  private clearDiscoveryTimer(clientSessionId: string) {
+    const timer = this.discoveryTimers.get(clientSessionId);
+    if (timer) {
+      clearInterval(timer);
+      this.discoveryTimers.delete(clientSessionId);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // history.jsonl monitoring — detect /clear commands globally
+  // ---------------------------------------------------------------------------
+
+  private async startHistoryMonitor() {
+    // Get initial file size so we only process new lines
+    try {
+      const stats = await stat(this.historyFilePath);
+      this.lastHistorySize = stats.size;
+    } catch {
+      this.lastHistorySize = 0;
+    }
+
+    console.log(`[SessionManager] Watching ${this.historyFilePath} for /clear commands (initial size=${this.lastHistorySize})`);
+
+    try {
+      this.historyWatcher = watch(this.historyFilePath, () => {
+        this.scheduleHistoryCheck();
+      });
+      this.historyWatcher.on("error", () => {
+        // Fall back to polling if the watcher fails
+        this.historyWatcher?.close();
+        this.historyWatcher = null;
+        if (!this.historyPollTimer) {
+          this.historyPollTimer = setInterval(() => {
+            this.checkHistoryUpdates().catch(() => undefined);
+          }, SessionManager.HISTORY_POLL_MS);
+        }
+      });
+    } catch {
+      // Watcher unavailable — use polling
+      this.historyPollTimer = setInterval(() => {
+        this.checkHistoryUpdates().catch(() => undefined);
+      }, SessionManager.HISTORY_POLL_MS);
+    }
+  }
+
+  private scheduleHistoryCheck() {
+    if (this.historyDebounceTimer) clearTimeout(this.historyDebounceTimer);
+    this.historyDebounceTimer = setTimeout(() => {
+      this.historyDebounceTimer = null;
+      this.checkHistoryUpdates().catch(() => undefined);
+    }, SessionManager.HISTORY_DEBOUNCE_MS);
+  }
+
+  private async checkHistoryUpdates() {
+    let fd;
+    try {
+      const stats = await stat(this.historyFilePath);
+
+      // File was truncated or rotated — reset
+      if (stats.size < this.lastHistorySize) {
+        this.lastHistorySize = stats.size;
+        return;
+      }
+
+      // No new content
+      if (stats.size === this.lastHistorySize) return;
+
+      const readSize = stats.size - this.lastHistorySize;
+      fd = await open(this.historyFilePath, "r");
+      const buffer = Buffer.alloc(readSize);
+      await fd.read(buffer, 0, readSize, this.lastHistorySize);
+      this.lastHistorySize = stats.size;
+
+      const newText = buffer.toString("utf8");
+      const lines = newText.split("\n").filter((l) => l.trim().length > 0);
+
+      for (const line of lines) {
+        try {
+          const entry = JSON.parse(line) as { display?: string; sessionId?: string; project?: string };
+          if (entry.display === "/clear" && entry.sessionId) {
+            // Check if we're tracking this session
+            const clientSessionId = this.sessionIdIndex.get(entry.sessionId);
+            if (clientSessionId) {
+              const managed = this.sessions.get(clientSessionId);
+              if (managed) {
+                console.log(`[SessionManager] /clear detected in history.jsonl for session ${entry.sessionId} (client=${clientSessionId})`);
+                this.handleSessionClear(entry.sessionId, managed.snapshot.workspacePath);
+              }
+            }
+          }
+        } catch {
+          // Skip malformed lines
+        }
+      }
+    } catch {
+      // File doesn't exist or unreadable — will retry on next trigger
+    } finally {
+      await fd?.close();
+    }
+  }
+
+  private stopHistoryMonitor() {
+    if (this.historyWatcher) {
+      this.historyWatcher.close();
+      this.historyWatcher = null;
+    }
+    if (this.historyPollTimer) {
+      clearInterval(this.historyPollTimer);
+      this.historyPollTimer = null;
+    }
+    if (this.historyDebounceTimer) {
+      clearTimeout(this.historyDebounceTimer);
+      this.historyDebounceTimer = null;
+    }
   }
 
   private handleManagerError(clientSessionId: string, error: unknown) {

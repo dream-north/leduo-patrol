@@ -22,6 +22,7 @@ const SKIP_TYPES = new Set(["last-prompt", "system", "file-history-snapshot", "q
 
 type JsonlEntry = {
   type: string;
+  subtype?: string;
   message?: {
     stop_reason?: string | null;
     [key: string]: unknown;
@@ -30,15 +31,54 @@ type JsonlEntry = {
 };
 
 /**
+ * Detect if a user entry represents a local CLI command (not a real user message to Claude).
+ * Local commands have content containing `<command-name>`, `<local-command-stdout>`, or `<local-command-caveat>`.
+ */
+function isLocalCommand(entry: JsonlEntry): boolean {
+  const content = entry.message?.content;
+  if (typeof content === "string") {
+    return content.includes("<command-name>") || content.includes("<local-command-");
+  }
+  if (Array.isArray(content)) {
+    return (content as { text?: string }[]).some(
+      (block) =>
+        typeof block.text === "string" &&
+        (block.text.includes("<command-name>") || block.text.includes("<local-command-")),
+    );
+  }
+  return false;
+}
+
+/**
+ * Detect if a JSONL entry is a `/clear` command.
+ */
+export function detectClearCommand(entry: JsonlEntry): boolean {
+  if (entry.type !== "user") return false;
+  const content = entry.message?.content;
+  if (typeof content === "string") {
+    return content.includes("<command-name>/clear</command-name>");
+  }
+  if (Array.isArray(content)) {
+    return (content as { text?: string }[]).some(
+      (block) =>
+        typeof block.text === "string" && block.text.includes("<command-name>/clear</command-name>"),
+    );
+  }
+  return false;
+}
+
+/**
  * Given a parsed JSONL entry, return the activity state.
  *
- * Rules (from spec):
- *   assistant + no stop_reason (null / undefined)  → running
- *   assistant + stop_reason "tool_use"             → pending
+ * Rules:
+ *   assistant + no stop_reason (null / undefined)     → running
+ *   assistant + stop_reason "tool_use"                → pending
  *   assistant + stop_reason "end_turn"|"stop_sequence" → completed
- *   user                                           → running
- *   progress (hookEvent !== "Stop")                → running
- *   progress (hookEvent === "Stop")                → completed
+ *   user (local command / meta)                       → completed
+ *   user (real message)                               → running
+ *   system + subtype "local_command"                  → completed
+ *   progress (hookEvent !== "Stop")                   → running
+ *   progress (hookEvent === "Stop")                   → completed
  */
 export function determineActivityState(entry: JsonlEntry): ActivityState {
   const { type } = entry;
@@ -52,7 +92,15 @@ export function determineActivityState(entry: JsonlEntry): ActivityState {
   }
 
   if (type === "user") {
+    // Local CLI commands (/mcp, /status, /clear, etc.) are already finished
+    if (isLocalCommand(entry)) return "completed";
     return "running";
+  }
+
+  if (type === "system") {
+    // system + local_command entries indicate a finished local CLI command
+    if (entry.subtype === "local_command") return "completed";
+    return "idle";
   }
 
   if (type === "progress") {
@@ -70,12 +118,16 @@ export function determineActivityState(entry: JsonlEntry): ActivityState {
 // Path helpers
 // ---------------------------------------------------------------------------
 
-function encodeProjectPath(cwd: string): string {
+export function encodeProjectPath(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9]/g, "-");
 }
 
-function jsonlFilePath(workspacePath: string, sessionId: string): string {
+export function jsonlFilePath(workspacePath: string, sessionId: string): string {
   return path.join(CLAUDE_CONFIG_DIR, "projects", encodeProjectPath(workspacePath), `${sessionId}.jsonl`);
+}
+
+export function projectDirPath(workspacePath: string): string {
+  return path.join(CLAUDE_CONFIG_DIR, "projects", encodeProjectPath(workspacePath));
 }
 
 // ---------------------------------------------------------------------------
@@ -107,13 +159,14 @@ async function readLastRelevantEntry(filePath: string): Promise<JsonlEntry | nul
     for (let i = lines.length - 1; i >= lines.length - scanLimit; i--) {
       try {
         const parsed = JSON.parse(lines[i]) as JsonlEntry;
+
         if (ACTIVITY_TYPES.has(parsed.type)) {
           return parsed;
+        } else if (parsed.type === "system" && parsed.subtype === "local_command") {
+          return parsed;
+        } else if (SKIP_TYPES.has(parsed.type)) {
+          // skip
         }
-        if (SKIP_TYPES.has(parsed.type)) {
-          continue;
-        }
-        // Unknown type – skip
       } catch {
         // Malformed line (e.g. partial write) – skip
       }
@@ -185,6 +238,12 @@ export class ActivityMonitor {
     return this.monitors.get(sessionId)?.currentState ?? "idle";
   }
 
+  /** Stop watching oldSessionId and start watching newSessionId for the same workspace. */
+  switchWatch(oldSessionId: string, newSessionId: string, workspacePath: string): void {
+    this.unwatch(oldSessionId);
+    this.watch(newSessionId, workspacePath);
+  }
+
   // -------------------------------------------------------------------------
   // Private
   // -------------------------------------------------------------------------
@@ -254,7 +313,9 @@ export class ActivityMonitor {
 
   private async readAndEmit(entry: MonitorEntry): Promise<void> {
     const parsed = await readLastRelevantEntry(entry.jsonlPath);
-    const newState: ActivityState = parsed ? determineActivityState(parsed) : "idle";
+    if (!parsed) return;
+
+    const newState = determineActivityState(parsed);
     if (newState !== entry.currentState) {
       entry.currentState = newState;
       this.onChange(entry.sessionId, newState);
