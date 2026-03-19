@@ -115,8 +115,8 @@ export class SessionManager {
   private persistTimer: NodeJS.Timeout | null = null;
   /** Maximum bytes of PTY output to keep per session for replay on reconnect. */
   private static readonly OUTPUT_BUFFER_MAX = 256 * 1024;
-  private static readonly DISCOVERY_POLL_MS = 2000;
-  private static readonly DISCOVERY_MAX_POLLS = 300; // ~10 minutes
+  private static readonly DISCOVERY_POLL_MS = 1000;
+  private static readonly DISCOVERY_MAX_POLLS = 60; // ~1 minute
 
   // history.jsonl monitoring for /clear detection
   private readonly historyFilePath: string;
@@ -421,78 +421,82 @@ export class SessionManager {
       payload: { clientSessionId, activityState: "idle" },
     });
 
-    this.startNewSessionDiscovery(clientSessionId, oldSessionId, workspacePath);
+    // Delay 500ms before starting discovery — the new session file is created
+    // almost simultaneously with /clear in history.jsonl.
+    const delayTimer = setTimeout(() => {
+      this.startNewSessionDiscovery(clientSessionId, oldSessionId, workspacePath);
+    }, 500);
+    this.discoveryTimers.set(clientSessionId, delayTimer as unknown as NodeJS.Timeout);
   }
 
   private startNewSessionDiscovery(clientSessionId: string, oldSessionId: string, workspacePath: string) {
-    // Cancel any previous discovery for this session (handles rapid /clear)
-    this.clearDiscoveryTimer(clientSessionId);
-
     const dirPath = projectDirPath(workspacePath);
     let pollCount = 0;
 
     console.log(`[SessionManager] startNewSessionDiscovery: dir=${dirPath}, oldSession=${oldSessionId}`);
 
-    // Wait 1 second before the first check — the new session file is created
-    // almost simultaneously with /clear, so we need a short delay.
-    const initialDelay = setTimeout(() => {
+    const tryFind = async (): Promise<boolean> => {
+      try {
+        const files = (await readdir(dirPath)).filter((f) => f.endsWith(".jsonl"));
+
+        // Stat each file (except old session) to find the most recently modified ones
+        const candidates: { name: string; mtimeMs: number }[] = [];
+        for (const f of files) {
+          const sid = f.replace(/\.jsonl$/, "");
+          if (sid === oldSessionId) continue;
+          try {
+            const s = await stat(path.join(dirPath, f));
+            candidates.push({ name: f, mtimeMs: s.mtimeMs });
+          } catch {
+            // skip unreadable
+          }
+        }
+        candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+        // Check the top 3 newest files for /clear content
+        for (const candidate of candidates.slice(0, 3)) {
+          const filePath = path.join(dirPath, candidate.name);
+          let fd;
+          try {
+            fd = await open(filePath, "r");
+            const buf = Buffer.alloc(4096);
+            const { bytesRead } = await fd.read(buf, 0, 4096, 0);
+            const head = buf.toString("utf8", 0, bytesRead);
+            if (head.includes("<command-name>/clear</command-name>")) {
+              const newSessionId = candidate.name.replace(/\.jsonl$/, "");
+              console.log(`[SessionManager] discovery confirmed new session: ${candidate.name} (contains /clear)`);
+              this.clearDiscoveryTimer(clientSessionId);
+              this.completeSessionSwitch(clientSessionId, oldSessionId, newSessionId, workspacePath);
+              return true;
+            }
+          } catch {
+            // skip
+          } finally {
+            await fd?.close();
+          }
+        }
+      } catch {
+        // Directory may not exist yet
+      }
+      return false;
+    };
+
+    // Immediate first attempt, then retry every 1s up to ~1 minute
+    tryFind().then((found) => {
+      if (found) return;
+
       const timer = setInterval(async () => {
         pollCount++;
         if (pollCount > SessionManager.DISCOVERY_MAX_POLLS) {
+          console.log(`[SessionManager] discovery timed out for ${oldSessionId}`);
           this.clearDiscoveryTimer(clientSessionId);
           return;
         }
-
-        try {
-          const files = (await readdir(dirPath)).filter((f) => f.endsWith(".jsonl"));
-
-          // Stat each file (except old session) to find the most recently modified ones
-          const candidates: { name: string; mtimeMs: number }[] = [];
-          for (const f of files) {
-            const sid = f.replace(/\.jsonl$/, "");
-            if (sid === oldSessionId) continue;
-            try {
-              const s = await stat(path.join(dirPath, f));
-              candidates.push({ name: f, mtimeMs: s.mtimeMs });
-            } catch {
-              // skip unreadable
-            }
-          }
-          candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
-
-          // Check the top 3 newest files for /clear content
-          for (const candidate of candidates.slice(0, 3)) {
-            const filePath = path.join(dirPath, candidate.name);
-            let fd;
-            try {
-              fd = await open(filePath, "r");
-              const buf = Buffer.alloc(4096);
-              const { bytesRead } = await fd.read(buf, 0, 4096, 0);
-              const head = buf.toString("utf8", 0, bytesRead);
-              if (head.includes("<command-name>/clear</command-name>")) {
-                const newSessionId = candidate.name.replace(/\.jsonl$/, "");
-                console.log(`[SessionManager] discovery confirmed new session: ${candidate.name} (contains /clear)`);
-                this.clearDiscoveryTimer(clientSessionId);
-                this.completeSessionSwitch(clientSessionId, oldSessionId, newSessionId, workspacePath);
-                return;
-              }
-            } catch {
-              // skip
-            } finally {
-              await fd?.close();
-            }
-          }
-        } catch {
-          // Directory may not exist yet — keep polling
-        }
+        await tryFind();
       }, SessionManager.DISCOVERY_POLL_MS);
 
-      // Replace the initial timeout ref with the interval ref in the map
       this.discoveryTimers.set(clientSessionId, timer);
-    }, 1000);
-
-    // Store the timeout so it can be cleared
-    this.discoveryTimers.set(clientSessionId, initialDelay as unknown as NodeJS.Timeout);
+    });
   }
 
   private completeSessionSwitch(
