@@ -3,12 +3,16 @@ import path from "node:path";
 import { mkdir, readFile, writeFile, access } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { ClaudeCliSession } from "./claude-cli-session.js";
+import { ActivityMonitor, type ActivityState } from "./activity-monitor.js";
+
+export type { ActivityState } from "./activity-monitor.js";
 
 export type SessionSnapshot = {
   clientSessionId: string;
   title: string;
   workspacePath: string;
   connectionState: "connecting" | "connected" | "error";
+  activityState: ActivityState;
   sessionId: string;
   updatedAt: string;
 };
@@ -64,6 +68,13 @@ export type SocketEvent =
         clientSessionId: string;
         exitCode: number;
       };
+    }
+  | {
+      type: "session_activity";
+      payload: {
+        clientSessionId: string;
+        activityState: ActivityState;
+      };
     };
 
 type PersistedState = {
@@ -88,6 +99,9 @@ export class SessionManager {
   private readonly stateFilePath: string;
   private readonly sessions = new Map<string, ManagedSession>();
   private readonly listeners = new Set<(event: SocketEvent) => void>();
+  private readonly activityMonitor: ActivityMonitor;
+  /** Reverse index: Claude sessionId → clientSessionId */
+  private readonly sessionIdIndex = new Map<string, string>();
   private persistTimer: NodeJS.Timeout | null = null;
   /** Maximum bytes of PTY output to keep per session for replay on reconnect. */
   private static readonly OUTPUT_BUFFER_MAX = 256 * 1024;
@@ -96,6 +110,17 @@ export class SessionManager {
     this.allowedRoots = options.allowedRoots;
     this.claudeBin = options.claudeBin;
     this.stateFilePath = path.join(os.homedir(), ".leduo-patrol", "state.json");
+    this.activityMonitor = new ActivityMonitor((sessionId, activityState) => {
+      const clientSessionId = this.sessionIdIndex.get(sessionId);
+      if (!clientSessionId) return;
+      const entry = this.sessions.get(clientSessionId);
+      if (!entry) return;
+      entry.snapshot.activityState = activityState;
+      this.emit({
+        type: "session_activity",
+        payload: { clientSessionId, activityState },
+      });
+    });
   }
 
   async initialize() {
@@ -106,6 +131,7 @@ export class SessionManager {
         title: persisted.title,
         workspacePath: persisted.workspacePath,
         connectionState: "connecting",
+        activityState: "idle",
         sessionId: persisted.sessionId,
         updatedAt: persisted.updatedAt,
       };
@@ -114,6 +140,8 @@ export class SessionManager {
         cliSession: null,
         outputBuffer: "",
       });
+      this.sessionIdIndex.set(snapshot.sessionId, snapshot.clientSessionId);
+      this.activityMonitor.watch(snapshot.sessionId, snapshot.workspacePath);
     }
 
     for (const entry of this.sessions.values()) {
@@ -166,6 +194,7 @@ export class SessionManager {
       title: requestedTitle?.trim() || path.basename(resolvedWorkspacePath) || resolvedWorkspacePath,
       workspacePath: resolvedWorkspacePath,
       connectionState: "connecting",
+      activityState: "idle",
       sessionId,
       updatedAt: new Date().toISOString(),
     };
@@ -176,6 +205,8 @@ export class SessionManager {
       outputBuffer: "",
     };
     this.sessions.set(snapshot.clientSessionId, entry);
+    this.sessionIdIndex.set(sessionId, snapshot.clientSessionId);
+    this.activityMonitor.watch(sessionId, resolvedWorkspacePath);
     this.schedulePersist();
     this.emit({
       type: "session_registered",
@@ -213,6 +244,8 @@ export class SessionManager {
       return;
     }
     entry.cliSession?.kill();
+    this.activityMonitor.unwatch(entry.snapshot.sessionId);
+    this.sessionIdIndex.delete(entry.snapshot.sessionId);
     this.sessions.delete(clientSessionId);
     this.schedulePersist();
     this.emit({

@@ -450,6 +450,34 @@ h1 {
   color: #0a5c88;
 }
 
+.session-chip-tag-running {
+  background: rgba(34, 160, 90, 0.14);
+  border-color: rgba(34, 160, 90, 0.28);
+  color: #1a7a40;
+}
+
+.session-chip-tag-running::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  margin-right: 4px;
+  animation: activity-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes activity-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.session-chip-tag-pending {
+  background: rgba(210, 150, 30, 0.14);
+  border-color: rgba(210, 150, 30, 0.28);
+  color: #8a6510;
+}
+
 .session-chip-updated {
   display: block;
   min-width: 0;

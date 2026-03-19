@@ -1,10 +1,13 @@
 import { useState, useEffect, useRef, useMemo, type CSSProperties, Fragment } from "react";
 
+type ActivityState = "running" | "completed" | "pending" | "idle";
+
 type SessionRecord = {
   clientSessionId: string;
   title: string;
   workspacePath: string;
   connectionState: "connecting" | "connected" | "error";
+  activityState?: ActivityState;
   sessionId: string;
   updatedAt: string;
 };
@@ -62,6 +65,7 @@ type EventMessage =
   | { type: "session_closed"; payload: { clientSessionId: string } }
   | { type: "cli_output"; payload: { clientSessionId: string; data: string } }
   | { type: "cli_exited"; payload: { clientSessionId: string; exitCode: number } }
+  | { type: "session_activity"; payload: { clientSessionId: string; activityState: ActivityState } }
   | { type: "shell_output"; payload: { data: string } }
   | { type: "shell_exited"; payload: { exitCode: number } }
   | { type: "error"; payload: { message: string; fatal: boolean; clientSessionId?: string } };
@@ -284,6 +288,16 @@ export default function App() {
           ),
         );
         addToast("warning", "CLI 已退出", `退出码: ${message.payload.exitCode}`, message.payload.clientSessionId);
+        break;
+
+      case "session_activity":
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.clientSessionId === message.payload.clientSessionId
+              ? { ...s, activityState: message.payload.activityState }
+              : s,
+          ),
+        );
         break;
 
       case "shell_output": {
@@ -705,7 +719,7 @@ export default function App() {
                   </span>
                   <span className="session-chip-meta">
                     {session.connectionState === "connected" ? (
-                      <span className="session-chip-tag session-chip-tag-completed">已连接</span>
+                      <SessionActivityTag activityState={session.activityState} />
                     ) : session.connectionState === "connecting" ? (
                       <span className="session-chip-tag session-chip-tag-connecting">连接中</span>
                     ) : (
@@ -944,6 +958,19 @@ export default function App() {
 }
 
 // --- Helper components ---
+
+function SessionActivityTag(props: { activityState?: ActivityState }) {
+  switch (props.activityState) {
+    case "running":
+      return <span className="session-chip-tag session-chip-tag-running">运行中</span>;
+    case "completed":
+      return <span className="session-chip-tag session-chip-tag-completed">已完成</span>;
+    case "pending":
+      return <span className="session-chip-tag session-chip-tag-pending">待处理</span>;
+    default:
+      return <span className="session-chip-tag session-chip-tag-completed">已连接</span>;
+  }
+}
 
 function StatusCard(props: { label: string; value: string; tone?: "positive" | "negative" | "neutral" }) {
   return (
