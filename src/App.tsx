@@ -78,6 +78,10 @@ type SessionRecord = {
   questions: QuestionPayload[];
   availableCommands?: AvailableCommand[];
   updatedAt: string;
+  /** Timestamp (ms) of the most recent content-bearing session_update event */
+  lastContentEventAt?: number;
+  /** Timestamp (ms) when prompt_finished was received */
+  completedAt?: number;
 };
 
 type PendingImage = {
@@ -182,7 +186,7 @@ type EventMessage =
   | { type: "question_requested"; payload: QuestionPayload }
   | { type: "question_answered"; payload: { clientSessionId: string; questionId: string; answer: string } }
   | { type: "session_closed"; payload: { clientSessionId: string } }
-  | { type: "error"; payload: { message: string; clientSessionId?: string } }
+  | { type: "error"; payload: { message: string; fatal: boolean; clientSessionId?: string } }
   | { type: "shell_output"; payload: { data: string } }
   | { type: "shell_exited"; payload: { exitCode: number } };
 
@@ -548,12 +552,13 @@ export default function App() {
           continue;
         }
         const childCount = rootChildCount[row.item.id] ?? 0;
-        if (childCount < 1 || !isSubagentToolTitle(row.item.title)) {
+        const collapseToolMeta = readToolMeta(row.item);
+        if (childCount < 1 || !isSubagentToolTitle(collapseToolMeta?.rawTitle ?? row.item.title)) {
           continue;
         }
 
         // Force-collapse once when a sub-agent task completes
-        const status = readToolMeta(row.item)?.status ?? null;
+        const status = collapseToolMeta?.status ?? null;
         const isCompleted = isTerminalToolStatus(status);
         if (isCompleted && !completionCollapsedRef.current.has(row.item.id)) {
           completionCollapsedRef.current.add(row.item.id);
@@ -760,6 +765,20 @@ export default function App() {
       }
     };
   }, [accessKey]);
+
+  // Re-render after the content grace period expires so that sidebar status
+  // transitions from "运行中" → "已完成" automatically.
+  useEffect(() => {
+    const graceSession = sessions.find((s) => isWithinContentGracePeriod(s));
+    if (!graceSession) return;
+    const remaining = CONTENT_GRACE_MS - (Date.now() - (graceSession.lastContentEventAt ?? 0));
+    if (remaining <= 0) return;
+    const timer = setTimeout(() => {
+      // Trigger a no-op state update to force re-render.
+      setSessions((cur) => [...cur]);
+    }, remaining + 50); // +50ms buffer
+    return () => clearTimeout(timer);
+  }, [sessions]);
 
   useEffect(() => {
     if (!terminalOpen || !config?.enableShell || !activeSessionId) {
@@ -1092,7 +1111,11 @@ export default function App() {
       case "prompt_finished":
         {
           const keepRunning = shouldKeepSessionRunningAfterPromptFinished(message.payload.stopReason);
-          updateSession(message.payload.clientSessionId, (session) => ({ ...session, busy: keepRunning }));
+          updateSession(message.payload.clientSessionId, (session) => ({
+            ...session,
+            busy: keepRunning,
+            completedAt: keepRunning ? session.completedAt : Date.now(),
+          }));
           appendSessionTimeline(message.payload.clientSessionId, {
             id: makeId(),
             kind: "system",
@@ -1181,20 +1204,24 @@ export default function App() {
           appendGlobalTimeline({
             id: makeId(),
             kind: "error",
-            title: "错误",
+            title: message.payload.fatal ? "错误" : "警告",
             body: message.payload.message,
           });
           break;
         }
-        updateSession(message.payload.clientSessionId, (session) => ({
-          ...session,
-          busy: false,
-          connectionState: "error",
-        }));
+        // Only reset busy / connectionState for fatal errors (agent crash / exit).
+        // Non-fatal stderr warnings must not flip the session to "completed".
+        if (message.payload.fatal) {
+          updateSession(message.payload.clientSessionId, (session) => ({
+            ...session,
+            busy: false,
+            connectionState: "error",
+          }));
+        }
         appendSessionTimeline(message.payload.clientSessionId, {
           id: makeId(),
           kind: "error",
-          title: "错误",
+          title: message.payload.fatal ? "错误" : "警告",
           body: message.payload.message,
         });
         break;
@@ -1208,6 +1235,20 @@ export default function App() {
   }
 
   function consumeSessionUpdate(clientSessionId: string, update: SessionUpdate) {
+    // Track content-bearing events for the timestamp safety net.
+    const isContentEvent =
+      update.sessionUpdate === "agent_message_chunk" ||
+      update.sessionUpdate === "agent_thought_chunk" ||
+      update.sessionUpdate === "tool_call" ||
+      update.sessionUpdate === "tool_call_update" ||
+      update.sessionUpdate === "plan";
+    if (isContentEvent) {
+      updateSession(clientSessionId, (session) => ({
+        ...session,
+        lastContentEventAt: Date.now(),
+      }));
+    }
+
     switch (update.sessionUpdate) {
       case "available_commands_update": {
         const nextCommands = normalizeAvailableCommands(
@@ -2514,10 +2555,12 @@ function canMergeToolTimelineItem(existingItem: TimelineItem, incomingItem: Time
   if (existingMeta?.toolCallId !== toolCallId || incomingMeta?.toolCallId !== toolCallId) {
     return false;
   }
-  const existingIsSubagent = isSubagentToolTitle(existingMeta.title);
-  const incomingIsSubagent = isSubagentToolTitle(incomingMeta.title);
-
-  if (existingIsSubagent || incomingIsSubagent) {
+  const existingIsSubagent = isSubagentToolTitle(existingMeta.rawTitle ?? existingMeta.title);
+  const incomingIsSubagent = isSubagentToolTitle(incomingMeta.rawTitle ?? incomingMeta.title);
+  // Allow merging when both sides are subagent tools with the same toolCallId
+  // (status updates like running→completed for the same task should be merged in place).
+  // Block cross-type merging (subagent + non-subagent) to prevent misattribution.
+  if (existingIsSubagent !== incomingIsSubagent) {
     return false;
   }
   return true;
@@ -2551,7 +2594,7 @@ function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
 
   for (const item of items) {
     const toolMeta = readToolMeta(item);
-    const shouldHandleAsSubagent = Boolean(toolMeta && isSubagentToolTitle(toolMeta.title));
+    const shouldHandleAsSubagent = Boolean(toolMeta && isSubagentToolTitle(toolMeta.rawTitle ?? toolMeta.title));
 
     if (toolMeta?.toolCallId) {
       const candidateSummary = buildSubagentSummaryFromChild(toolMeta.title);
@@ -2656,13 +2699,19 @@ function closeSubagentRoot(
   allowFallback = true,
 ): { rootId: string; toolCallId: string | null; rowIndex: number; depth: number } | null {
   if (toolCallId) {
+    let closedRoot: { rootId: string; toolCallId: string | null; rowIndex: number; depth: number } | null = null;
     for (let i = activeRoots.length - 1; i >= 0; i -= 1) {
       if (activeRoots[i]?.toolCallId === toolCallId) {
-        const [closedRoot] = activeRoots.splice(i, 1);
-        console.debug("[subagent-tree] close root id=%s toolCallId=%s", closedRoot?.rootId, toolCallId);
-        return closedRoot ?? null;
+        const [removed] = activeRoots.splice(i, 1);
+        // Keep the earliest (lowest-index) match as the canonical closed root,
+        // since it is the original root row whose display should be updated.
+        if (removed) {
+          console.debug("[subagent-tree] close root id=%s toolCallId=%s", removed.rootId, toolCallId);
+          closedRoot = removed;
+        }
       }
     }
+    if (closedRoot) return closedRoot;
   }
 
   if (allowFallback && activeRoots.length === 1) {
@@ -2765,16 +2814,17 @@ function countChildrenByRoot(rows: TimelineTreeRow[]) {
   return count;
 }
 
-function readToolMeta(item: TimelineItem): { title: string | null; status: string | null; toolCallId: string | null } | null {
+function readToolMeta(item: TimelineItem): { title: string | null; rawTitle: string | null; status: string | null; toolCallId: string | null } | null {
   if (item.kind !== "tool") {
     return null;
   }
   const entries = parseToolTimelineEntries(item.body);
   const latestRecord = [...entries].reverse().map((entry) => asRecord(entry)).find((entry) => entry !== null) ?? null;
+  const rawTitle = typeof latestRecord?.title === "string" ? latestRecord.title : null;
   const title = resolveToolDisplayTitle(entries, item.title) || item.title;
   const status = typeof latestRecord?.status === "string" ? latestRecord.status : item.meta ?? null;
   const toolCallId = typeof latestRecord?.toolCallId === "string" ? latestRecord.toolCallId : null;
-  return { title, status, toolCallId };
+  return { title, rawTitle, status, toolCallId };
 }
 
 function isSubagentToolTitle(title: string | null) {
@@ -3141,6 +3191,12 @@ function getSessionSidebarStatus(session: SessionRecord): SessionSidebarStatus |
     return { label: "异常", tone: "error" };
   }
   if (hasCompletedPrompt(session)) {
+    // Safety net: if a content event arrived *after* prompt_finished and
+    // within the grace window, keep showing "运行中" so the user doesn't
+    // see a brief flash of "已完成" while late updates are still flowing.
+    if (isWithinContentGracePeriod(session)) {
+      return { label: "运行中", tone: "running" };
+    }
     return { label: "已完成", tone: "completed" };
   }
   if (session.connectionState === "connecting") {
@@ -3151,6 +3207,16 @@ function getSessionSidebarStatus(session: SessionRecord): SessionSidebarStatus |
 
 function hasCompletedPrompt(session: SessionRecord) {
   return session.timeline.some((item) => item.kind === "system" && item.title === "本轮完成");
+}
+
+/** Grace period (ms) – if content arrived after completion within this window, treat as still running. */
+const CONTENT_GRACE_MS = 2000;
+
+function isWithinContentGracePeriod(session: SessionRecord): boolean {
+  const { lastContentEventAt, completedAt } = session;
+  if (!lastContentEventAt || !completedAt) return false;
+  if (lastContentEventAt <= completedAt) return false;
+  return Date.now() - lastContentEventAt < CONTENT_GRACE_MS;
 }
 
 function hasSessionErrorLog(session: SessionRecord) {
@@ -3444,7 +3510,7 @@ function normalizeMergedTimeline(items: TimelineItem[]) {
       merged.push(normalized);
       continue;
     }
-    if (isSubagentToolTitle(normalized.title)) {
+    if (isSubagentToolTitle(readToolMeta(normalized)?.rawTitle ?? normalized.title)) {
       merged.push(normalized);
       continue;
     }

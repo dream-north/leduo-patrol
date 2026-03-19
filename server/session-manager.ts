@@ -66,6 +66,7 @@ export type SocketEvent =
       type: "error";
       payload: {
         message: string;
+        fatal: boolean;
         clientSessionId?: string;
       };
     }
@@ -646,7 +647,6 @@ export class SessionManager {
         );
         break;
       case "error":
-        entry.snapshot.busy = false;
         {
           const editChangeMessage = formatEditToolChangeMessage(event.payload.message);
           if (editChangeMessage) {
@@ -660,11 +660,16 @@ export class SessionManager {
             break;
           }
         }
-        entry.snapshot.connectionState = "error";
+        // Only reset busy / connectionState for fatal errors (agent crash / exit).
+        // Non-fatal stderr warnings must not flip the session to "completed".
+        if (event.payload.fatal) {
+          entry.snapshot.busy = false;
+          entry.snapshot.connectionState = "error";
+        }
         this.appendTimeline(entry, {
           id: randomUUID(),
           kind: "error",
-          title: "错误",
+          title: event.payload.fatal ? "错误" : "警告",
           body: event.payload.message,
         });
         break;
@@ -927,6 +932,7 @@ export class SessionManager {
       payload: {
         clientSessionId,
         message: formatError(error),
+        fatal: true,
       },
     });
   }

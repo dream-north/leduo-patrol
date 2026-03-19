@@ -532,7 +532,10 @@ test("app canMergeToolTimelineItem only merges same toolCallId", () => {
     meta: "completed",
   };
 
-  assert.equal(appTestables.canMergeToolTimelineItem(existing, incomingSame, "tc-1"), false);
+  // Subagent-to-subagent merging is now allowed so status updates (running→completed)
+  // merge in place, preventing duplicate roots that trap post-completion output.
+  assert.equal(appTestables.canMergeToolTimelineItem(existing, incomingSame, "tc-1"), true);
+  // Cross-type (subagent + non-subagent) merging is still blocked.
   assert.equal(appTestables.canMergeToolTimelineItem(existing, incomingChild, "tc-1"), false);
 });
 
@@ -1139,4 +1142,41 @@ test("app buildTimelineTreeRows temporal-locality clears when root closes", () =
   const childRow = rows.find((r) => r.item.id === "child-after-close");
   assert.equal(childRow?.rootId, "task-b", "should fall back to single remaining root, not closed task-a");
   assert.equal(childRow?.depth, 1);
+});
+
+test("app timeline tree groups subagent with rawInput description", () => {
+  const rows = appTestables.buildTimelineTreeRows([
+    {
+      id: "task-running",
+      kind: "tool",
+      title: "Task · 调研bedrock_common架构",
+      body: JSON.stringify({
+        toolCallId: "tc-1",
+        title: "Task",
+        status: "running",
+        rawInput: { description: "调研bedrock_common架构", prompt: "...", subagent_type: "explore-agent" },
+      }),
+      meta: "running",
+    },
+    {
+      id: "child-glob",
+      kind: "tool",
+      title: "Glob",
+      body: JSON.stringify({ toolCallId: "child-tc-1", title: "Glob", status: "completed" }),
+      meta: "completed",
+      parentToolCallId: "tc-1",
+    },
+    {
+      id: "task-done",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-1", title: "Task", status: "completed" }),
+      meta: "completed",
+    },
+  ]);
+
+  // The Task root should be recognized as subagent even though item.title contains description
+  assert.equal(rows[0]?.item.id, "task-running");
+  assert.equal(rows[1]?.depth, 1, "child should be nested under the Task root");
+  assert.equal(rows[1]?.rootId, "task-running", "child should reference the Task root");
 });

@@ -319,7 +319,7 @@ wss.on("connection", (socket, request) => {
     } catch (error) {
       sendEvent(socket, {
         type: "error",
-        payload: { message: formatError(error) },
+        payload: { message: formatError(error), fatal: true },
       });
     }
   });

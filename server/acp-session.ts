@@ -51,7 +51,7 @@ export type ServerEvent =
       type: "question_answered";
       payload: { questionId: string; answer: string };
     }
-  | { type: "error"; payload: { message: string } };
+  | { type: "error"; payload: { message: string; fatal: boolean } };
 
 type PendingPermission = {
   resolve: (value: schema.RequestPermissionResponse) => void;
@@ -83,6 +83,9 @@ export class ClaudeAcpSession {
   private connectPromise: Promise<void> | null = null;
   private sessionPromise: Promise<string | null> | null = null;
   private currentModeId: string | null = null;
+  private drainTimer: ReturnType<typeof setTimeout> | null = null;
+  private drainResolve: (() => void) | null = null;
+  private static readonly DRAIN_QUIET_MS = 200;
 
   constructor(options: SessionOptions) {
     this.workspacePath = options.workspacePath;
@@ -114,7 +117,7 @@ export class ClaudeAcpSession {
         if (!message || this.shouldIgnoreAgentStderr(message) || this.shouldIgnoreToolOutputLog(message)) {
           return;
         }
-        this.onEvent({ type: "error", payload: { message } });
+        this.onEvent({ type: "error", payload: { message, fatal: false } });
       });
 
       this.agentProcess.on("exit", (code, signal) => {
@@ -123,11 +126,12 @@ export class ClaudeAcpSession {
         this.sessionPromise = null;
         this.connectPromise = null;
         this.activePrompt = false;
+        this.clearDrain();
         this.rejectPendingPermissions(new Error("Permission request cancelled because ACP agent exited."));
         this.rejectPendingQuestions(new Error("Question cancelled because ACP agent exited."));
         this.onEvent({
           type: "error",
-          payload: { message: `Claude ACP agent exited (${code ?? "null"} / ${signal ?? "null"}).` },
+          payload: { message: `Claude ACP agent exited (${code ?? "null"} / ${signal ?? "null"}).`, fatal: true },
         });
       });
 
@@ -141,7 +145,14 @@ export class ClaudeAcpSession {
       const client: acp.Client = {
         requestPermission: async (params) => this.handlePermissionRequest(params),
         sessionUpdate: async (params) => {
+          // Keep internal currentModeId in sync when the agent reports a mode change,
+          // otherwise setMode()'s dedup guard will skip the actual ACP call.
+          const update = params.update as Record<string, unknown>;
+          if (update.sessionUpdate === "current_mode_update" && typeof update.currentModeId === "string") {
+            this.currentModeId = update.currentModeId;
+          }
           this.onEvent({ type: "session_update", payload: params.update });
+          this.resetDrainTimer();
         },
         readTextFile: async (params) => this.handleReadTextFile(params),
         writeTextFile: async (params) => this.handleWriteTextFile(params),
@@ -301,6 +312,7 @@ export class ClaudeAcpSession {
         messageId: randomUUID(),
         prompt: promptContent,
       });
+      await this.waitForDrain();
       this.onEvent({
         type: "prompt_finished",
         payload: { promptId, stopReason: response.stopReason },
@@ -358,6 +370,7 @@ export class ClaudeAcpSession {
   }
 
   async dispose() {
+    this.clearDrain();
     this.rejectPendingPermissions(new Error("Client disconnected."));
     this.rejectPendingQuestions(new Error("Client disconnected."));
     if (this.agentProcess && !this.agentProcess.killed) {
@@ -377,6 +390,50 @@ export class ClaudeAcpSession {
       type: "ready",
       payload: { workspacePath: this.workspacePath, agentConnected: true },
     });
+  }
+
+  /**
+   * Wait until no session_update events have arrived for DRAIN_QUIET_MS.
+   * Called before emitting prompt_finished so late-arriving updates are not
+   * lost behind the "completed" status.
+   */
+  private waitForDrain(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.drainResolve = resolve;
+      this.drainTimer = setTimeout(() => {
+        this.drainResolve = null;
+        this.drainTimer = null;
+        resolve();
+      }, ClaudeAcpSession.DRAIN_QUIET_MS);
+    });
+  }
+
+  /**
+   * Called from the sessionUpdate callback – each arriving event restarts
+   * the quiet-period timer so we keep waiting while data is still flowing.
+   */
+  private resetDrainTimer() {
+    if (this.drainTimer && this.drainResolve) {
+      clearTimeout(this.drainTimer);
+      const resolve = this.drainResolve;
+      this.drainTimer = setTimeout(() => {
+        this.drainResolve = null;
+        this.drainTimer = null;
+        resolve();
+      }, ClaudeAcpSession.DRAIN_QUIET_MS);
+    }
+  }
+
+  /** Cancel any pending drain wait (e.g. on process exit or dispose). */
+  private clearDrain() {
+    if (this.drainTimer) {
+      clearTimeout(this.drainTimer);
+      this.drainTimer = null;
+    }
+    if (this.drainResolve) {
+      this.drainResolve();
+      this.drainResolve = null;
+    }
   }
 
   private shouldIgnoreAgentStderr(message: string) {
