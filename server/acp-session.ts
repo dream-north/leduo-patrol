@@ -441,7 +441,7 @@ export class ClaudeAcpSession {
       message.includes("Error handling notification") &&
       message.includes("method: 'session/update'") &&
       message.includes("message: 'Invalid params'")
-    ) || isMissingPostToolHookMessage(message);
+    ) || isMissingPostToolHookMessage(message) || message.includes("<local-command-stdout>");
   }
 
   private shouldIgnoreToolOutputLog(message: string) {

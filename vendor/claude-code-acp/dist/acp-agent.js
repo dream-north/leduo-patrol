@@ -472,11 +472,6 @@ export class ClaudeAcpAgent {
                             }
                         }
                     }
-                    if (this.logger && this.logger.info) {
-                        this.logger.info(`[claude-code-acp][diag] ${message.type} parent_tool_use_id=${message.parent_tool_use_id ?? "NONE"} content_types=${content.map(c => c.type).join(",")}`);
-                    } else {
-                        console.debug("[claude-code-acp][diag] %s parent_tool_use_id=%s content_types=%s", message.type, message.parent_tool_use_id ?? "NONE", content.map(c => c.type).join(","));
-                    }
                     for (const notification of toAcpNotifications(content, message.message.role, params.sessionId, this.toolUseCache, this.client, this.logger, parentOpts)) {
                         await this.client.sessionUpdate(notification);
                     }
@@ -1351,11 +1346,6 @@ export function toAcpNotifications(content, role, sessionId, toolUseCache, clien
 }
 export function streamEventToAcpNotifications(message, sessionId, toolUseCache, client, logger) {
     const parentToolUseId = message.parent_tool_use_id || null;
-    if (logger && logger.info) {
-        logger.info(`[claude-code-acp][diag] stream_event parent_tool_use_id=${parentToolUseId ?? "NONE"} event.type=${message.event?.type}`);
-    } else {
-        console.debug("[claude-code-acp][diag] stream_event parent_tool_use_id=%s event.type=%s", parentToolUseId ?? "NONE", message.event?.type);
-    }
     const opts = parentToolUseId ? { parentToolUseId } : undefined;
     const event = message.event;
     switch (event.type) {

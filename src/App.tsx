@@ -930,7 +930,6 @@ export default function App() {
             }
           }
           if (existingIndex >= 0) {
-            console.debug("[subagent-tree] upsert toolCallId=%s action=merge existingIndex=%d", nextToolCallId, existingIndex);
             const updatedTimeline = [...session.timeline];
             updatedTimeline[existingIndex] = mergeToolTimelineItems(updatedTimeline[existingIndex] ?? nextItem, nextItem);
             return {
@@ -941,7 +940,6 @@ export default function App() {
           }
         }
 
-        console.debug("[subagent-tree] upsert toolCallId=%s action=append parentToolCallId=%s", nextToolCallId, nextItem.parentToolCallId ?? "none");
         return {
           ...session,
           timeline: [...session.timeline, normalizeTimelineItem(nextItem)],
@@ -2491,9 +2489,6 @@ function TimelineRow(props: {
 function buildToolTimelineItem(update: SessionUpdate): TimelineItem {
   const normalizedTitle = normalizeAcpToolTitle(update.title) || undefined;
   const parentToolCallId = extractParentToolCallId(update as Record<string, unknown>);
-  console.debug("[subagent-tree] buildToolItem toolCallId=%s parentToolCallId=%s _meta=%s",
-    update.toolCallId, parentToolCallId ?? "none",
-    JSON.stringify(asRecord(update._meta)));
   return {
     id: makeId(),
     kind: "tool",
@@ -2571,9 +2566,6 @@ function mergeToolTimelineItems(existingItem: TimelineItem, incomingItem: Timeli
   const incomingEntries = parseToolTimelineEntries(incomingItem.body);
   const mergedEntries = [...existingEntries, ...incomingEntries];
   const mergedParent = incomingItem.parentToolCallId ?? existingItem.parentToolCallId;
-  if (existingItem.parentToolCallId && !incomingItem.parentToolCallId) {
-    console.debug("[subagent-tree] merge preserved parentToolCallId=%s from=existing", existingItem.parentToolCallId);
-  }
   return {
     ...incomingItem,
     id: existingItem.id,
@@ -2586,6 +2578,10 @@ function mergeToolTimelineItems(existingItem: TimelineItem, incomingItem: Timeli
 function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
   const rows: TimelineTreeRow[] = [];
   const activeRoots: Array<{ rootId: string; toolCallId: string | null; rowIndex: number; depth: number }> = [];
+  // Track ALL subagent roots (including completed) so that children with
+  // explicit parentToolCallId can still find their parent after the root
+  // has been closed or was already terminal when first processed.
+  const allRootsByToolCallId = new Map<string, { rootId: string; toolCallId: string; rowIndex: number; depth: number }>();
   // Track the most-recently-matched root for temporal-locality fallback.
   // When parent_tool_use_id is missing from the stream, consecutive items
   // from the same sub-agent context tend to arrive together — so re-using
@@ -2599,7 +2595,13 @@ function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
     if (toolMeta?.toolCallId) {
       const candidateSummary = buildSubagentSummaryFromChild(toolMeta.title);
       if (candidateSummary) {
-        const matchedRoot = findParentRoot(activeRoots, item.parentToolCallId, toolMeta.toolCallId);
+        let matchedRoot = findParentRoot(activeRoots, item.parentToolCallId, toolMeta.toolCallId);
+        if (!matchedRoot && item.parentToolCallId) {
+          const completed = allRootsByToolCallId.get(item.parentToolCallId);
+          if (completed) {
+            matchedRoot = completed;
+          }
+        }
         if (matchedRoot) {
           const row = rows[matchedRoot.rowIndex];
           if (row && !row.displayTitle) {
@@ -2628,6 +2630,13 @@ function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
 
     if (!shouldHandleAsSubagent) {
       let parentRoot = findParentRoot(activeRoots, item.parentToolCallId, toolMeta?.toolCallId);
+      // Fallback: check completed roots by explicit parentToolCallId.
+      if (!parentRoot && item.parentToolCallId) {
+        const completed = allRootsByToolCallId.get(item.parentToolCallId);
+        if (completed) {
+          parentRoot = completed;
+        }
+      }
       // Temporal-locality fallback: if findParentRoot returned null because
       // of multi-root ambiguity, check whether the lastMatchedRoot is still
       // active and re-use it.  This covers the common case where
@@ -2636,16 +2645,10 @@ function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
         const stillActive = activeRoots.some((r) => r.rootId === lastMatchedRoot!.rootId);
         if (stillActive) {
           parentRoot = lastMatchedRoot;
-          console.debug("[subagent-tree] child id=%s kind=%s → root=%s depth=%d (temporal fallback)", item.id, item.kind, parentRoot.rootId, parentRoot.depth + 1);
         }
       }
       if (parentRoot) {
-        if (parentRoot !== lastMatchedRoot) {
-          console.debug("[subagent-tree] child id=%s kind=%s → root=%s depth=%d", item.id, item.kind, parentRoot.rootId, parentRoot.depth + 1);
-        }
         lastMatchedRoot = parentRoot;
-      } else if (activeRoots.length > 0) {
-        console.debug("[subagent-tree] orphan id=%s kind=%s parentToolCallId=%s activeRoots=%d", item.id, item.kind, item.parentToolCallId ?? "none", activeRoots.length);
       }
       rows.push({
         item,
@@ -2676,7 +2679,13 @@ function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
       }
     }
 
-    const parentRoot = findParentRoot(activeRoots, item.parentToolCallId, subagentToolMeta.toolCallId, false);
+    let parentRoot = findParentRoot(activeRoots, item.parentToolCallId, subagentToolMeta.toolCallId, false);
+    if (!parentRoot && item.parentToolCallId) {
+      const completed = allRootsByToolCallId.get(item.parentToolCallId);
+      if (completed) {
+        parentRoot = completed;
+      }
+    }
     const depth = parentRoot ? parentRoot.depth + 1 : 0;
     rows.push({
       item,
@@ -2684,13 +2693,18 @@ function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
       rootId: parentRoot?.rootId ?? null,
     });
 
+    // Always track in allRootsByToolCallId for parentToolCallId lookups
+    // (including completed roots whose children arrive later in the timeline).
+    if (subagentToolMeta.toolCallId) {
+      allRootsByToolCallId.set(subagentToolMeta.toolCallId, { rootId: item.id, toolCallId: subagentToolMeta.toolCallId, rowIndex: rows.length - 1, depth });
+    }
+
     if (!isTerminal) {
       activeRoots.push({ rootId: item.id, toolCallId: subagentToolMeta.toolCallId, rowIndex: rows.length - 1, depth });
-      console.debug("[subagent-tree] open root id=%s toolCallId=%s depth=%d", item.id, subagentToolMeta.toolCallId, depth);
     }
   }
 
-  return rows;
+  return regroupTreeRows(rows);
 }
 
 function closeSubagentRoot(
@@ -2706,7 +2720,6 @@ function closeSubagentRoot(
         // Keep the earliest (lowest-index) match as the canonical closed root,
         // since it is the original root row whose display should be updated.
         if (removed) {
-          console.debug("[subagent-tree] close root id=%s toolCallId=%s", removed.rootId, toolCallId);
           closedRoot = removed;
         }
       }
@@ -2716,15 +2729,58 @@ function closeSubagentRoot(
 
   if (allowFallback && activeRoots.length === 1) {
     const closedRoot = activeRoots.pop() ?? null;
-    console.debug("[subagent-tree] close root fallback=used id=%s", closedRoot?.rootId);
     return closedRoot;
   }
 
-  if (allowFallback && activeRoots.length > 1) {
-    console.debug("[subagent-tree] close root fallback=rejected activeRoots=%d toolCallId=%s", activeRoots.length, toolCallId);
+  return null;
+}
+
+/**
+ * Reorder rows so that children are grouped immediately after their parent root,
+ * instead of being scattered in temporal (arrival) order.
+ * Handles nested sub-agents recursively.
+ */
+function regroupTreeRows(rows: TimelineTreeRow[]): TimelineTreeRow[] {
+  const childrenByRoot = new Map<string, TimelineTreeRow[]>();
+  const topLevel: TimelineTreeRow[] = [];
+
+  for (const row of rows) {
+    if (row.rootId) {
+      if (!childrenByRoot.has(row.rootId)) {
+        childrenByRoot.set(row.rootId, []);
+      }
+      childrenByRoot.get(row.rootId)!.push(row);
+    } else {
+      topLevel.push(row);
+    }
   }
 
-  return null;
+  const result: TimelineTreeRow[] = [];
+  function insertWithChildren(row: TimelineTreeRow) {
+    result.push(row);
+    const children = childrenByRoot.get(row.item.id);
+    if (children) {
+      for (const child of children) {
+        insertWithChildren(child);
+      }
+    }
+  }
+
+  for (const row of topLevel) {
+    insertWithChildren(row);
+  }
+
+  // Safety: append any orphaned rows not reachable from topLevel
+  if (result.length < rows.length) {
+    const insertedIds = new Set(result.map((r) => r.item.id));
+    for (const row of rows) {
+      if (!insertedIds.has(row.item.id)) {
+        result.push(row);
+      }
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -2742,7 +2798,6 @@ function findParentRoot(
   if (parentToolCallId) {
     for (let i = activeRoots.length - 1; i >= 0; i -= 1) {
       if (activeRoots[i]?.toolCallId === parentToolCallId) {
-        console.debug("[subagent-tree] findParent matched=%s method=parentToolCallId activeRoots=%d", activeRoots[i]?.rootId, activeRoots.length);
         return activeRoots[i]!;
       }
     }
@@ -2750,17 +2805,12 @@ function findParentRoot(
   if (toolCallId) {
     for (let i = activeRoots.length - 1; i >= 0; i -= 1) {
       if (activeRoots[i]?.toolCallId === toolCallId) {
-        console.debug("[subagent-tree] findParent matched=%s method=toolCallId activeRoots=%d", activeRoots[i]?.rootId, activeRoots.length);
         return activeRoots[i]!;
       }
     }
   }
   if (allowFallback && activeRoots.length === 1) {
-    console.debug("[subagent-tree] findParent fallback=used activeRoots=1 root=%s", activeRoots[0]?.rootId);
     return activeRoots[0]!;
-  }
-  if (allowFallback && activeRoots.length > 1) {
-    console.debug("[subagent-tree] findParent fallback=rejected activeRoots=%d (multi-root, no match)", activeRoots.length);
   }
   return null;
 }
@@ -4937,6 +4987,7 @@ export const appTestables = {
   canMergeToolTimelineItem,
   resolveWorkspaceLookupPath,
   buildTimelineTreeRows,
+  regroupTreeRows,
   countChildrenByRoot,
   isSubagentToolTitle,
   buildDemoFixtures,

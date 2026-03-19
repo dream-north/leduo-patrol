@@ -377,20 +377,30 @@ test("app timeline tree parallel subagents are siblings at same depth with child
   ]);
 
   // All three tasks should be at depth 0 (siblings, not nested)
+  // After regrouping, children appear immediately after their parent root.
   assert.equal(rows[0]?.depth, 0);
   assert.equal(rows[0]?.rootId, null);
-  assert.equal(rows[1]?.depth, 0);
-  assert.equal(rows[1]?.rootId, null);
+  assert.equal(rows[0]?.item.id, "task-1");
+
+  assert.equal(rows[1]?.depth, 1);
+  assert.equal(rows[1]?.rootId, "task-1");
+  assert.equal(rows[1]?.item.id, "child-of-1");
+
   assert.equal(rows[2]?.depth, 0);
   assert.equal(rows[2]?.rootId, null);
+  assert.equal(rows[2]?.item.id, "task-2");
 
-  // Children should be at depth 1 under the correct parent
   assert.equal(rows[3]?.depth, 1);
-  assert.equal(rows[3]?.rootId, "task-1");
-  assert.equal(rows[4]?.depth, 1);
-  assert.equal(rows[4]?.rootId, "task-2");
+  assert.equal(rows[3]?.rootId, "task-2");
+  assert.equal(rows[3]?.item.id, "child-of-2");
+
+  assert.equal(rows[4]?.depth, 0);
+  assert.equal(rows[4]?.rootId, null);
+  assert.equal(rows[4]?.item.id, "task-3");
+
   assert.equal(rows[5]?.depth, 1);
   assert.equal(rows[5]?.rootId, "task-3");
+  assert.equal(rows[5]?.item.id, "child-of-3");
 
   // Each root should have exactly 1 child
   const counts = appTestables.countChildrenByRoot(rows);
@@ -481,23 +491,34 @@ test("app timeline tree parallel subagents route children via parentToolCallId",
     },
   ]);
 
-  // All three tasks at depth 0
+  // After regrouping, children are grouped immediately after their parent root.
+  // Order: task-a, agent-text-a, read-a, read-a2, task-b, agent-text-b, grep-b, task-c, agent-text-c, bash-c
+  assert.equal(rows[0]?.item.id, "task-a");
   assert.equal(rows[0]?.depth, 0, "task-a depth");
-  assert.equal(rows[1]?.depth, 0, "task-b depth");
-  assert.equal(rows[2]?.depth, 0, "task-c depth");
-
-  // Agent text + tool children routed to correct parents
-  assert.equal(rows[3]?.rootId, "task-a", "agent-text-a → task-a");
-  assert.equal(rows[4]?.rootId, "task-a", "read-a → task-a");
+  assert.equal(rows[1]?.item.id, "agent-text-a");
+  assert.equal(rows[1]?.rootId, "task-a", "agent-text-a → task-a");
+  assert.equal(rows[2]?.item.id, "read-a");
+  assert.equal(rows[2]?.rootId, "task-a", "read-a → task-a");
+  assert.equal(rows[3]?.item.id, "read-a2");
+  assert.equal(rows[3]?.rootId, "task-a", "read-a2 → task-a");
+  assert.equal(rows[4]?.item.id, "task-b");
+  assert.equal(rows[4]?.depth, 0, "task-b depth");
+  assert.equal(rows[5]?.item.id, "agent-text-b");
   assert.equal(rows[5]?.rootId, "task-b", "agent-text-b → task-b");
+  assert.equal(rows[6]?.item.id, "grep-b");
   assert.equal(rows[6]?.rootId, "task-b", "grep-b → task-b");
-  assert.equal(rows[7]?.rootId, "task-c", "agent-text-c → task-c");
-  assert.equal(rows[8]?.rootId, "task-c", "bash-c → task-c");
-  assert.equal(rows[9]?.rootId, "task-a", "read-a2 → task-a");
+  assert.equal(rows[7]?.item.id, "task-c");
+  assert.equal(rows[7]?.depth, 0, "task-c depth");
+  assert.equal(rows[8]?.item.id, "agent-text-c");
+  assert.equal(rows[8]?.rootId, "task-c", "agent-text-c → task-c");
+  assert.equal(rows[9]?.item.id, "bash-c");
+  assert.equal(rows[9]?.rootId, "task-c", "bash-c → task-c");
 
   // All children at depth 1
-  for (let i = 3; i <= 9; i++) {
-    assert.equal(rows[i]?.depth, 1, `row ${i} depth`);
+  for (const row of rows) {
+    if (row.rootId) {
+      assert.equal(row.depth, 1, `${row.item.id} depth`);
+    }
   }
 
   // Child counts
@@ -1086,12 +1107,15 @@ test("app buildTimelineTreeRows temporal-locality fallback routes consecutive it
     },
   ]);
 
-  assert.equal(rows[2]?.item.id, "child-1");
-  assert.equal(rows[2]?.rootId, "task-a", "child-1 matched via parentToolCallId");
-  assert.equal(rows[3]?.item.id, "child-2");
-  assert.equal(rows[3]?.rootId, "task-a", "child-2 should use temporal-locality fallback to task-a");
-  assert.equal(rows[4]?.item.id, "child-3");
-  assert.equal(rows[4]?.rootId, "task-a", "child-3 should use temporal-locality fallback to task-a");
+  // After regrouping, children are grouped under task-a.
+  // Order: task-a, child-1, child-2, child-3, task-b
+  assert.equal(rows[1]?.item.id, "child-1");
+  assert.equal(rows[1]?.rootId, "task-a", "child-1 matched via parentToolCallId");
+  assert.equal(rows[2]?.item.id, "child-2");
+  assert.equal(rows[2]?.rootId, "task-a", "child-2 should use temporal-locality fallback to task-a");
+  assert.equal(rows[3]?.item.id, "child-3");
+  assert.equal(rows[3]?.rootId, "task-a", "child-3 should use temporal-locality fallback to task-a");
+  assert.equal(rows[4]?.item.id, "task-b");
 });
 
 test("app buildTimelineTreeRows temporal-locality clears when root closes", () => {
@@ -1179,4 +1203,126 @@ test("app timeline tree groups subagent with rawInput description", () => {
   assert.equal(rows[0]?.item.id, "task-running");
   assert.equal(rows[1]?.depth, 1, "child should be nested under the Task root");
   assert.equal(rows[1]?.rootId, "task-running", "child should reference the Task root");
+});
+
+test("app buildTimelineTreeRows completed subagent retains children after timeline merge", () => {
+  // After mergeToolTimelineItems, the subagent tool has status=completed from the start.
+  // Children with parentToolCallId should still be grouped under it.
+  const rows = appTestables.buildTimelineTreeRows([
+    {
+      id: "task-root",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-1", title: "Task", status: "completed" }),
+      meta: "completed",
+    },
+    {
+      id: "child-1",
+      kind: "tool",
+      title: "Find",
+      body: JSON.stringify({ toolCallId: "child-tc-1", title: "Find", status: "completed" }),
+      meta: "completed",
+      parentToolCallId: "tc-1",
+    },
+    {
+      id: "child-2",
+      kind: "tool",
+      title: "Read",
+      body: JSON.stringify({ toolCallId: "child-tc-2", title: "Read", status: "completed" }),
+      meta: "completed",
+      parentToolCallId: "tc-1",
+    },
+  ]);
+
+  assert.equal(rows[0]?.item.id, "task-root");
+  assert.equal(rows[0]?.depth, 0);
+  assert.equal(rows[1]?.item.id, "child-1");
+  assert.equal(rows[1]?.rootId, "task-root");
+  assert.equal(rows[1]?.depth, 1);
+  assert.equal(rows[2]?.item.id, "child-2");
+  assert.equal(rows[2]?.rootId, "task-root");
+  assert.equal(rows[2]?.depth, 1);
+  const counts = appTestables.countChildrenByRoot(rows);
+  assert.equal(counts["task-root"], 2);
+});
+
+test("app buildTimelineTreeRows all subagents completed still groups children", () => {
+  // When all three parallel subagents are completed, children should remain grouped.
+  const rows = appTestables.buildTimelineTreeRows([
+    {
+      id: "task-a",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-a", title: "Task", status: "completed" }),
+      meta: "completed",
+    },
+    {
+      id: "task-b",
+      kind: "tool",
+      title: "Task",
+      body: JSON.stringify({ toolCallId: "tc-b", title: "Task", status: "completed" }),
+      meta: "completed",
+    },
+    {
+      id: "child-a1",
+      kind: "tool",
+      title: "Glob",
+      body: JSON.stringify({ toolCallId: "child-tc-a1", title: "Glob", status: "completed" }),
+      meta: "completed",
+      parentToolCallId: "tc-a",
+    },
+    {
+      id: "child-b1",
+      kind: "tool",
+      title: "Read",
+      body: JSON.stringify({ toolCallId: "child-tc-b1", title: "Read", status: "completed" }),
+      meta: "completed",
+      parentToolCallId: "tc-b",
+    },
+    {
+      id: "child-a2",
+      kind: "tool",
+      title: "Grep",
+      body: JSON.stringify({ toolCallId: "child-tc-a2", title: "Grep", status: "completed" }),
+      meta: "completed",
+      parentToolCallId: "tc-a",
+    },
+  ]);
+
+  // After regrouping: task-a, child-a1, child-a2, task-b, child-b1
+  assert.equal(rows[0]?.item.id, "task-a");
+  assert.equal(rows[0]?.depth, 0);
+  assert.equal(rows[1]?.item.id, "child-a1");
+  assert.equal(rows[1]?.rootId, "task-a");
+  assert.equal(rows[1]?.depth, 1);
+  assert.equal(rows[2]?.item.id, "child-a2");
+  assert.equal(rows[2]?.rootId, "task-a");
+  assert.equal(rows[2]?.depth, 1);
+  assert.equal(rows[3]?.item.id, "task-b");
+  assert.equal(rows[3]?.depth, 0);
+  assert.equal(rows[4]?.item.id, "child-b1");
+  assert.equal(rows[4]?.rootId, "task-b");
+  assert.equal(rows[4]?.depth, 1);
+
+  const counts = appTestables.countChildrenByRoot(rows);
+  assert.equal(counts["task-a"], 2);
+  assert.equal(counts["task-b"], 1);
+});
+
+test("app regroupTreeRows groups interleaved children under their parent", () => {
+  const rows: Array<{ item: { id: string }; depth: number; rootId: string | null }> = [
+    { item: { id: "root-a" }, depth: 0, rootId: null },
+    { item: { id: "root-b" }, depth: 0, rootId: null },
+    { item: { id: "child-a1" }, depth: 1, rootId: "root-a" },
+    { item: { id: "child-b1" }, depth: 1, rootId: "root-b" },
+    { item: { id: "child-a2" }, depth: 1, rootId: "root-a" },
+  ];
+
+  const result = appTestables.regroupTreeRows(rows as any);
+
+  assert.equal(result[0]?.item.id, "root-a");
+  assert.equal(result[1]?.item.id, "child-a1");
+  assert.equal(result[2]?.item.id, "child-a2");
+  assert.equal(result[3]?.item.id, "root-b");
+  assert.equal(result[4]?.item.id, "child-b1");
 });
