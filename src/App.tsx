@@ -4623,7 +4623,7 @@ function PermissionModal(props: {
         <div className="modal-header">
           <div>
             <p className="eyebrow">{props.sessionTitle}</p>
-            <h3>{toolTitle}</h3>
+            <h3 title={toolTitle}>{truncatePendingToolLabel(toolTitle, 100)}</h3>
           </div>
           <button className="secondary" onClick={props.onClose}>
             关闭
