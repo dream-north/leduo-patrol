@@ -226,13 +226,23 @@ wss.on("connection", (socket, request) => {
         case "close_session":
           await sessionManager.closeSession(message.payload.clientSessionId);
           break;
-        case "cli_start":
+        case "cli_start": {
+          const cliSessionId = message.payload.clientSessionId;
           sessionManager.resizeCliSession(
-            message.payload.clientSessionId,
+            cliSessionId,
             Math.max(2, message.payload.cols),
             Math.max(2, message.payload.rows),
           );
+          // Replay buffered output so the client sees history after reconnect
+          const buffered = sessionManager.getSessionOutputBuffer(cliSessionId);
+          if (buffered) {
+            sendEvent(socket, {
+              type: "cli_output",
+              payload: { clientSessionId: cliSessionId, data: buffered },
+            });
+          }
           break;
+        }
         case "cli_input":
           sessionManager.writeToSession(
             message.payload.clientSessionId,

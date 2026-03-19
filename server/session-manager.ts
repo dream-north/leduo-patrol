@@ -73,6 +73,8 @@ type PersistedState = {
 type ManagedSession = {
   snapshot: SessionSnapshot;
   cliSession: ClaudeCliSession | null;
+  /** Ring buffer of recent PTY output so clients can replay after reconnect. */
+  outputBuffer: string;
 };
 
 type SessionManagerOptions = {
@@ -87,6 +89,8 @@ export class SessionManager {
   private readonly sessions = new Map<string, ManagedSession>();
   private readonly listeners = new Set<(event: SocketEvent) => void>();
   private persistTimer: NodeJS.Timeout | null = null;
+  /** Maximum bytes of PTY output to keep per session for replay on reconnect. */
+  private static readonly OUTPUT_BUFFER_MAX = 256 * 1024;
 
   constructor(options: SessionManagerOptions) {
     this.allowedRoots = options.allowedRoots;
@@ -108,6 +112,7 @@ export class SessionManager {
       this.sessions.set(snapshot.clientSessionId, {
         snapshot,
         cliSession: null,
+        outputBuffer: "",
       });
     }
 
@@ -168,6 +173,7 @@ export class SessionManager {
     const entry: ManagedSession = {
       snapshot,
       cliSession: null,
+      outputBuffer: "",
     };
     this.sessions.set(snapshot.clientSessionId, entry);
     this.schedulePersist();
@@ -193,6 +199,12 @@ export class SessionManager {
   resizeCliSession(clientSessionId: string, cols: number, rows: number) {
     const entry = this.getEntry(clientSessionId);
     entry.cliSession?.resize(cols, rows);
+  }
+
+  /** Return buffered PTY output so a reconnecting client can replay history. */
+  getSessionOutputBuffer(clientSessionId: string): string {
+    const entry = this.getEntry(clientSessionId);
+    return entry.outputBuffer;
   }
 
   async closeSession(clientSessionId: string) {
@@ -222,6 +234,11 @@ export class SessionManager {
       entry.cliSession = cliSession;
 
       cliSession.on("output", (data: string) => {
+        // Append to ring buffer so reconnecting clients can replay history
+        entry.outputBuffer += data;
+        if (entry.outputBuffer.length > SessionManager.OUTPUT_BUFFER_MAX) {
+          entry.outputBuffer = entry.outputBuffer.slice(-SessionManager.OUTPUT_BUFFER_MAX);
+        }
         this.emit({
           type: "cli_output",
           payload: { clientSessionId: snapshot.clientSessionId, data },

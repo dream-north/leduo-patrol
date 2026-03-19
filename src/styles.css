@@ -130,8 +130,35 @@ h1 {
   font-size: 12px;
 }
 
-.brand {
+.brand-stack {
+  min-width: 0;
   flex-shrink: 0;
+}
+
+.brand-lockup {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.brand-copy {
+  min-width: 0;
+}
+
+.brand-icon {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.95);
+  object-fit: cover;
+  box-shadow: 0 8px 18px rgba(45, 26, 11, 0.16);
+}
+
+.masthead-lede {
+  margin-top: 8px;
 }
 
 .status-grid {
@@ -504,6 +531,21 @@ h1 {
   font-size: 11px;
 }
 
+.session-open-vscode {
+  background: rgba(91, 71, 216, 0.12);
+  color: #4a31c6;
+}
+
+.session-diff-trigger {
+  background: rgba(20, 98, 138, 0.14);
+  color: #0a5c88;
+}
+
+.session-close {
+  background: rgba(175, 40, 40, 0.14);
+  color: #9a1c1c;
+}
+
 .cli-terminal-container {
   flex: 1;
   min-height: 0;
@@ -520,6 +562,15 @@ h1 {
 
 .cli-terminal-container .xterm-viewport {
   overflow-y: auto !important;
+}
+
+/* Suppress browser focus indicators on xterm's internal textarea */
+.cli-terminal-container .xterm-helper-textarea:focus,
+.cli-terminal-container .xterm-helper-textarea:focus-visible {
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  caret-color: transparent;
 }
 
 .main-empty {

@@ -130,7 +130,7 @@ export default function App() {
 
   // Main CLI terminal
   const cliTerminalContainerRef = useRef<HTMLDivElement | null>(null);
-  const cliTerminalsRef = useRef<Map<string, { terminal: unknown; fitAddon: unknown }>>(new Map());
+  const cliTerminalsRef = useRef<Map<string, { terminal: unknown; fitAddon: unknown; element: HTMLDivElement }>>(new Map());
 
   const socketRef = useRef<WebSocket | null>(null);
 
@@ -337,20 +337,25 @@ export default function App() {
     const containerEl = cliTerminalContainerRef.current;
     if (!containerEl) return;
 
-    // If already have a cached terminal for this session, reattach
+    // If already have a cached terminal for this session, reattach its wrapper element
     const cached = cliTerminalsRef.current.get(activeSessionId);
     if (cached) {
-      const term = cached.terminal as { open: (el: HTMLElement) => void };
       const fit = cached.fitAddon as { fit: () => void };
+      const term = cached.terminal as { focus: () => void; refresh: (start: number, end: number) => void; cols: number; rows: number };
+      // Move the cached wrapper back into the visible container (never re-call open())
       containerEl.innerHTML = "";
-      term.open(containerEl);
-      fit.fit();
+      containerEl.appendChild(cached.element);
+      // Wait for DOM layout, then fit + force full redraw (canvas loses context when detached)
+      requestAnimationFrame(() => {
+        fit.fit();
+        term.refresh(0, term.rows - 1);
+        term.focus();
+      });
 
       // Notify server we're viewing this session
-      const termObj = cached.terminal as { cols: number; rows: number };
       sendCommand({
         type: "cli_start",
-        payload: { clientSessionId: activeSessionId, cols: termObj.cols, rows: termObj.rows },
+        payload: { clientSessionId: activeSessionId, cols: term.cols, rows: term.rows },
       });
       return;
     }
@@ -372,22 +377,53 @@ export default function App() {
       const fitAddon = new FitAddon();
       const term = new Terminal({
         scrollback: 5000,
-        cursorBlink: true,
+        cursorBlink: false,
+        cursorInactiveStyle: "none",
         fontFamily: '"IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace',
         fontSize: 13,
         theme: {
           background: "#1a1a1a",
           foreground: "#e8e8e8",
-          cursor: "#d85b34",
+          cursor: "#1a1a1a",
+          cursorAccent: "#1a1a1a",
           selectionBackground: "rgba(216, 91, 52, 0.3)",
         },
       });
       term.loadAddon(fitAddon);
+
+      // Create a dedicated wrapper div for this terminal instance.
+      // open() is only called once; on switch we just move this wrapper element.
+      const wrapper = document.createElement("div");
+      wrapper.style.width = "100%";
+      wrapper.style.height = "100%";
+
       containerEl.innerHTML = "";
-      term.open(containerEl);
+      containerEl.appendChild(wrapper);
+      term.open(wrapper);
       fitAddon.fit();
 
-      cliTerminalsRef.current.set(sessionId, { terminal: term, fitAddon });
+      // Prevent ESC from blurring the terminal.
+      // Strategy: intercept keydown on the wrapper (capture phase) to preventDefault,
+      // then add a focusout safety-net that re-focuses if ESC caused the blur.
+      let lastKeyWasEscape = false;
+      wrapper.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          lastKeyWasEscape = true;
+          e.preventDefault();
+        } else {
+          lastKeyWasEscape = false;
+        }
+      }, true);
+      wrapper.addEventListener("focusout", () => {
+        if (lastKeyWasEscape) {
+          lastKeyWasEscape = false;
+          requestAnimationFrame(() => {
+            if (!disposed) term.focus();
+          });
+        }
+      }, true);
+
+      cliTerminalsRef.current.set(sessionId, { terminal: term, fitAddon, element: wrapper });
 
       // Notify server
       sendCommand({
@@ -426,7 +462,7 @@ export default function App() {
     return () => {
       disposed = true;
       // Don't destroy the terminal instance — keep it cached.
-      // Just detach from DOM.
+      // Just detach the wrapper from the visible container.
       if (containerEl) {
         containerEl.innerHTML = "";
       }
@@ -632,15 +668,22 @@ export default function App() {
     <>
     <div className="shell">
       <aside className="panel masthead">
-        <div className="brand">
-          <h1>{config?.appName ?? "乐多汪汪队"}</h1>
+        <div className="brand-stack">
+          <div className="brand-lockup">
+            <img className="brand-icon" src="/assets/brand-icon.png" alt="" aria-hidden="true" />
+            <div className="brand-copy">
+              <p className="eyebrow">leduo-patrol</p>
+              <h1>{config?.appName ?? "乐多汪汪队"}</h1>
+            </div>
+          </div>
+          <p className="lede masthead-lede">在一个控制台里并行查看多会话进展、差异和执行结果。</p>
         </div>
         <div className="status-grid">
           <StatusCard label="连接" value={connectionState === "connected" ? "已连接" : connectionState === "closed" ? "断开" : "连接中"} tone={toneForConnectionState(connectionState)} />
           <StatusCard label="会话数" value={String(sessions.length)} />
         </div>
         <div className="masthead-actions">
-          <button className="secondary masthead-action-btn" onClick={() => setCreateSessionModalOpen(true)}>
+          <button className="primary masthead-action-btn" onClick={() => setCreateSessionModalOpen(true)}>
             + 新建会话
           </button>
           <button className="secondary masthead-action-btn" onClick={() => setVscodeSettingsOpen(true)}>
@@ -691,13 +734,13 @@ export default function App() {
                 <code className="cli-toolbar-path" title={activeSession.workspacePath}>{activeSession.workspacePath}</code>
               </div>
               <div className="cli-toolbar-actions">
-                <button className="secondary" onClick={() => openWorkspaceInVscode(activeSession.workspacePath)}>
+                <button className="secondary session-open-vscode" onClick={() => openWorkspaceInVscode(activeSession.workspacePath)}>
                   VSCode
                 </button>
-                <button className="secondary" onClick={openSessionDiff}>
+                <button className="secondary session-diff-trigger" onClick={openSessionDiff}>
                   查看 Diff
                 </button>
-                <button className="secondary" onClick={() => closeSession(activeSession.clientSessionId)}>
+                <button className="secondary session-close" onClick={() => closeSession(activeSession.clientSessionId)}>
                   关闭会话
                 </button>
               </div>
