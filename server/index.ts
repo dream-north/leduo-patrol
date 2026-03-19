@@ -2,7 +2,6 @@
 import express from "express";
 import { access, readdir } from "node:fs/promises";
 import path from "node:path";
-import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { userInfo } from "node:os";
@@ -17,13 +16,11 @@ import { resolveBindMode } from "./launch-mode.js";
 
 type ClientCommand =
   | { type: "hello" }
-  | { type: "create_session"; payload: { workspacePath: string; title?: string; modeId?: string } }
-  | { type: "prompt"; payload: { clientSessionId: string; text: string; modeId?: string; images?: Array<{ data: string; mimeType: string }> } }
-  | { type: "set_mode"; payload: { clientSessionId: string; modeId: string } }
-  | { type: "cancel"; payload: { clientSessionId: string } }
-  | { type: "permission"; payload: { clientSessionId: string; requestId: string; optionId: string; note?: string } }
-  | { type: "answer_question"; payload: { clientSessionId: string; questionId: string; answer: string } }
+  | { type: "create_session"; payload: { workspacePath: string; title?: string } }
   | { type: "close_session"; payload: { clientSessionId: string } }
+  | { type: "cli_start"; payload: { clientSessionId: string; cols: number; rows: number } }
+  | { type: "cli_input"; payload: { clientSessionId: string; data: string } }
+  | { type: "cli_resize"; payload: { clientSessionId: string; cols: number; rows: number } }
   | { type: "shell_start"; payload: { clientSessionId: string; cols: number; rows: number } }
   | { type: "shell_input"; payload: { data: string } }
   | { type: "shell_resize"; payload: { cols: number; rows: number } }
@@ -51,7 +48,7 @@ const bindMode = await resolveBindMode();
 const listenHost = bindMode === "local" ? "127.0.0.1" : "0.0.0.0";
 const launchHost = bindMode === "local" ? "127.0.0.1" : pickPreferredLanIp();
 const launchUser = userInfo().username;
-const agentBinPath = resolveAgentBinPath();
+const claudeBin = process.env.LEDUO_PATROL_CLAUDE_BIN?.trim() || undefined;
 const accessKey = process.env.LEDUO_PATROL_ACCESS_KEY?.trim() || createAccessKey();
 const enableShell = process.env.LEDUO_ENABLE_SHELL === "true";
 
@@ -60,7 +57,7 @@ const server = createServer(app);
 const wss = new WebSocketServer({ server, path: "/ws" });
 const sessionManager = new SessionManager({
   allowedRoots,
-  agentBinPath,
+  claudeBin,
 });
 
 await sessionManager.initialize();
@@ -115,23 +112,6 @@ app.get("/api/config", (_req, res) => {
 
 app.get("/api/state", (_req, res) => {
   res.json(sessionManager.getStateSnapshot());
-});
-
-app.get("/api/session-history", (req, res) => {
-  try {
-    const clientSessionId = typeof req.query.clientSessionId === "string" ? req.query.clientSessionId : "";
-    const before = Number(req.query.before ?? 0);
-    const limit = Number(req.query.limit ?? 120);
-    if (!clientSessionId) {
-      throw new Error("clientSessionId is required");
-    }
-
-    res.json(sessionManager.getSessionHistory(clientSessionId, before, limit));
-  } catch (error) {
-    res.status(400).json({
-      message: formatError(error),
-    });
-  }
 });
 
 app.get("/api/session-diff/files", async (req, res) => {
@@ -234,47 +214,37 @@ wss.on("connection", (socket, request) => {
         case "hello":
           sendEvent(socket, {
             type: "ready",
-            payload: { workspacePath: defaultWorkspacePath, agentConnected: sessionManager.getStateSnapshot().sessions.length > 0 },
+            payload: { sessions: sessionManager.getStateSnapshot().sessions },
           });
           break;
         case "create_session":
           await sessionManager.createSession(
             message.payload.workspacePath,
             message.payload.title,
-            message.payload.modeId,
-          );
-          break;
-        case "prompt":
-          await sessionManager.prompt(
-            message.payload.clientSessionId,
-            message.payload.text,
-            message.payload.modeId,
-            message.payload.images,
-          );
-          break;
-        case "set_mode":
-          await sessionManager.setSessionMode(message.payload.clientSessionId, message.payload.modeId);
-          break;
-        case "cancel":
-          await sessionManager.cancel(message.payload.clientSessionId);
-          break;
-        case "permission":
-          await sessionManager.resolvePermission(
-            message.payload.clientSessionId,
-            message.payload.requestId,
-            message.payload.optionId,
-            message.payload.note,
-          );
-          break;
-        case "answer_question":
-          await sessionManager.answerQuestion(
-            message.payload.clientSessionId,
-            message.payload.questionId,
-            message.payload.answer,
           );
           break;
         case "close_session":
           await sessionManager.closeSession(message.payload.clientSessionId);
+          break;
+        case "cli_start":
+          sessionManager.resizeCliSession(
+            message.payload.clientSessionId,
+            Math.max(2, message.payload.cols),
+            Math.max(2, message.payload.rows),
+          );
+          break;
+        case "cli_input":
+          sessionManager.writeToSession(
+            message.payload.clientSessionId,
+            message.payload.data,
+          );
+          break;
+        case "cli_resize":
+          sessionManager.resizeCliSession(
+            message.payload.clientSessionId,
+            Math.max(2, message.payload.cols),
+            Math.max(2, message.payload.rows),
+          );
           break;
         case "shell_start": {
           if (!enableShell) {
@@ -359,21 +329,6 @@ function sendEvent(socket: WebSocket, event: SocketEvent) {
     return;
   }
   socket.send(JSON.stringify(event));
-}
-
-function resolveAgentBinPath() {
-  if (process.env.LEDUO_PATROL_AGENT_BIN?.trim()) {
-    return process.env.LEDUO_PATROL_AGENT_BIN.trim();
-  }
-
-  const require = createRequire(import.meta.url);
-  try {
-    const pkgPath = require.resolve("@zed-industries/claude-code-acp/package.json");
-    const pkgDir = path.dirname(pkgPath);
-    return path.join(pkgDir, "dist", "index.js");
-  } catch {
-    return "claude-code-acp";
-  }
 }
 
 async function hasReadableFile(filePath: string) {

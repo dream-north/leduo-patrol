@@ -1,7 +1,7 @@
 {
   "name": "leduo-patrol",
   "version": "1.2.0",
-  "description": "乐多汪汪队（leduo-patrol）web console for driving Claude Code over ACP.",
+  "description": "乐多汪汪队（leduo-patrol）web console with embedded Claude Code CLI terminals.",
   "type": "module",
   "main": "dist/server/index.js",
   "scripts": {
@@ -24,11 +24,10 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@agentclientprotocol/sdk": "^0.15.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "@zed-industries/claude-code-acp": "file:vendor/claude-code-acp",
     "express": "^5.2.1",
+    "leduo-patrol": "file:leduo-patrol-1.2.0.tgz",
     "node-pty": "^1.1.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

@@ -1,7 +1,13 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
-import type { Terminal } from "@xterm/xterm";
-import type { FitAddon } from "@xterm/addon-fit";
+import { useState, useEffect, useRef, useMemo, type CSSProperties, Fragment } from "react";
+
+type SessionRecord = {
+  clientSessionId: string;
+  title: string;
+  workspacePath: string;
+  connectionState: "connecting" | "connected" | "error";
+  sessionId: string;
+  updatedAt: string;
+};
 
 type AppConfig = {
   appName: string;
@@ -11,113 +17,12 @@ type AppConfig = {
   sshPath: string;
   vscodeRemoteUri: string;
   enableShell: boolean;
-  launchMode: "server" | "local";
+  launchMode: string;
   launchHost: string;
   launchUser: string;
 };
 
-type SessionUpdate = {
-  sessionUpdate: string;
-  [key: string]: unknown;
-};
-
-type AvailableCommand = {
-  name: string;
-  description: string;
-  inputType: "unstructured";
-};
-
-type TimelineItem = {
-  id: string;
-  kind: "system" | "user" | "agent" | "thought" | "tool" | "plan" | "error";
-  title: string;
-  body: string;
-  meta?: string;
-  images?: Array<{ data: string; mimeType: string }>;
-  parentToolCallId?: string;
-};
-
-type TimelineTreeRow = {
-  item: TimelineItem;
-  depth: number;
-  rootId: string | null;
-  displayTitle?: string;
-};
-
-type PermissionPayload = {
-  clientSessionId: string;
-  requestId: string;
-  toolCall: { toolCallId: string; title?: string; status?: string; rawInput?: unknown; _meta?: unknown };
-  options: Array<{ optionId: string; name: string; kind: string }>;
-};
-
-type QuestionPayload = {
-  clientSessionId: string;
-  questionId: string;
-  groupId?: string;
-  question: string;
-  header?: string;
-  options: Array<{ id: string; label: string; description?: string }>;
-  allowCustomAnswer: boolean;
-};
-
-type SessionRecord = {
-  clientSessionId: string;
-  title: string;
-  workspacePath: string;
-  connectionState: "connecting" | "connected" | "error";
-  sessionId: string;
-  modes: string[];
-  defaultModeId: string;
-  currentModeId: string;
-  busy: boolean;
-  timeline: TimelineItem[];
-  historyTotal: number;
-  historyStart: number;
-  permissions: PermissionPayload[];
-  questions: QuestionPayload[];
-  availableCommands?: AvailableCommand[];
-  updatedAt: string;
-  /** Timestamp (ms) of the most recent content-bearing session_update event */
-  lastContentEventAt?: number;
-  /** Timestamp (ms) when prompt_finished was received */
-  completedAt?: number;
-};
-
-type PendingImage = {
-  id: string;
-  dataUrl: string;
-  mimeType: string;
-};
-
-type SessionSidebarStatusTone = "pending" | "running" | "completed" | "error" | "connecting";
-
-type SessionSidebarStatus = {
-  label: string;
-  tone: SessionSidebarStatusTone;
-};
-
-type StateResponse = {
-  sessions: SessionRecord[];
-};
-
-type DirectoryResponse = {
-  rootPath: string;
-  directories: Array<{ name: string; path: string }>;
-};
-
-type SessionHistoryResponse = {
-  items: TimelineItem[];
-  start: number;
-  total: number;
-};
-
-type DiffCategory = "workingTree" | "staged" | "untracked";
-
-type SessionDiffFileEntry = {
-  filePath: string;
-  changeType: "新增" | "修改";
-};
+type SessionDiffFileEntry = { filePath: string; changeType: string };
 
 type SessionDiffResponse = {
   workspacePath: string;
@@ -128,607 +33,168 @@ type SessionDiffResponse = {
   untracked: SessionDiffFileEntry[];
 };
 
+type DiffCategory = "workingTree" | "staged" | "untracked";
+
 type SessionFileDiffResponse = {
-  category: DiffCategory;
+  category: string;
   filePath: string;
   omitted: boolean;
   diff: string;
   reason?: string;
 };
 
-type DemoSessionFixture = {
-  session: SessionRecord;
-  sessionDiff: SessionDiffResponse;
-  fileDiffs: Record<string, SessionFileDiffResponse>;
-};
-
-type DemoCreateSessionFixture = {
-  workspacePath: string;
-  title: string;
-  modeId: string;
-};
-
-type DemoFixtures = {
-  bySessionId: Record<string, DemoSessionFixture>;
-  createSession: DemoCreateSessionFixture | null;
-};
-
-type ExecutionPlanStepStatus = "completed" | "in_progress" | "pending" | "unknown";
-
-type ExecutionPlanStep = {
-  content: string;
-  status: ExecutionPlanStepStatus;
-};
-
-type EventMessage =
-  | { type: "ready"; payload: { workspacePath: string; agentConnected: boolean; clientSessionId?: string } }
-  | {
-      type: "session_registered";
-      payload: { clientSessionId: string; title: string; workspacePath: string; defaultModeId?: string; currentModeId?: string };
-    }
-  | {
-      type: "session_created";
-      payload: { clientSessionId: string; sessionId: string; modes: string[]; configOptions: unknown[] };
-    }
-  | {
-      type: "session_restored";
-      payload: { clientSessionId: string; sessionId: string; modes: string[]; configOptions: unknown[] };
-    }
-  | { type: "prompt_started"; payload: { clientSessionId: string; promptId: string; text: string } }
-  | { type: "prompt_finished"; payload: { clientSessionId: string; promptId: string; stopReason: string } }
-  | { type: "session_update"; payload: SessionUpdate & { clientSessionId: string } }
-  | {
-      type: "session_mode_changed";
-      payload: { clientSessionId: string; defaultModeId: string; currentModeId: string };
-    }
-  | { type: "permission_requested"; payload: PermissionPayload }
-  | { type: "permission_resolved"; payload: { clientSessionId: string; requestId: string; optionId: string } }
-  | { type: "question_requested"; payload: QuestionPayload }
-  | { type: "question_answered"; payload: { clientSessionId: string; questionId: string; answer: string } }
-  | { type: "session_closed"; payload: { clientSessionId: string } }
-  | { type: "error"; payload: { message: string; fatal: boolean; clientSessionId?: string } }
-  | { type: "shell_output"; payload: { data: string } }
-  | { type: "shell_exited"; payload: { exitCode: number } };
-
-const MODE_OPTIONS = [
-  { id: "default", label: "Default" },
-  { id: "acceptEdits", label: "Accept Edits" },
-  { id: "plan", label: "Plan" },
-  { id: "dontAsk", label: "Don't Ask" },
-  { id: "bypassPermissions", label: "Bypass Permissions" },
-] as const;
-
-const EMPTY_TIMELINE: TimelineItem[] = [];
-
-const FILE_VIEWER_MAX_LINES = 500;
-
-const FILE_VIEWER_MODE_LABEL: Record<"read" | "write", string> = {
-  read: "读取",
-  write: "写入",
-};
-
-type DemoPreset = "subagent-tree" | null;
-
-type ToastNotification = {
-  id: string;
-  title: string;
-  body: string;
-  sessionId?: string;
-  kind: "permission" | "completion";
-};
-
-type VscodeOpenMode = "remote" | "local";
-
 type VscodeLaunchConfig = {
-  mode: VscodeOpenMode;
+  mode: "remote" | "local";
   sshHost: string;
 };
 
-const VSCODE_LAUNCH_CONFIG_STORAGE_KEY = "leduo-patrol:vscode-launch-config";
+type ToastNotification = {
+  id: string;
+  kind: "info" | "warning" | "error";
+  title: string;
+  body: string;
+  sessionId?: string;
+};
 
-function readAccessKeyFromUrl() {
-  if (typeof window === "undefined") {
-    return "";
-  }
-  return new URLSearchParams(window.location.search).get("key")?.trim() ?? "";
+type EventMessage =
+  | { type: "ready"; payload: { sessions: SessionRecord[] } }
+  | { type: "session_registered"; payload: SessionRecord }
+  | { type: "session_closed"; payload: { clientSessionId: string } }
+  | { type: "cli_output"; payload: { clientSessionId: string; data: string } }
+  | { type: "cli_exited"; payload: { clientSessionId: string; exitCode: number } }
+  | { type: "shell_output"; payload: { data: string } }
+  | { type: "shell_exited"; payload: { exitCode: number } }
+  | { type: "error"; payload: { message: string; fatal: boolean; clientSessionId?: string } };
+
+const VSCODE_LAUNCH_CONFIG_STORAGE_KEY = "leduo_vscode_launch_config";
+const WORKSPACE_SUGGESTION_INITIAL_LIMIT = 6;
+
+function withAccessKey(path: string, accessKey: string) {
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}key=${encodeURIComponent(accessKey)}`;
 }
 
-function readDemoPresetFromUrl(): DemoPreset {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  const value = new URLSearchParams(window.location.search).get("demo")?.trim().toLowerCase();
-  if (value === "subagent-tree") {
-    return "subagent-tree";
-  }
-  return null;
+function getAccessKeyFromUrl() {
+  const urlParams = new URLSearchParams(window.location.search);
+  return urlParams.get("key") ?? "";
 }
 
-function withAccessKey(path: string, keyOverride?: string) {
-  if (typeof window === "undefined") {
-    return path;
-  }
-  const url = new URL(path, window.location.origin);
-  const key = (keyOverride ?? readAccessKeyFromUrl()).trim();
-  if (key) {
-    url.searchParams.set("key", key);
-  }
-  return `${url.pathname}${url.search}`;
-}
-
-function createDefaultVscodeLaunchConfig(config: AppConfig | null): VscodeLaunchConfig {
-  const defaultSshHost =
-    config?.launchMode === "server" && config.launchHost
-      ? `${config.launchUser || "user"}@${config.launchHost}`
-      : (config?.sshHost ?? "");
-  return {
-    mode: config?.launchMode === "server" ? "remote" : "local",
-    sshHost: defaultSshHost,
-  };
-}
-
-function readStoredVscodeLaunchConfig(config: AppConfig | null): VscodeLaunchConfig {
-  const fallback = createDefaultVscodeLaunchConfig(config);
-  if (typeof window === "undefined") {
-    return fallback;
-  }
-  const raw = window.localStorage.getItem(VSCODE_LAUNCH_CONFIG_STORAGE_KEY);
-  if (!raw) {
-    return fallback;
-  }
+function loadVscodeLaunchConfig(sshHost: string): VscodeLaunchConfig {
   try {
-    const parsed = JSON.parse(raw) as Partial<VscodeLaunchConfig>;
-    const mode = parsed.mode === "remote" || parsed.mode === "local" ? parsed.mode : fallback.mode;
-    return {
-      mode,
-      sshHost: typeof parsed.sshHost === "string" ? parsed.sshHost : fallback.sshHost,
-    };
+    const raw = localStorage.getItem(VSCODE_LAUNCH_CONFIG_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as VscodeLaunchConfig;
+      if (parsed.mode === "remote" || parsed.mode === "local") {
+        return parsed;
+      }
+    }
   } catch {
-    return fallback;
+    /* ignore */
   }
-}
-
-function createVscodeOpenUri(config: VscodeLaunchConfig, workspacePath: string) {
-  const normalizedWorkspacePath = workspacePath.trim();
-  if (!normalizedWorkspacePath) {
-    return "";
-  }
-  if (config.mode === "local") {
-    return `vscode://file${normalizedWorkspacePath}`;
-  }
-  const host = config.sshHost.trim();
-  if (!host) {
-    return "";
-  }
-  const remoteAuthority = `ssh-remote+${encodeURIComponent(host)}`;
-  return `vscode://vscode-remote/${remoteAuthority}${normalizedWorkspacePath}`;
-}
-
-
-function mapWorkspacePathForVscode(workspacePath: string, _config: VscodeLaunchConfig) {
-  return workspacePath.trim();
+  return { mode: sshHost ? "remote" : "local", sshHost: sshHost || "" };
 }
 
 export default function App() {
-  const WORKSPACE_SUGGESTION_INITIAL_LIMIT = 8;
+  const accessKey = getAccessKeyFromUrl();
+  const [connectionState, setConnectionState] = useState<"connecting" | "connected" | "closed">("connecting");
   const [config, setConfig] = useState<AppConfig | null>(null);
-  const [accessKey, setAccessKey] = useState(() => readAccessKeyFromUrl());
-  const [accessKeyInput, setAccessKeyInput] = useState(() => readAccessKeyFromUrl());
-  const [authPrompt, setAuthPrompt] = useState("");
+  const [sessions, setSessions] = useState<SessionRecord[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<ToastNotification[]>([]);
+
+  // Create session modal
+  const [createSessionModalOpen, setCreateSessionModalOpen] = useState(false);
   const [workspacePath, setWorkspacePath] = useState("");
   const [newSessionTitle, setNewSessionTitle] = useState("");
-  const [newSessionModeId, setNewSessionModeId] = useState("default");
-  const [createSessionModalOpen, setCreateSessionModalOpen] = useState(false);
-  const [showAllWorkspaceSuggestions, setShowAllWorkspaceSuggestions] = useState(false);
-  const [createWorkspaceRoot, setCreateWorkspaceRoot] = useState("");
-  const [createWorkspaceSuffix, setCreateWorkspaceSuffix] = useState("");
-  const [connectionState, setConnectionState] = useState("connecting");
-  const [promptDraftBySessionId, setPromptDraftBySessionId] = useState<Record<string, string>>({});
-  const [commandSuggestionIndex, setCommandSuggestionIndex] = useState(0);
-  const [isCompletionOpen, setIsCompletionOpen] = useState(false);
-  const [sessions, setSessions] = useState<SessionRecord[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState("");
   const [directoryBrowserPath, setDirectoryBrowserPath] = useState("");
-  const [directoryRootPath, setDirectoryRootPath] = useState("");
   const [directoryOptions, setDirectoryOptions] = useState<Array<{ name: string; path: string }>>([]);
-  const [directoryLoading, setDirectoryLoading] = useState(false);
   const [directoryError, setDirectoryError] = useState("");
-  const [globalTimeline, setGlobalTimeline] = useState<TimelineItem[]>([]);
-  const [showGlobalErrors, setShowGlobalErrors] = useState(false);
+  const [showAllWorkspaceSuggestions, setShowAllWorkspaceSuggestions] = useState(false);
+
+  // VSCode
+  const [vscodeLaunchConfig, setVscodeLaunchConfig] = useState<VscodeLaunchConfig>({ mode: "local", sshHost: "" });
   const [vscodeSettingsOpen, setVscodeSettingsOpen] = useState(false);
   const [vscodeLaunchError, setVscodeLaunchError] = useState("");
   const [vscodeLaunchNotice, setVscodeLaunchNotice] = useState("");
-  const [selectedItem, setSelectedItem] = useState<{ sessionTitle: string; item: TimelineItem } | null>(null);
-  const [sessionDiff, setSessionDiff] = useState<SessionDiffResponse | null>(null);
-  const [sessionDiffError, setSessionDiffError] = useState("");
+
+  // Diff modal
   const [sessionDiffOpen, setSessionDiffOpen] = useState(false);
   const [sessionDiffLoading, setSessionDiffLoading] = useState(false);
+  const [sessionDiffError, setSessionDiffError] = useState("");
+  const [sessionDiff, setSessionDiff] = useState<SessionDiffResponse | null>(null);
   const [sessionFileDiffCache, setSessionFileDiffCache] = useState<Record<string, SessionFileDiffResponse>>({});
-  const [historyLoadingSessionId, setHistoryLoadingSessionId] = useState("");
-  const [collapsedSubagentRoots, setCollapsedSubagentRoots] = useState<Record<string, boolean>>({});
-  const [demoFixtures, setDemoFixtures] = useState<DemoFixtures | null>(null);
+
+  // Bottom shell drawer
   const [terminalOpen, setTerminalOpen] = useState(false);
-  const [pendingQueue, setPendingQueue] = useState<Array<{ id: string; text: string; images?: Array<{ data: string; mimeType: string }> }>>([]);
-  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
-  const [permissionDetail, setPermissionDetail] = useState<PermissionPayload | null>(null);
-  const [vscodeLaunchConfig, setVscodeLaunchConfig] = useState<VscodeLaunchConfig>(() => readStoredVscodeLaunchConfig(null));
-  const shownPermissionRequestIdsRef = useRef(new Set<string>());
-  const vscodeConfigHydratedRef = useRef(false);
-  const demoPreset = useMemo(() => readDemoPresetFromUrl(), []);
-  const socketRef = useRef<WebSocket | null>(null);
-  const pendingQueueRef = useRef(pendingQueue);
-  const pendingPromptImagesRef = useRef<Map<string, Array<{ data: string; mimeType: string }>>>(new Map());
-  const composerContainerRef = useRef<HTMLDivElement | null>(null);
-  const timelineViewportRef = useRef<HTMLDivElement | null>(null);
-  const shouldStickToBottomRef = useRef(true);
-  const notifiedPermissionRequestIdsRef = useRef<Record<string, true>>({});
-  const notifiedCompletionIdsRef = useRef<Record<string, true>>({});
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
-  const xtermRef = useRef<Terminal | null>(null);
-  const [toasts, setToasts] = useState<ToastNotification[]>([]);
-  const toastTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const fitAddonRef = useRef<FitAddon | null>(null);
-  const completionCollapsedRef = useRef<Set<string>>(new Set());
 
-  const activeSession = sessions.find((session) => session.clientSessionId === activeSessionId) ?? null;
-  const promptText = activeSessionId ? (promptDraftBySessionId[activeSessionId] ?? "") : "";
-  const setPromptText = (value: string | ((current: string) => string)) => {
-    if (!activeSessionId) {
-      return;
-    }
-    setPromptDraftBySessionId((current) => {
-      const currentValue = current[activeSessionId] ?? "";
-      const nextValue = typeof value === "function" ? value(currentValue) : value;
-      if (nextValue === currentValue) {
-        return current;
-      }
-      return { ...current, [activeSessionId]: nextValue };
-    });
-  };
-  pendingQueueRef.current = pendingQueue;
-  const activeAvailableCommands = activeSession?.availableCommands ?? [];
-  const commandCompletions = useMemo(
-    () => getPromptCommandCompletions(promptText, activeAvailableCommands),
-    [activeAvailableCommands, promptText],
+  // Main CLI terminal
+  const cliTerminalContainerRef = useRef<HTMLDivElement | null>(null);
+  const cliTerminalsRef = useRef<Map<string, { terminal: unknown; fitAddon: unknown }>>(new Map());
+
+  const socketRef = useRef<WebSocket | null>(null);
+
+  const activeSession = useMemo(
+    () => sessions.find((s) => s.clientSessionId === activeSessionId) ?? null,
+    [sessions, activeSessionId],
   );
-  const completionQuery = useMemo(() => extractPromptCommandQuery(promptText), [promptText]);
-  const completionSections = useMemo(
-    () => buildCompletionSections(commandCompletions, completionQuery),
-    [commandCompletions, completionQuery],
-  );
-  const activeSessionHasPendingPermission = Boolean(activeSession && activeSession.permissions.length > 0);
-  const activeSessionHasPendingQuestion = Boolean(activeSession && activeSession.questions.length > 0);
-  const activeSessionIsRunning = Boolean(activeSession && isSessionRunning(activeSession));
-  const activeSessionModeOptions =
-    activeSession?.modes.length && activeSession.modes.length > 0
-      ? activeSession.modes.map((modeId) => ({ id: modeId, label: labelForMode(modeId) }))
-      : MODE_OPTIONS.map((option) => ({ id: option.id, label: option.label }));
-  const visibleTimeline = activeSession?.timeline ?? EMPTY_TIMELINE;
-  const globalErrorItems = useMemo(() => globalTimeline.filter((item) => item.kind === "error"), [globalTimeline]);
-  const timelineRows = useMemo(() => buildTimelineTreeRows(visibleTimeline), [visibleTimeline]);
-  const rootChildCount = useMemo(() => countChildrenByRoot(timelineRows), [timelineRows]);
-  const latestExecutionPlanBody = useMemo(() => findLatestExecutionPlanBody(visibleTimeline), [visibleTimeline]);
-  const latestExecutionPlan = useMemo(() => findLatestExecutionPlan(visibleTimeline), [visibleTimeline]);
-  const latestExecutionPlanSteps = useMemo(() => parseExecutionPlanSteps(latestExecutionPlanBody), [latestExecutionPlanBody]);
-  const browseRootPath = directoryBrowserPath || activeSession?.workspacePath || config?.workspacePath || "";
-  const currentBrowsePath = directoryRootPath || browseRootPath;
-  const workspaceForLaunch = useMemo(
-    () => mapWorkspacePathForVscode(activeSession?.workspacePath ?? config?.workspacePath ?? "", vscodeLaunchConfig),
-    [activeSession?.workspacePath, config?.workspacePath, vscodeLaunchConfig],
-  );
-  const canOpenWorkspaceInVscode = Boolean(createVscodeOpenUri(vscodeLaunchConfig, workspaceForLaunch));
+
+  // --- Derived workspace creation state ---
+  const createWorkspaceRoot = useMemo(() => {
+    if (!config) return "";
+    return splitWorkspacePathByAllowedRoots(config.workspacePath, config.allowedRoots).root;
+  }, [config]);
+
+  const [createWorkspaceSuffix, setCreateWorkspaceSuffix] = useState("");
+
   const workspaceSuffixSuggestions = useMemo(() => {
-    if (!createWorkspaceRoot) {
-      return [];
-    }
-    const query = createWorkspaceSuffix.trim().toLowerCase();
-    const candidates = new Set<string>();
-    const currentRelative = relativePathFromRoot(createWorkspaceRoot, currentBrowsePath);
-    if (currentRelative) {
-      candidates.add(currentRelative);
-    }
-    for (const option of directoryOptions) {
-      const relative = relativePathFromRoot(createWorkspaceRoot, option.path);
-      if (relative) {
-        candidates.add(relative);
-      }
-    }
+    if (!createWorkspaceRoot || directoryOptions.length === 0) return [];
+    return directoryOptions
+      .map((d) => relativePathFromRoot(createWorkspaceRoot, d.path))
+      .filter(Boolean);
+  }, [createWorkspaceRoot, directoryOptions]);
 
-    const sorted = Array.from(candidates).sort((a, b) => a.localeCompare(b));
-    if (!query) {
-      return sorted.slice(0, 30);
-    }
-    const startsWith = sorted.filter((pathValue) => pathValue.toLowerCase().startsWith(query));
-    const includes = sorted.filter((pathValue) => !startsWith.includes(pathValue) && pathValue.toLowerCase().includes(query));
-    return [...startsWith, ...includes].slice(0, 30);
-  }, [createWorkspaceRoot, createWorkspaceSuffix, currentBrowsePath, directoryOptions]);
   const visibleWorkspaceSuffixSuggestions = showAllWorkspaceSuggestions
     ? workspaceSuffixSuggestions
     : workspaceSuffixSuggestions.slice(0, WORKSPACE_SUGGESTION_INITIAL_LIMIT);
   const hasMoreWorkspaceSuggestions = workspaceSuffixSuggestions.length > WORKSPACE_SUGGESTION_INITIAL_LIMIT;
 
+  const workspaceForLaunch = activeSession?.workspacePath ?? config?.workspacePath ?? "";
+  const canOpenWorkspaceInVscode = Boolean(workspaceForLaunch);
+
+  // --- Fetch config ---
   useEffect(() => {
-    if (sessions.length === 0) {
-      setActiveSessionId("");
-      return;
-    }
-    if (!sessions.some((session) => session.clientSessionId === activeSessionId)) {
-      setActiveSessionId(sessions[0].clientSessionId);
-    }
-  }, [activeSessionId, sessions]);
-
-  useEffect(() => {
-    setPromptDraftBySessionId((current) => {
-      if (Object.keys(current).length === 0) {
-        return current;
-      }
-      const validSessionIds = new Set(sessions.map((session) => session.clientSessionId));
-      let changed = false;
-      const next: Record<string, string> = {};
-      for (const [sessionId, draft] of Object.entries(current)) {
-        if (validSessionIds.has(sessionId)) {
-          next[sessionId] = draft;
-        } else {
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
-  }, [sessions]);
-
-  useEffect(() => {
-    setCommandSuggestionIndex(0);
-  }, [activeSessionId, promptText, commandCompletions.length]);
-
-  useEffect(() => {
-    setPendingQueue([]);
-    setPendingImages([]);
-    shownPermissionRequestIdsRef.current.clear();
-  }, [activeSessionId]);
-
-  useEffect(() => {
-    if (!activeSession?.permissions.length) {
-      setPermissionDetail(null);
-      return;
-    }
-    const first = activeSession.permissions[0];
-    if (first && !shownPermissionRequestIdsRef.current.has(first.requestId)) {
-      shownPermissionRequestIdsRef.current.add(first.requestId);
-      setPermissionDetail(first);
-    }
-  }, [activeSession?.permissions.length, activeSession?.permissions[0]?.requestId]);
-
-  useEffect(() => {
-    if (!activeSessionIsRunning && pendingQueueRef.current.length > 0 && activeSession) {
-      const [first, ...rest] = pendingQueueRef.current;
-      if (first.images && first.images.length > 0) {
-        pendingPromptImagesRef.current.set(activeSession.clientSessionId, first.images);
-      }
-      const sent = sendCommand({
-        type: "prompt",
-        payload: {
-          clientSessionId: activeSession.clientSessionId,
-          text: first.text,
-          images: first.images,
-        },
-      });
-      if (sent) {
-        setPendingQueue(rest);
-      } else {
-        pendingPromptImagesRef.current.delete(activeSession.clientSessionId);
-      }
-    }
-  }, [activeSessionIsRunning]);
-
-  useEffect(() => {
-    if (commandCompletions.length < 1) {
-      setIsCompletionOpen(false);
-    }
-  }, [commandCompletions.length]);
-
-  useEffect(() => {
-    const onPointerDown = (event: MouseEvent) => {
-      const root = composerContainerRef.current;
-      if (!root) {
-        return;
-      }
-      if (event.target instanceof Node && root.contains(event.target)) {
-        return;
-      }
-      setIsCompletionOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-    };
-  }, []);
-
-  useEffect(() => {
-    setCollapsedSubagentRoots((current) => {
-      let changed = false;
-      const next = { ...current };
-      for (const row of timelineRows) {
-        if (!row.item.id || row.item.kind !== "tool") {
-          continue;
-        }
-        const childCount = rootChildCount[row.item.id] ?? 0;
-        const collapseToolMeta = readToolMeta(row.item);
-        if (childCount < 1 || !isSubagentToolTitle(collapseToolMeta?.rawTitle ?? row.item.title)) {
-          continue;
-        }
-
-        // Force-collapse once when a sub-agent task completes
-        const status = collapseToolMeta?.status ?? null;
-        const isCompleted = isTerminalToolStatus(status);
-        if (isCompleted && !completionCollapsedRef.current.has(row.item.id)) {
-          completionCollapsedRef.current.add(row.item.id);
-          if (next[row.item.id] !== true) {
-            next[row.item.id] = true;
-            changed = true;
-          }
-          continue;
-        }
-
-        // Initialize new roots as collapsed
-        if (row.item.id in next) {
-          continue;
-        }
-        next[row.item.id] = true;
-        changed = true;
-      }
-      return changed ? next : current;
-    });
-  }, [rootChildCount, timelineRows]);
-
-  useEffect(() => {
-    setDirectoryBrowserPath(activeSession?.workspacePath ?? config?.workspacePath ?? "");
-  }, [activeSession?.workspacePath, config?.workspacePath]);
-
-  useEffect(() => {
-    if (!config || vscodeConfigHydratedRef.current) {
-      return;
-    }
-    setVscodeLaunchConfig(readStoredVscodeLaunchConfig(config));
-    vscodeConfigHydratedRef.current = true;
-  }, [config]);
-
-  useEffect(() => {
-    if (!accessKey) {
-      setAuthPrompt("访问需要 key，请先输入后再进入控制台。");
-      return;
-    }
-
-    Promise.all([fetch(withAccessKey("/api/config", accessKey)), fetch(withAccessKey("/api/state", accessKey))])
-      .then(async ([configResponse, stateResponse]) => {
-        if (configResponse.status === 401 || stateResponse.status === 401) {
-          throw new Error("key 无效或已过期，请重新输入。");
-        }
-        if (!configResponse.ok || !stateResponse.ok) {
-          throw new Error("初始化失败：配置或状态请求异常。");
-        }
-        const configData = (await configResponse.json()) as AppConfig;
-        const stateData = (await stateResponse.json()) as StateResponse;
-        setConfig(configData);
-        const normalizedSessions = stateData.sessions.map(normalizeSessionRecord);
-        const fixtures = buildDemoFixtures(configData.workspacePath, demoPreset);
-        const createSessionShowcase = fixtures?.createSession;
-        const initialWorkspacePath = createSessionShowcase?.workspacePath ?? configData.workspacePath;
-        setWorkspacePath(initialWorkspacePath);
-        const initialWorkspaceSplit = splitWorkspacePathByAllowedRoots(initialWorkspacePath, configData.allowedRoots);
-        setCreateWorkspaceRoot(initialWorkspaceSplit.root);
-        setCreateWorkspaceSuffix(initialWorkspaceSplit.suffix);
-        setNewSessionTitle(createSessionShowcase?.title ?? "");
-        setNewSessionModeId(createSessionShowcase?.modeId ?? "default");
-        setDirectoryBrowserPath(resolveWorkspaceLookupPath(initialWorkspaceSplit.root, initialWorkspaceSplit.suffix, []));
-        setDemoFixtures(fixtures);
-        setSessions(applyDemoPreset(normalizedSessions, fixtures));
-        if (createSessionShowcase) {
-          setCreateSessionModalOpen(true);
-        }
-        setAuthPrompt("");
+    if (!accessKey) return;
+    fetch(withAccessKey("/api/config", accessKey))
+      .then((res) => res.json())
+      .then((data: AppConfig) => {
+        setConfig(data);
+        setVscodeLaunchConfig(loadVscodeLaunchConfig(data.sshHost));
+        const split = splitWorkspacePathByAllowedRoots(data.workspacePath, data.allowedRoots);
+        setWorkspacePath(data.workspacePath);
+        setDirectoryBrowserPath(split.root);
+        setCreateWorkspaceSuffix(split.suffix);
       })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        if (message.includes("key")) {
-          setAuthPrompt(message);
-          return;
-        }
-        appendGlobalTimeline({
-          id: makeId(),
-          kind: "error",
-          title: "初始化失败",
-          body: message,
-        });
-      });
+      .catch(() => undefined);
   }, [accessKey]);
 
+  // --- Fetch directories for workspace browser ---
   useEffect(() => {
-    if (!browseRootPath) {
-      setDirectoryRootPath("");
-      setDirectoryOptions([]);
-      setDirectoryError("");
-      return;
-    }
-
-    const controller = new AbortController();
-    setDirectoryLoading(true);
-    setDirectoryError("");
-
-    fetch(withAccessKey(`/api/directories?root=${encodeURIComponent(browseRootPath)}`), { signal: controller.signal })
-      .then(async (response) => {
-        const payload = await response.json();
-        if (!response.ok) {
-          const errorPayload = payload as { message?: string };
-          throw new Error(errorPayload.message || "目录读取失败");
-        }
-        const directoryPayload = payload as DirectoryResponse;
-        setDirectoryRootPath(directoryPayload.rootPath);
-        setDirectoryOptions(directoryPayload.directories);
+    if (!accessKey || !directoryBrowserPath) return;
+    fetch(withAccessKey(`/api/directories?root=${encodeURIComponent(directoryBrowserPath)}`, accessKey))
+      .then((res) => res.json())
+      .then((data: { rootPath: string; directories: Array<{ name: string; path: string }> }) => {
+        setDirectoryOptions(data.directories);
+        setDirectoryError("");
       })
       .catch((error) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        setDirectoryRootPath(browseRootPath);
-        setDirectoryOptions([]);
         setDirectoryError(error instanceof Error ? error.message : String(error));
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setDirectoryLoading(false);
-        }
       });
+  }, [accessKey, directoryBrowserPath]);
 
-    return () => {
-      controller.abort();
-    };
-  }, [browseRootPath]);
-
+  // --- WebSocket connection ---
   useEffect(() => {
-    const viewport = timelineViewportRef.current;
-    if (!viewport || !shouldStickToBottomRef.current) {
-      return;
-    }
-    viewport.scrollTop = viewport.scrollHeight;
-  }, [activeSessionId, visibleTimeline.length]);
-
-  useEffect(() => {
-    for (const session of sessions) {
-      for (const permission of session.permissions) {
-        if (notifiedPermissionRequestIdsRef.current[permission.requestId]) {
-          continue;
-        }
-        notifiedPermissionRequestIdsRef.current[permission.requestId] = true;
-        const title = "待处理确认";
-        const body = `${formatSessionTitleForDisplay(session.title)}: ${summarizeToolTitle(permission.toolCall.title, permission.toolCall.rawInput, permission.toolCall.toolCallId)}`;
-        pushInAppToast(permission.requestId, title, body, session.clientSessionId, "permission");
-      }
-
-      for (const item of session.timeline) {
-        if (item.kind !== "system" || item.title !== "本轮完成") {
-          continue;
-        }
-        if (notifiedCompletionIdsRef.current[item.id]) {
-          continue;
-        }
-        notifiedCompletionIdsRef.current[item.id] = true;
-        const title = "任务已完成";
-        const body = `${formatSessionTitleForDisplay(session.title)}: ${item.body || "本轮执行完成"}`;
-        pushInAppToast(item.id, title, body, session.clientSessionId, "completion");
-      }
-    }
-  }, [sessions]);
-
-  useEffect(() => {
-    const pendingCount = sessions.reduce((sum, s) => sum + s.permissions.length + s.questions.length, 0);
-    const appName = config?.appName ?? "乐汪队";
-    document.title = pendingCount > 0 ? `[${pendingCount} 待确认] ${appName}` : appName;
-  }, [sessions, config?.appName]);
-
-  useEffect(() => {
-    if (!accessKey) {
-      return;
-    }
+    if (!accessKey) return;
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
     const socket = new WebSocket(`${protocol}://${window.location.host}${withAccessKey("/ws", accessKey)}`);
     socketRef.current = socket;
@@ -738,752 +204,397 @@ export default function App() {
       socket.send(JSON.stringify({ type: "hello" }));
     });
 
-    socket.addEventListener("close", () => {
-      setConnectionState("closed");
-      setSessions((current) =>
-        current.map((session) => ({
-          ...session,
-          connectionState: "error",
-          busy: false,
-        })),
-      );
+    socket.addEventListener("message", (event) => {
+      try {
+        const message = JSON.parse(String(event.data)) as EventMessage;
+        handleEvent(message);
+      } catch {
+        /* ignore malformed messages */
+      }
     });
 
-    socket.addEventListener("message", (event) => {
-      const message = JSON.parse(String(event.data)) as EventMessage;
-      handleEvent(message);
+    socket.addEventListener("close", () => {
+      setConnectionState("closed");
     });
 
     socket.addEventListener("error", () => {
-      setConnectionState("error");
+      setConnectionState("closed");
     });
 
     return () => {
+      socketRef.current = null;
       socket.close();
-      if (socketRef.current === socket) {
-        socketRef.current = null;
-      }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessKey]);
-
-  // Re-render after the content grace period expires so that sidebar status
-  // transitions from "运行中" → "已完成" automatically.
-  useEffect(() => {
-    const graceSession = sessions.find((s) => isWithinContentGracePeriod(s));
-    if (!graceSession) return;
-    const remaining = CONTENT_GRACE_MS - (Date.now() - (graceSession.lastContentEventAt ?? 0));
-    if (remaining <= 0) return;
-    const timer = setTimeout(() => {
-      // Trigger a no-op state update to force re-render.
-      setSessions((cur) => [...cur]);
-    }, remaining + 50); // +50ms buffer
-    return () => clearTimeout(timer);
-  }, [sessions]);
-
-  useEffect(() => {
-    if (!terminalOpen || !config?.enableShell || !activeSessionId) {
-      return;
-    }
-    const container = terminalContainerRef.current;
-    if (!container) {
-      return;
-    }
-
-    let disposed = false;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let term: any = null;
-    let resizeObserver: ResizeObserver | null = null;
-
-    void Promise.all([
-      import("@xterm/xterm"),
-      import("@xterm/addon-fit"),
-    ]).then(([{ Terminal }, { FitAddon }]) => {
-      if (disposed) return;
-
-      term = new Terminal({
-        theme: {
-          background: "#1a1a1a",
-          foreground: "#e8e8e8",
-          cursor: "#d85b34",
-          selectionBackground: "rgba(216, 91, 52, 0.3)",
-        },
-        fontFamily: '"IBM Plex Mono", "SFMono-Regular", monospace',
-        fontSize: 13,
-        cursorBlink: true,
-        allowTransparency: false,
-        scrollback: 1000,
-      });
-      const fitAddon = new FitAddon();
-      term.loadAddon(fitAddon);
-      term.open(container);
-      fitAddon.fit();
-
-      xtermRef.current = term;
-      fitAddonRef.current = fitAddon;
-
-      const socket = socketRef.current;
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: "shell_start", payload: { clientSessionId: activeSessionId, cols: term.cols, rows: term.rows } }));
-      }
-
-      term.onData((data: string) => {
-        const sock = socketRef.current;
-        if (sock && sock.readyState === WebSocket.OPEN) {
-          sock.send(JSON.stringify({ type: "shell_input", payload: { data } }));
-        }
-      });
-
-      term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
-        const sock = socketRef.current;
-        if (sock && sock.readyState === WebSocket.OPEN) {
-          sock.send(JSON.stringify({ type: "shell_resize", payload: { cols, rows } }));
-        }
-      });
-
-      resizeObserver = new ResizeObserver(() => {
-        fitAddon.fit();
-      });
-      resizeObserver.observe(container);
-    });
-
-    return () => {
-      disposed = true;
-      resizeObserver?.disconnect();
-      if (term) {
-        term.dispose();
-      }
-      xtermRef.current = null;
-      fitAddonRef.current = null;
-      const sock = socketRef.current;
-      if (sock && sock.readyState === WebSocket.OPEN) {
-        sock.send(JSON.stringify({ type: "shell_stop" }));
-      }
-    };
-  }, [terminalOpen, config?.enableShell, activeSessionId]);
-
-  function appendGlobalTimeline(item: TimelineItem) {
-    setGlobalTimeline((current) => [...current, item]);
-  }
-
-  function pushInAppToast(id: string, title: string, body: string, sessionId: string | undefined, kind: ToastNotification["kind"]) {
-    setToasts((current) => {
-      if (current.some((t) => t.id === id)) return current;
-      return [...current, { id, title, body, sessionId, kind }];
-    });
-    toastTimeoutsRef.current[id] = setTimeout(() => {
-      dismissToast(id);
-    }, 6000);
-  }
-
-  function dismissToast(id: string) {
-    setToasts((current) => current.filter((t) => t.id !== id));
-    const timeout = toastTimeoutsRef.current[id];
-    if (timeout !== undefined) {
-      clearTimeout(timeout);
-      delete toastTimeoutsRef.current[id];
-    }
-  }
-
-  function appendSessionTimeline(clientSessionId: string, item: TimelineItem) {
-    setSessions((current) =>
-      current.map((session) =>
-        session.clientSessionId === clientSessionId
-          ? {
-              ...session,
-              timeline: [...session.timeline, normalizeTimelineItem(item)],
-              historyTotal: session.historyTotal + 1,
-              updatedAt: new Date().toISOString(),
-            }
-          : session,
-      ),
-    );
-  }
-
-  function upsertToolTimeline(clientSessionId: string, update: SessionUpdate) {
-    const nextItem = buildToolTimelineItem(update);
-    const nextToolCallId = typeof update.toolCallId === "string" ? update.toolCallId : null;
-    setSessions((current) =>
-      current.map((session) => {
-        if (session.clientSessionId !== clientSessionId) {
-          return session;
-        }
-
-        if (nextToolCallId) {
-          let existingIndex = -1;
-          for (let index = session.timeline.length - 1; index >= 0; index -= 1) {
-            const item = session.timeline[index];
-            if (item?.kind === "system" && item.title === "本轮完成") {
-              break;
-            }
-            if (item?.kind !== "tool") {
-              continue;
-            }
-            if (canMergeToolTimelineItem(item, nextItem, nextToolCallId)) {
-              const itemMeta = readToolMeta(item);
-              if (!isTerminalToolStatus(itemMeta?.status ?? null)) {
-                existingIndex = index;
-                break;
-              }
-              if (existingIndex < 0) {
-                existingIndex = index;
-              }
-            }
-          }
-          if (existingIndex >= 0) {
-            const updatedTimeline = [...session.timeline];
-            updatedTimeline[existingIndex] = mergeToolTimelineItems(updatedTimeline[existingIndex] ?? nextItem, nextItem);
-            return {
-              ...session,
-              timeline: updatedTimeline,
-              updatedAt: new Date().toISOString(),
-            };
-          }
-        }
-
-        return {
-          ...session,
-          timeline: [...session.timeline, normalizeTimelineItem(nextItem)],
-          historyTotal: session.historyTotal + 1,
-          updatedAt: new Date().toISOString(),
-        };
-      }),
-    );
-  }
-
-  function appendSessionTextChunk(clientSessionId: string, kind: TimelineItem["kind"], title: string, text: string, parentToolCallId?: string) {
-    setSessions((current) =>
-      current.map((session) => {
-        if (session.clientSessionId !== clientSessionId) {
-          return session;
-        }
-        const lastItem = session.timeline.at(-1);
-        if (lastItem && lastItem.kind === kind && lastItem.title === title && !lastItem.meta && (lastItem.parentToolCallId ?? undefined) === parentToolCallId) {
-          return {
-            ...session,
-            timeline: [
-              ...session.timeline.slice(0, -1),
-              {
-                ...lastItem,
-                body: lastItem.body + text,
-              },
-            ],
-            updatedAt: new Date().toISOString(),
-          };
-        }
-        return {
-          ...session,
-          timeline: [
-            ...session.timeline,
-            {
-              id: makeId(),
-              kind,
-              title,
-              body: text,
-              parentToolCallId,
-              },
-            ],
-            historyTotal: session.historyTotal + 1,
-            updatedAt: new Date().toISOString(),
-          };
-      }),
-    );
-  }
-
-  function updateSession(clientSessionId: string, updater: (session: SessionRecord) => SessionRecord) {
-    setSessions((current) =>
-      current.map((session) =>
-        session.clientSessionId === clientSessionId
-          ? { ...updater(session), updatedAt: new Date().toISOString() }
-          : session,
-      ),
-    );
-  }
-
-  function ensureActiveSession(clientSessionId: string) {
-    setActiveSessionId((current) => current || clientSessionId);
-  }
 
   function handleEvent(message: EventMessage) {
     switch (message.type) {
       case "ready":
-        if (!message.payload.clientSessionId) {
-          appendGlobalTimeline({
-            id: makeId(),
-            kind: "system",
-            title: "WebSocket 已连接",
-            body: message.payload.workspacePath,
-          });
-          break;
+        setSessions(message.payload.sessions);
+        if (message.payload.sessions.length > 0 && !activeSessionId) {
+          setActiveSessionId(message.payload.sessions[0].clientSessionId);
         }
-        updateSession(message.payload.clientSessionId, (session) => ({
-          ...session,
-          workspacePath: message.payload.workspacePath,
-          connectionState: "connected",
-        }));
-        appendSessionTimeline(message.payload.clientSessionId, {
-          id: makeId(),
-          kind: "system",
-          title: "Claude ACP 已连接",
-          body: message.payload.workspacePath,
-        });
         break;
+
       case "session_registered":
-        setSessions((current) => {
-          const existing = current.find((session) => session.clientSessionId === message.payload.clientSessionId);
-          if (existing) {
-            return current.map((session) =>
-              session.clientSessionId === message.payload.clientSessionId
-                ? {
-                    ...session,
-                    title: normalizeSessionTitle(message.payload.title),
-                    workspacePath: message.payload.workspacePath,
-                  }
-                : session,
+        setSessions((prev) => {
+          const exists = prev.some((s) => s.clientSessionId === message.payload.clientSessionId);
+          if (exists) {
+            return prev.map((s) =>
+              s.clientSessionId === message.payload.clientSessionId
+                ? { ...s, ...message.payload }
+                : s,
             );
           }
-          return [
-            ...current,
-            normalizeSessionRecord({
-              clientSessionId: message.payload.clientSessionId,
-              title: normalizeSessionTitle(message.payload.title),
-              workspacePath: message.payload.workspacePath,
-              connectionState: "connecting",
-              sessionId: "",
-              modes: [],
-              defaultModeId: message.payload.defaultModeId ?? newSessionModeId,
-              currentModeId: message.payload.currentModeId ?? message.payload.defaultModeId ?? newSessionModeId,
-              busy: false,
-              timeline: [],
-              historyTotal: 0,
-              historyStart: 0,
-              permissions: [],
-              questions: [],
-              availableCommands: [],
-              updatedAt: new Date().toISOString(),
-            }),
-          ];
+          return [...prev, message.payload as SessionRecord];
         });
-        ensureActiveSession(message.payload.clientSessionId);
+        setActiveSessionId(message.payload.clientSessionId);
         break;
-      case "session_created":
-        updateSession(message.payload.clientSessionId, (session) => ({
-          ...session,
-          sessionId: message.payload.sessionId,
-          modes: message.payload.modes,
-          connectionState: "connected",
-        }));
-        appendSessionTimeline(message.payload.clientSessionId, {
-          id: makeId(),
-          kind: "system",
-          title: "会话已创建",
-          body: message.payload.sessionId,
-        });
-        break;
-      case "session_restored":
-        updateSession(message.payload.clientSessionId, (session) => ({
-          ...session,
-          sessionId: message.payload.sessionId,
-          modes: message.payload.modes,
-          connectionState: "connected",
-        }));
-        appendSessionTimeline(message.payload.clientSessionId, {
-          id: makeId(),
-          kind: "system",
-          title: "会话已恢复",
-          body: message.payload.sessionId,
-        });
-        break;
-      case "prompt_started": {
-        const promptImages = pendingPromptImagesRef.current.get(message.payload.clientSessionId);
-        pendingPromptImagesRef.current.delete(message.payload.clientSessionId);
-        updateSession(message.payload.clientSessionId, (session) => ({ ...session, busy: true }));
-        appendSessionTimeline(message.payload.clientSessionId, {
-          id: message.payload.promptId,
-          kind: "user",
-          title: "你",
-          body: message.payload.text,
-          images: promptImages && promptImages.length > 0 ? promptImages : undefined,
-        });
-        break;
-      }
-      case "prompt_finished":
-        {
-          const keepRunning = shouldKeepSessionRunningAfterPromptFinished(message.payload.stopReason);
-          updateSession(message.payload.clientSessionId, (session) => ({
-            ...session,
-            busy: keepRunning,
-            completedAt: keepRunning ? session.completedAt : Date.now(),
-          }));
-          appendSessionTimeline(message.payload.clientSessionId, {
-            id: makeId(),
-            kind: "system",
-            title: keepRunning ? "等待待处理中" : "本轮完成",
-            body: message.payload.stopReason,
-          });
-        }
-        break;
-      case "session_mode_changed":
-        updateSession(message.payload.clientSessionId, (session) => ({
-          ...session,
-          defaultModeId: message.payload.defaultModeId,
-          currentModeId: message.payload.currentModeId,
-        }));
-        break;
-      case "session_update":
-        consumeSessionUpdate(message.payload.clientSessionId, message.payload);
-        break;
-      case "permission_requested":
-        updateSession(message.payload.clientSessionId, (session) => ({
-          ...session,
-          permissions: [...session.permissions, message.payload],
-        }));
-        upsertToolTimeline(message.payload.clientSessionId, {
-          sessionUpdate: "tool_call",
-          toolCallId: message.payload.toolCall.toolCallId,
-          title: message.payload.toolCall.title,
-          status: message.payload.toolCall.status ?? "pending",
-          rawInput: message.payload.toolCall.rawInput,
-          _meta: message.payload.toolCall._meta,
-        });
-        break;
-      case "permission_resolved":
-        updateSession(message.payload.clientSessionId, (session) => ({
-          ...session,
-          permissions: session.permissions.filter((permission) => permission.requestId !== message.payload.requestId),
-        }));
-        break;
-      case "question_requested":
-        updateSession(message.payload.clientSessionId, (session) => ({
-          ...session,
-          questions: [...session.questions, message.payload],
-        }));
-        appendSessionTimeline(message.payload.clientSessionId, {
-          id: message.payload.questionId,
-          kind: "system",
-          title: "提问",
-          body: message.payload.question,
-          meta: "pending",
-        });
-        break;
-      case "question_answered":
-        updateSession(message.payload.clientSessionId, (session) => ({
-          ...session,
-          questions: session.questions.filter((q) => q.questionId !== message.payload.questionId),
-        }));
-        break;
+
       case "session_closed":
-        setSessions((current) => current.filter((session) => session.clientSessionId !== message.payload.clientSessionId));
-        break;
-      case "error":
-        {
-          const structured = parseStructuredLogMessage(message.payload.message);
-          if (structured?.level === "warn") {
-            if (!message.payload.clientSessionId) {
-              appendGlobalTimeline({
-                id: makeId(),
-                kind: "system",
-                title: "提示",
-                body: structured.detail,
-                meta: "warn",
-              });
-              break;
-            }
-            appendSessionTimeline(message.payload.clientSessionId, {
-              id: makeId(),
-              kind: "system",
-              title: "提示",
-              body: structured.detail,
-              meta: "warn",
-            });
-            break;
-          }
-        }
-        if (!message.payload.clientSessionId) {
-          appendGlobalTimeline({
-            id: makeId(),
-            kind: "error",
-            title: message.payload.fatal ? "错误" : "警告",
-            body: message.payload.message,
-          });
-          break;
-        }
-        // Only reset busy / connectionState for fatal errors (agent crash / exit).
-        // Non-fatal stderr warnings must not flip the session to "completed".
-        if (message.payload.fatal) {
-          updateSession(message.payload.clientSessionId, (session) => ({
-            ...session,
-            busy: false,
-            connectionState: "error",
-          }));
-        }
-        appendSessionTimeline(message.payload.clientSessionId, {
-          id: makeId(),
-          kind: "error",
-          title: message.payload.fatal ? "错误" : "警告",
-          body: message.payload.message,
-        });
-        break;
-      case "shell_output":
-        xtermRef.current?.write(message.payload.data);
-        break;
-      case "shell_exited":
-        xtermRef.current?.write(`\r\n\x1b[33m[终端已退出，退出码 ${message.payload.exitCode}]\x1b[0m\r\n`);
-        break;
-    }
-  }
-
-  function consumeSessionUpdate(clientSessionId: string, update: SessionUpdate) {
-    // Track content-bearing events for the timestamp safety net.
-    const isContentEvent =
-      update.sessionUpdate === "agent_message_chunk" ||
-      update.sessionUpdate === "agent_thought_chunk" ||
-      update.sessionUpdate === "tool_call" ||
-      update.sessionUpdate === "tool_call_update" ||
-      update.sessionUpdate === "plan";
-    if (isContentEvent) {
-      updateSession(clientSessionId, (session) => ({
-        ...session,
-        lastContentEventAt: Date.now(),
-      }));
-    }
-
-    switch (update.sessionUpdate) {
-      case "available_commands_update": {
-        const nextCommands = normalizeAvailableCommands(
-          update.availableCommands ?? update.supportedCommands ?? update.commands,
+        setSessions((prev) => prev.filter((s) => s.clientSessionId !== message.payload.clientSessionId));
+        setActiveSessionId((prev) =>
+          prev === message.payload.clientSessionId ? null : prev,
         );
-        updateSession(clientSessionId, (session) => ({
-          ...session,
-          availableCommands: nextCommands,
-        }));
         break;
-      }
-      case "agent_message_chunk": {
-        const chunkText = extractChunkText(update.content);
-        if (chunkText) {
-          const parentToolCallId = extractParentToolCallId(update as Record<string, unknown>);
-          appendSessionTextChunk(clientSessionId, "agent", "Claude", chunkText, parentToolCallId);
+
+      case "cli_output": {
+        const cached = cliTerminalsRef.current.get(message.payload.clientSessionId);
+        if (cached) {
+          (cached.terminal as { write: (data: string) => void }).write(message.payload.data);
         }
+        // Update connectionState to connected when we receive output
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.clientSessionId === message.payload.clientSessionId && s.connectionState !== "connected"
+              ? { ...s, connectionState: "connected", updatedAt: new Date().toISOString() }
+              : s,
+          ),
+        );
         break;
       }
-      case "user_message_chunk": {
-        const chunkText = extractChunkText(update.content);
-        if (chunkText) {
-          appendSessionTextChunk(clientSessionId, "user", "你", chunkText);
+
+      case "cli_exited":
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.clientSessionId === message.payload.clientSessionId
+              ? { ...s, connectionState: "error", updatedAt: new Date().toISOString() }
+              : s,
+          ),
+        );
+        addToast("warning", "CLI 已退出", `退出码: ${message.payload.exitCode}`, message.payload.clientSessionId);
+        break;
+
+      case "shell_output": {
+        // Handled by the bottom shell terminal xterm instance directly
+        break;
+      }
+
+      case "shell_exited":
+        break;
+
+      case "error":
+        if (message.payload.clientSessionId) {
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.clientSessionId === message.payload.clientSessionId
+                ? { ...s, connectionState: "error", updatedAt: new Date().toISOString() }
+                : s,
+            ),
+          );
         }
-        break;
-      }
-      case "agent_thought_chunk": {
-        const chunkText = extractChunkText(update.content);
-        if (chunkText) {
-          const parentToolCallId = extractParentToolCallId(update as Record<string, unknown>);
-          appendSessionTextChunk(clientSessionId, "thought", "思路", chunkText, parentToolCallId);
-        }
-        break;
-      }
-      case "tool_call":
-      case "tool_call_update":
-        upsertToolTimeline(clientSessionId, update);
-        break;
-      case "plan": {
-        const parentToolCallId = extractParentToolCallId(update as Record<string, unknown>);
-        appendSessionTimeline(clientSessionId, {
-          id: makeId(),
-          kind: "system",
-          title: "执行计划",
-          body: stringifyMaybe(update.entries ?? update),
-          parentToolCallId,
-        });
-        break;
-      }
-      case "current_mode_update": {
-        const nextModeId = String(update.currentModeId ?? "").trim();
-        updateSession(clientSessionId, (session) => ({
-          ...session,
-          currentModeId: nextModeId || session.currentModeId || "default",
-          defaultModeId: nextModeId || session.defaultModeId,
-        }));
-        appendSessionTimeline(clientSessionId, {
-          id: makeId(),
-          kind: "system",
-          title: "模式切换",
-          body: nextModeId || "unknown",
-        });
-        break;
-      }
-      default:
+        addToast("error", "错误", message.payload.message, message.payload.clientSessionId);
         break;
     }
-  }
-
-  function createSession() {
-    const nextWorkspacePath = workspacePath.trim();
-    if (!nextWorkspacePath) {
-      return;
-    }
-    const didSend = sendCommand({
-      type: "create_session",
-      payload: {
-        workspacePath: nextWorkspacePath,
-        title: newSessionTitle.trim() || undefined,
-        modeId: newSessionModeId,
-      },
-    });
-    if (didSend) {
-      setCreateSessionModalOpen(false);
-      setShowAllWorkspaceSuggestions(false);
-      setCreateWorkspaceSuffix("");
-      setWorkspacePath("");
-    }
-  }
-
-  function submitPrompt() {
-    const text = promptText.trim();
-    if ((!text && pendingImages.length === 0) || !activeSession) {
-      return;
-    }
-    const images = pendingImages.flatMap((img) => {
-      const commaIndex = img.dataUrl.indexOf(",");
-      if (commaIndex === -1) return [];
-      return [{ data: img.dataUrl.slice(commaIndex + 1), mimeType: img.mimeType }];
-    });
-    if (isSessionRunning(activeSession)) {
-      setPendingQueue((q) => [...q, { id: makeId(), text, images: images.length > 0 ? images : undefined }]);
-      setPromptText("");
-      setPendingImages([]);
-      return;
-    }
-    if (images.length > 0) {
-      pendingPromptImagesRef.current.set(activeSession.clientSessionId, images);
-    }
-    if (
-      !sendCommand({
-        type: "prompt",
-        payload: {
-          clientSessionId: activeSession.clientSessionId,
-          text,
-          images: images.length > 0 ? images : undefined,
-        },
-      })
-    ) {
-      pendingPromptImagesRef.current.delete(activeSession.clientSessionId);
-      return;
-    }
-    setPromptText("");
-    setPendingImages([]);
-  }
-
-  function applyCommandSuggestion(commandName: string) {
-    setPromptText((current) => applyPromptCommandCompletion(current, commandName));
-  }
-
-  function cancelActiveSession() {
-    if (!activeSession) {
-      return;
-    }
-    sendCommand({
-      type: "cancel",
-      payload: { clientSessionId: activeSession.clientSessionId },
-    });
-  }
-
-  function closeSession(clientSessionId: string) {
-    sendCommand({
-      type: "close_session",
-      payload: { clientSessionId },
-    });
-  }
-
-  function changeSessionMode(clientSessionId: string, modeId: string) {
-    sendCommand({
-      type: "set_mode",
-      payload: { clientSessionId, modeId },
-    });
-  }
-
-  function resolvePermission(permission: PermissionPayload, optionId: string) {
-    sendCommand({
-      type: "permission",
-      payload: {
-        clientSessionId: permission.clientSessionId,
-        requestId: permission.requestId,
-        optionId,
-      },
-    });
-  }
-
-  function answerQuestionGroup(questions: QuestionPayload[], answers: Record<string, string>) {
-    // Format a structured answer with all Q&A pairs
-    const lines = questions.map((q) => {
-      const answer = answers[q.questionId] ?? "";
-      const prefix = q.header ? `【${q.header}】` : "";
-      return `${prefix}${q.question}\n→ ${answer}`;
-    });
-    const formattedAnswer = lines.join("\n\n");
-
-    // Send the combined answer using the first questionId.
-    // The server resolves the underlying permission for all siblings.
-    sendCommand({
-      type: "answer_question",
-      payload: {
-        clientSessionId: questions[0].clientSessionId,
-        questionId: questions[0].questionId,
-        answer: formattedAnswer,
-      },
-    });
   }
 
   function sendCommand(command: unknown) {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      appendGlobalTimeline({
-        id: makeId(),
-        kind: "error",
-        title: "连接不可用",
-        body: "WebSocket 尚未连接，命令没有发出。",
-      });
       return false;
     }
     socket.send(JSON.stringify(command));
     return true;
   }
 
-  function handleTimelineScroll() {
-    const viewport = timelineViewportRef.current;
-    if (!viewport) {
-      return;
-    }
-    const distanceToBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
-    shouldStickToBottomRef.current = distanceToBottom < 40;
+  function addToast(kind: ToastNotification["kind"], title: string, body: string, sessionId?: string) {
+    const id = makeId();
+    setToasts((prev) => [...prev.slice(-9), { id, kind, title, body, sessionId }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 8000);
   }
 
-  async function openSessionDiff() {
-    if (!activeSession) {
+  function dismissToast(id: string) {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }
+
+  // --- Main CLI Terminal (xterm.js) ---
+  useEffect(() => {
+    if (!activeSessionId || connectionState !== "connected") return;
+
+    const containerEl = cliTerminalContainerRef.current;
+    if (!containerEl) return;
+
+    // If already have a cached terminal for this session, reattach
+    const cached = cliTerminalsRef.current.get(activeSessionId);
+    if (cached) {
+      const term = cached.terminal as { open: (el: HTMLElement) => void };
+      const fit = cached.fitAddon as { fit: () => void };
+      containerEl.innerHTML = "";
+      term.open(containerEl);
+      fit.fit();
+
+      // Notify server we're viewing this session
+      const termObj = cached.terminal as { cols: number; rows: number };
+      sendCommand({
+        type: "cli_start",
+        payload: { clientSessionId: activeSessionId, cols: termObj.cols, rows: termObj.rows },
+      });
       return;
     }
+
+    let disposed = false;
+    const sessionId = activeSessionId;
+
+    (async () => {
+      const [xtermModule, fitModule] = await Promise.all([
+        import("@xterm/xterm"),
+        import("@xterm/addon-fit"),
+      ]);
+
+      if (disposed) return;
+
+      const Terminal = xtermModule.Terminal;
+      const FitAddon = fitModule.FitAddon;
+
+      const fitAddon = new FitAddon();
+      const term = new Terminal({
+        scrollback: 5000,
+        cursorBlink: true,
+        fontFamily: '"IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace',
+        fontSize: 13,
+        theme: {
+          background: "#1a1a1a",
+          foreground: "#e8e8e8",
+          cursor: "#d85b34",
+          selectionBackground: "rgba(216, 91, 52, 0.3)",
+        },
+      });
+      term.loadAddon(fitAddon);
+      containerEl.innerHTML = "";
+      term.open(containerEl);
+      fitAddon.fit();
+
+      cliTerminalsRef.current.set(sessionId, { terminal: term, fitAddon });
+
+      // Notify server
+      sendCommand({
+        type: "cli_start",
+        payload: { clientSessionId: sessionId, cols: term.cols, rows: term.rows },
+      });
+
+      // Forward input
+      term.onData((data) => {
+        sendCommand({
+          type: "cli_input",
+          payload: { clientSessionId: sessionId, data },
+        });
+      });
+
+      // Forward resize
+      term.onResize(({ cols, rows }) => {
+        sendCommand({
+          type: "cli_resize",
+          payload: { clientSessionId: sessionId, cols, rows },
+        });
+      });
+
+      // ResizeObserver for container
+      const resizeObserver = new ResizeObserver(() => {
+        if (!disposed) {
+          fitAddon.fit();
+        }
+      });
+      resizeObserver.observe(containerEl);
+
+      // Store cleanup fn
+      (term as unknown as Record<string, unknown>).__resizeObserver = resizeObserver;
+    })();
+
+    return () => {
+      disposed = true;
+      // Don't destroy the terminal instance — keep it cached.
+      // Just detach from DOM.
+      if (containerEl) {
+        containerEl.innerHTML = "";
+      }
+    };
+  }, [activeSessionId, connectionState]);
+
+  // Cleanup cached terminals when sessions are removed
+  useEffect(() => {
+    const activeIds = new Set(sessions.map((s) => s.clientSessionId));
+    for (const [id, cached] of cliTerminalsRef.current.entries()) {
+      if (!activeIds.has(id)) {
+        const term = cached.terminal as { dispose: () => void };
+        const obs = (cached.terminal as Record<string, unknown>).__resizeObserver as ResizeObserver | undefined;
+        obs?.disconnect();
+        term.dispose();
+        cliTerminalsRef.current.delete(id);
+      }
+    }
+  }, [sessions]);
+
+  // --- Bottom shell terminal (xterm.js) - same as before ---
+  useEffect(() => {
+    if (!terminalOpen || !activeSession || !config?.enableShell) return;
+    const containerEl = terminalContainerRef.current;
+    if (!containerEl) return;
+
+    let disposed = false;
+    let cleanupResizeObserver: (() => void) | null = null;
+
+    (async () => {
+      const [xtermModule, fitModule] = await Promise.all([
+        import("@xterm/xterm"),
+        import("@xterm/addon-fit"),
+      ]);
+      if (disposed) return;
+
+      const Terminal = xtermModule.Terminal;
+      const FitAddon = fitModule.FitAddon;
+
+      const fitAddon = new FitAddon();
+      const term = new Terminal({
+        scrollback: 1000,
+        cursorBlink: true,
+        fontFamily: '"IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace',
+        fontSize: 13,
+        theme: {
+          background: "#1a1a1a",
+          foreground: "#e8e8e8",
+          cursor: "#d85b34",
+          selectionBackground: "rgba(216, 91, 52, 0.3)",
+        },
+      });
+      term.loadAddon(fitAddon);
+      containerEl.innerHTML = "";
+      term.open(containerEl);
+      fitAddon.fit();
+
+      sendCommand({
+        type: "shell_start",
+        payload: {
+          clientSessionId: activeSession.clientSessionId,
+          cols: term.cols,
+          rows: term.rows,
+        },
+      });
+
+      term.onData((data) => {
+        sendCommand({ type: "shell_input", payload: { data } });
+      });
+
+      term.onResize(({ cols, rows }) => {
+        sendCommand({ type: "shell_resize", payload: { cols, rows } });
+      });
+
+      // Listen for shell_output events
+      const shellHandler = (event: MessageEvent) => {
+        try {
+          const msg = JSON.parse(String(event.data)) as EventMessage;
+          if (msg.type === "shell_output") {
+            term.write(msg.payload.data);
+          } else if (msg.type === "shell_exited") {
+            term.write(`\r\n[Shell exited with code ${msg.payload.exitCode}]\r\n`);
+          }
+        } catch {
+          /* ignore */
+        }
+      };
+      socketRef.current?.addEventListener("message", shellHandler);
+
+      const resizeObserver = new ResizeObserver(() => {
+        if (!disposed) fitAddon.fit();
+      });
+      resizeObserver.observe(containerEl);
+
+      cleanupResizeObserver = () => {
+        resizeObserver.disconnect();
+        socketRef.current?.removeEventListener("message", shellHandler);
+        sendCommand({ type: "shell_stop" });
+        term.dispose();
+      };
+    })();
+
+    return () => {
+      disposed = true;
+      cleanupResizeObserver?.();
+    };
+  }, [terminalOpen, activeSession?.clientSessionId, config?.enableShell]);
+
+  // --- Session actions ---
+  function createSession() {
+    if (!workspacePath.trim()) return;
+    sendCommand({
+      type: "create_session",
+      payload: {
+        workspacePath: workspacePath.trim(),
+        title: newSessionTitle.trim() || undefined,
+      },
+    });
+    setCreateSessionModalOpen(false);
+    setNewSessionTitle("");
+  }
+
+  function closeSession(clientSessionId: string) {
+    sendCommand({ type: "close_session", payload: { clientSessionId } });
+  }
+
+  // --- VSCode ---
+  function createVscodeOpenUri(launchConfig: VscodeLaunchConfig, targetWorkspacePath: string) {
+    const normalizedWorkspacePath = targetWorkspacePath.replace(/\\/g, "/").replace(/\/+$/, "");
+    if (!normalizedWorkspacePath) return null;
+    if (launchConfig.mode === "local") {
+      return `vscode://file${normalizedWorkspacePath}`;
+    }
+    const host = launchConfig.sshHost.trim();
+    if (!host) return null;
+    const remoteAuthority = `ssh-remote+${encodeURIComponent(host)}`;
+    return `vscode://vscode-remote/${remoteAuthority}${normalizedWorkspacePath}`;
+  }
+
+  function openWorkspaceInVscode(targetWorkspacePath: string) {
+    const uri = createVscodeOpenUri(vscodeLaunchConfig, targetWorkspacePath);
+    if (!uri) {
+      setVscodeLaunchError("请先配置 VSCode 打开参数。");
+      setVscodeSettingsOpen(true);
+      return;
+    }
+    window.open(uri, "_self");
+  }
+
+  function saveVscodeLaunchConfig() {
+    localStorage.setItem(VSCODE_LAUNCH_CONFIG_STORAGE_KEY, JSON.stringify(vscodeLaunchConfig));
+    setVscodeLaunchNotice("已保存。");
+  }
+
+  // --- Diff ---
+  async function openSessionDiff() {
+    if (!activeSession) return;
     setSessionDiffOpen(true);
     setSessionDiffLoading(true);
     setSessionDiffError("");
-
-    const demoSession = demoFixtures?.bySessionId[activeSession.clientSessionId];
-    if (demoSession) {
-      setSessionDiff(demoSession.sessionDiff);
-      setSessionFileDiffCache({});
-      setSessionDiffLoading(false);
-      return;
-    }
-
     try {
-      const response = await fetch(withAccessKey(`/api/session-diff/files?clientSessionId=${encodeURIComponent(activeSession.clientSessionId)}`));
-      const payload = await response.json();
-      if (!response.ok) {
-        const errorPayload = payload as { message?: string };
-        throw new Error(errorPayload.message || "读取目录 Diff 失败");
-      }
-      setSessionDiff(payload as SessionDiffResponse);
+      const res = await fetch(
+        withAccessKey(`/api/session-diff/files?clientSessionId=${activeSession.clientSessionId}`, accessKey),
+      );
+      const data = (await res.json()) as SessionDiffResponse;
+      setSessionDiff(data);
       setSessionFileDiffCache({});
     } catch (error) {
-      setSessionDiff(null);
       setSessionDiffError(error instanceof Error ? error.message : String(error));
     } finally {
       setSessionDiffLoading(false);
@@ -1491,135 +602,27 @@ export default function App() {
   }
 
   async function loadSessionFileDiff(category: DiffCategory, filePath: string) {
-    if (!activeSession) {
-      throw new Error("当前没有可用会话");
-    }
     const cacheKey = `${category}:${filePath}`;
     const cached = sessionFileDiffCache[cacheKey];
-    if (cached) {
-      return cached;
-    }
-
-    const demoSession = demoFixtures?.bySessionId[activeSession.clientSessionId];
-    if (demoSession) {
-      const demoDiff = demoSession.fileDiffs[cacheKey];
-      if (demoDiff) {
-        setSessionFileDiffCache((current) => ({ ...current, [cacheKey]: demoDiff }));
-        return demoDiff;
-      }
-      throw new Error("Demo 文件 Diff 不存在");
-    }
-
-    const response = await fetch(
+    if (cached) return cached;
+    const res = await fetch(
       withAccessKey(
-        `/api/session-diff/file?clientSessionId=${encodeURIComponent(activeSession.clientSessionId)}&category=${encodeURIComponent(category)}&filePath=${encodeURIComponent(filePath)}`,
+        `/api/session-diff/file?clientSessionId=${activeSession?.clientSessionId}&category=${category}&filePath=${encodeURIComponent(filePath)}`,
+        accessKey,
       ),
     );
-    const payload = (await response.json()) as SessionFileDiffResponse | { message?: string };
-    if (!response.ok) {
-      throw new Error("message" in payload ? payload.message || "加载文件 Diff 失败" : "加载文件 Diff 失败");
-    }
-    const diffPayload = payload as SessionFileDiffResponse;
-    setSessionFileDiffCache((current) => ({ ...current, [cacheKey]: diffPayload }));
-    return diffPayload;
+    const data = (await res.json()) as SessionFileDiffResponse;
+    setSessionFileDiffCache((prev) => ({ ...prev, [cacheKey]: data }));
+    return data;
   }
 
-  function loadMoreHistory() {
-    if (!activeSession || activeSession.historyStart <= 0 || historyLoadingSessionId === activeSession.clientSessionId) {
-      return;
-    }
-
-    setHistoryLoadingSessionId(activeSession.clientSessionId);
-    fetch(
-      withAccessKey(`/api/session-history?clientSessionId=${encodeURIComponent(activeSession.clientSessionId)}&before=${activeSession.historyStart}&limit=120`),
-    )
-      .then(async (response) => {
-        const payload = (await response.json()) as SessionHistoryResponse | { message?: string };
-        if (!response.ok) {
-          throw new Error("message" in payload ? payload.message || "历史加载失败" : "历史加载失败");
-        }
-        const history = payload as SessionHistoryResponse;
-        setSessions((current) =>
-          current.map((session) =>
-            session.clientSessionId === activeSession.clientSessionId
-              ? {
-                  ...session,
-                  timeline: normalizeMergedTimeline([...history.items.map(normalizeTimelineItem), ...session.timeline]),
-                  historyStart: history.start,
-                  historyTotal: history.total,
-                }
-              : session,
-          ),
-        );
-      })
-      .catch((error) => {
-        appendGlobalTimeline({
-          id: makeId(),
-          kind: "error",
-          title: "历史加载失败",
-          body: error instanceof Error ? error.message : String(error),
-        });
-      })
-      .finally(() => {
-        setHistoryLoadingSessionId("");
-      });
-  }
-
-
-  function openWorkspaceInVscode(workspacePath: string) {
-    const mappedWorkspacePath = mapWorkspacePathForVscode(workspacePath, vscodeLaunchConfig);
-    const uri = createVscodeOpenUri(vscodeLaunchConfig, mappedWorkspacePath);
-    if (!uri) {
-      setVscodeLaunchError("请先配置 VSCode 打开参数（模式、SSH 主机）。");
-      return;
-    }
-    setVscodeLaunchNotice("");
-    setVscodeLaunchError("");
-    window.open(uri, "_self");
-  }
-
-  function saveVscodeLaunchConfig() {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(VSCODE_LAUNCH_CONFIG_STORAGE_KEY, JSON.stringify(vscodeLaunchConfig));
-    setVscodeLaunchError("");
-    setVscodeLaunchNotice("配置已保存。");
-  }
-
-  function applyAccessKey() {
-    const normalizedKey = accessKeyInput.trim();
-    if (!normalizedKey) {
-      setAuthPrompt("请输入有效 key。");
-      return;
-    }
-    const url = new URL(window.location.href);
-    url.searchParams.set("key", normalizedKey);
-    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
-    setAccessKey(normalizedKey);
-    setAuthPrompt("");
-  }
-
-  if (!accessKey || (authPrompt && !config)) {
+  // --- Access key check ---
+  if (!accessKey) {
     return (
-      <div className="access-gate">
-        <div className="panel access-card">
-          <p className="eyebrow">leduo-patrol</p>
-          <h1>请输入访问 Key</h1>
-          <p className="lede">{authPrompt || "当前链接未携带 key，无法访问 API 与 WebSocket。"}</p>
-          <input
-            value={accessKeyInput}
-            placeholder="粘贴服务启动时输出的 key"
-            onChange={(event) => setAccessKeyInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                applyAccessKey();
-              }
-            }}
-          />
-          <button className="primary" type="button" onClick={applyAccessKey}>
-            进入控制台
-          </button>
+      <div className="shell access-gate">
+        <div className="access-gate-card">
+          <h2>{config?.appName ?? "乐多汪汪队"}</h2>
+          <p>请在 URL 中附加 <code>?key=YOUR_KEY</code> 以访问本页。</p>
         </div>
       </div>
     );
@@ -1627,522 +630,90 @@ export default function App() {
 
   return (
     <>
-      <div className="shell multi-session">
+    <div className="shell">
       <aside className="panel masthead">
-        <div className="masthead-intro">
-          <div className="brand-stack">
-            <div className="brand-lockup">
-              <img className="brand-icon" src="/assets/brand-icon.png" alt="" aria-hidden="true" />
-              <div className="brand-copy">
-                <p className="eyebrow">leduo-patrol</p>
-                <div className="brand-title-row">
-                  <h1>{config?.appName ?? "LEDUO-PATROL 乐多汪汪队"}</h1>
-                </div>
-              </div>
-            </div>
-            <p className="lede masthead-lede">欢迎来到 leduo-patrol：在一个控制台里并行查看多会话进展、差异和执行结果。</p>
-          </div>
-          {globalErrorItems.length > 0 ? (
-            <button
-              className="error-indicator"
-              type="button"
-              onClick={() => setShowGlobalErrors(true)}
-              aria-label={`查看 ${globalErrorItems.length} 条应用错误`}
-              title={`查看 ${globalErrorItems.length} 条应用错误`}
-            >
-              <span className="error-indicator-dot" aria-hidden="true" />
-              <span className="error-indicator-count">{globalErrorItems.length}</span>
-            </button>
-          ) : null}
+        <div className="brand">
+          <h1>{config?.appName ?? "乐多汪汪队"}</h1>
         </div>
-
         <div className="status-grid">
-          <StatusCard label="连接" value={connectionState} tone={toneForConnectionState(connectionState)} />
+          <StatusCard label="连接" value={connectionState === "connected" ? "已连接" : connectionState === "closed" ? "断开" : "连接中"} tone={toneForConnectionState(connectionState)} />
           <StatusCard label="会话数" value={String(sessions.length)} />
         </div>
-
-        <div className="actions compact">
-          <button
-            className="secondary session-settings-trigger"
-            type="button"
-            onClick={() => setVscodeSettingsOpen(true)}
-            aria-label="打开 VSCode 配置"
-            title="VSCode 配置"
-          >
-            <svg className="session-settings-icon" viewBox="0 0 1024 1024" aria-hidden="true">
-              <path
-                d="M463.36 149.211l-21.504 3.146-7.607 1.901a57.417 57.417 0 0 0-39.497 43.667l-8.923 45.348-0.659 0.366a316.312 316.312 0 0 0-52.15 28.599l-1.39 0.95-47.836-16.09a59.465 59.465 0 0 0-57.417 10.97l-6.729 6.803a362.277 362.277 0 0 0-61.806 95.378l-8.045 19.749-2.195 7.607a56.32 56.32 0 0 0 19.749 55.734l37.595 30.428-1.024 11.995a287.525 287.525 0 0 0-0.439 16.238l0.44 16.238 1.023 11.922-37.449 30.354a56.247 56.247 0 0 0-19.822 56.028l2.926 9.289c13.532 35.767 32.476 68.754 56.466 98.523l13.898 16.311 5.558 5.34c15.58 13.165 37.303 17.48 57.052 10.971l48.128-16.238 1.39 1.024c16.457 11.191 33.938 20.773 52.662 28.819l8.997 45.568c4.023 20.845 19.53 37.302 39.497 43.593l9.728 2.194a405.211 405.211 0 0 0 113.591 3.218l24.65-3.584 7.68-1.828a57.417 57.417 0 0 0 39.496-43.667l8.777-45.129 0.732-0.292a313.576 313.576 0 0 0 52.663-28.745l1.243-1.098 47.543 16.092c19.895 6.583 41.765 2.34 57.344-10.972l6.875-6.948c25.82-28.818 46.52-60.855 61.733-95.378l8.046-19.749 2.267-7.534a56.32 56.32 0 0 0-19.748-55.588l-37.01-29.989 1.096-12.507c0.293-5.413 0.44-10.825 0.44-16.238l-0.44-16.238-1.097-12.58 36.864-29.843a56.247 56.247 0 0 0 19.749-55.954l-2.853-9.362a358.107 358.107 0 0 0-56.466-98.45l-13.97-16.311-5.56-5.34a59.538 59.538 0 0 0-57.05-10.971l-47.69 16.018-1.463-1.024a312.832 312.832 0 0 0-34.377-20.26l-18.87-8.778-8.778-45.129a57.71 57.71 0 0 0-47.104-45.495l-2.12-0.365a407.918 407.918 0 0 0-116.737-2.78z m86.674 65.683l15.287 2.194 14.702 75.19 17.847 6.364a246.155 246.155 0 0 1 68.973 37.669l14.044 10.971 76.068-25.6 10.021 11.703c14.994 19.017 27.575 39.497 37.376 61.367l4.827 11.557-60.854 49.298 3.291 19.163a219.721 219.721 0 0 1 0 74.533l-3.291 19.236 60.708 49.152-4.754 11.703a293.157 293.157 0 0 1-37.376 61.22l-9.948 11.63-76.068-25.6-14.117 11.045c-20.626 16.092-43.74 28.745-68.9 37.669l-17.847 6.363-14.702 75.191 3.292-0.439a337.335 337.335 0 0 1-56.54 4.754l-19.017-0.512a339.017 339.017 0 0 1-19.017-1.609l-15.36-2.267-14.629-75.41-17.92-6.364a244.81 244.81 0 0 1-68.315-37.522l-14.117-10.972-76.58 25.747-9.948-11.776a292.498 292.498 0 0 1-37.376-61.294l-4.9-11.703 61.586-49.664-3.365-19.236a212.992 212.992 0 0 1 0-73.363l3.365-19.236-61.586-49.737 4.9-11.703c9.801-21.65 22.382-42.204 37.45-61.22l9.874-11.85 76.58 25.82 14.117-10.972c20.553-15.945 43.593-28.526 68.388-37.522l17.774-6.29 14.775-75.484-3.291 0.512a340.7 340.7 0 0 1 94.573-2.633z"
-                fill="currentColor"
-              />
-              <path
-                d="M512 365.714a146.286 146.286 0 1 1 0 292.572 146.286 146.286 0 0 1 0-292.572z m0 48.787a97.5 97.5 0 1 0 0 194.998 97.5 97.5 0 0 0 0-194.998z"
-                fill="currentColor"
-              />
-            </svg>
-          </button>
-          <button
-            className="primary"
-            type="button"
-            onClick={() => {
-              const defaultWorkspacePath = config?.workspacePath ?? workspacePath;
-              const split = splitWorkspacePathByAllowedRoots(defaultWorkspacePath, config?.allowedRoots ?? []);
-              setWorkspacePath(defaultWorkspacePath);
-              setCreateWorkspaceRoot(split.root);
-              setCreateWorkspaceSuffix(split.suffix);
-              setDirectoryBrowserPath(resolveWorkspaceLookupPath(split.root, split.suffix, []));
-              setNewSessionTitle("");
-              setNewSessionModeId("default");
-              setShowAllWorkspaceSuggestions(false);
-              setCreateSessionModalOpen(true);
-            }}
-            title="新建一个 Claude Code 会话"
-          >
+        <div className="masthead-actions">
+          <button className="secondary masthead-action-btn" onClick={() => setCreateSessionModalOpen(true)}>
             + 新建会话
           </button>
+          <button className="secondary masthead-action-btn" onClick={() => setVscodeSettingsOpen(true)}>
+            VSCode 配置
+          </button>
         </div>
-
-        <div className="sidebar-body">
-          <div id="panel-sessions" className="tab-panel fill" role="tabpanel" aria-label="当前会话">
-            <div className="session-list">
-              {sessions.length === 0 ? (
-                <div className="empty">还没有会话。点击「+ 新建会话」创建一个。</div>
-              ) : (
-                sessions.map((session) => {
-                  const sidebarStatus = getSessionSidebarStatus(session);
-                  const updatedAtLabel = formatRelativeUpdatedAt(session.updatedAt);
-                  const sessionModeLabel = labelForMode(session.defaultModeId);
-                  const sidebarWorkspacePath = formatWorkspacePathForSidebar(session.workspacePath, config?.allowedRoots ?? []);
-                  const isActive = session.clientSessionId === activeSessionId;
-                  return (
-                    <button
-                      key={session.clientSessionId}
-                      className={`session-chip ${isActive ? "active" : ""}`}
-                      onClick={() => setActiveSessionId(session.clientSessionId)}
-                      aria-current={isActive ? "true" : undefined}
-                      title={session.title || session.workspacePath}
-                    >
-                      <span className="session-chip-title" title={session.title}>
-                        {formatSessionTitleForDisplay(session.title)}
-                      </span>
-                      <span className="session-chip-meta">
-                        <span className="session-chip-status">
-                          {sidebarStatus ? (
-                            <span className={`session-chip-tag session-chip-tag-${sidebarStatus.tone}`}>{sidebarStatus.label}</span>
-                          ) : null}
-                          <span className="session-chip-mode" title={`会话模式：${sessionModeLabel}`}>
-                            {sessionModeLabel}
-                          </span>
-                        </span>
-                        <span className="session-chip-time" title={session.updatedAt}>
-                          {updatedAtLabel}
-                        </span>
-                      </span>
-                      <span className="session-chip-path" title={session.workspacePath}>
-                        {sidebarWorkspacePath}
-                      </span>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-
+        {sessions.length === 0 ? (
+          <div className="empty">暂无会话。点击上方按钮新建。</div>
+        ) : (
+          <ul className="session-list">
+            {sessions.map((session) => (
+              <li key={session.clientSessionId}>
+                <button
+                  className={`session-chip ${session.clientSessionId === activeSessionId ? "active" : ""}`}
+                  onClick={() => setActiveSessionId(session.clientSessionId)}
+                >
+                  <span className="session-chip-title" title={session.title}>
+                    {formatSessionTitleForDisplay(session.title)}
+                  </span>
+                  <span className="session-chip-meta">
+                    {session.connectionState === "connected" ? (
+                      <span className="session-chip-tag session-chip-tag-completed">已连接</span>
+                    ) : session.connectionState === "connecting" ? (
+                      <span className="session-chip-tag session-chip-tag-connecting">连接中</span>
+                    ) : (
+                      <span className="session-chip-tag session-chip-tag-error">异常</span>
+                    )}
+                    <span className="session-chip-updated">{formatRelativeUpdatedAt(session.updatedAt)}</span>
+                  </span>
+                  <span className="session-chip-workspace" title={session.workspacePath}>
+                    {config ? formatWorkspacePathForSidebar(session.workspacePath, config.allowedRoots) : session.workspacePath}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </aside>
 
-      <main className="panel transcript">
-        <div className="transcript-header">
-          <h2>{activeSession ? formatSessionTitleForDisplay(activeSession.title) : "任务流"}</h2>
-          <p>{activeSession?.workspacePath ?? "选择左侧会话后，这里展示该目录的完整执行流。"}</p>
-        </div>
-        <div className="timeline" ref={timelineViewportRef} onScroll={handleTimelineScroll}>
-          {activeSession && activeSession.historyStart > 0 ? (
-            <button
-              className="history-loader secondary"
-              type="button"
-              onClick={loadMoreHistory}
-              disabled={historyLoadingSessionId === activeSession.clientSessionId}
-            >
-              {historyLoadingSessionId === activeSession.clientSessionId
-                ? "正在加载更早历史..."
-                : `加载更多历史 (${activeSession.historyStart} 条更早记录)`}
-            </button>
-          ) : null}
-          {visibleTimeline.length === 0 ? (
-            <div className="empty">
-              {activeSession
-                ? "这个会话还没有执行记录。发送第一条指令后开始滚动展示。"
-                : "先在左侧创建一个目录会话。"}
+      <main className="panel main-content">
+        {activeSession ? (
+          <>
+            <div className="cli-toolbar">
+              <div className="cli-toolbar-info">
+                <h3 className="cli-toolbar-title" title={activeSession.title}>
+                  {formatSessionTitleForDisplay(activeSession.title)}
+                </h3>
+                <code className="cli-toolbar-path" title={activeSession.workspacePath}>{activeSession.workspacePath}</code>
+              </div>
+              <div className="cli-toolbar-actions">
+                <button className="secondary" onClick={() => openWorkspaceInVscode(activeSession.workspacePath)}>
+                  VSCode
+                </button>
+                <button className="secondary" onClick={openSessionDiff}>
+                  查看 Diff
+                </button>
+                <button className="secondary" onClick={() => closeSession(activeSession.clientSessionId)}>
+                  关闭会话
+                </button>
+              </div>
             </div>
-          ) : (
-            timelineRows.map((row) => {
-              const collapsed = row.rootId ? Boolean(collapsedSubagentRoots[row.rootId]) : false;
-              if (row.depth > 0 && collapsed) {
-                return null;
-              }
-              const childCount = rootChildCount[row.item.id] ?? 0;
-              return (
-                <TimelineRow
-                  key={row.item.id}
-                  item={row.displayTitle ? { ...row.item, title: row.displayTitle } : row.item}
-                  depth={row.depth}
-                  childCount={childCount}
-                  collapsed={Boolean(collapsedSubagentRoots[row.item.id])}
-                  onToggleCollapse={
-                    childCount > 0
-                      ? () =>
-                          setCollapsedSubagentRoots((current) => {
-                            if (current[row.item.id]) {
-                              return { ...current, [row.item.id]: false };
-                            }
-                            return { ...current, [row.item.id]: true };
-                          })
-                      : undefined
-                  }
-                  statusHint={resolveCollapsedSubagentStatusHint(row.item, childCount, Boolean(collapsedSubagentRoots[row.item.id]), activeSessionIsRunning)}
-                  onOpen={() => setSelectedItem({ sessionTitle: activeSession ? formatSessionTitleForDisplay(activeSession.title) : "当前会话", item: row.item })}
-                />
-              );
-            })
-          )}
-          {activeSessionIsRunning ? (
-            <div className="timeline-running-indicator" aria-live="polite">
-              <span className="timeline-running-dot" aria-hidden="true" />
-              {activeSessionHasPendingPermission || activeSessionHasPendingQuestion ? "等待待处理中..." : "正在运行中..."}
-            </div>
-          ) : null}
-        </div>
-        {activeSessionHasPendingPermission || activeSessionHasPendingQuestion ? (
-          <div className="composer composer-pending-placeholder">
-            {activeSessionHasPendingPermission ? (
-              <>
-                <p className="composer-pending-title">待处理确认</p>
-                <div className="composer-pending-list">
-                  {activeSession?.permissions.map((permission) => {
-                    return (
-                      <section className="composer-pending-item" key={permission.requestId}>
-                        <p
-                          className="composer-pending-tool"
-                          title={summarizeToolTitle(
-                            permission.toolCall.title,
-                            permission.toolCall.rawInput,
-                            permission.toolCall.toolCallId,
-                          )}
-                        >
-                          {truncatePendingToolLabel(
-                            summarizeToolTitle(
-                              permission.toolCall.title,
-                              permission.toolCall.rawInput,
-                              permission.toolCall.toolCallId,
-                            ),
-                          )}
-                        </p>
-                        <div className="composer-pending-actions">
-                          <button
-                            className="secondary"
-                            onClick={() => setPermissionDetail(permission)}
-                          >
-                            查看详情
-                          </button>
-                          {permission.options.map((option) => (
-                            <button
-                              key={option.optionId}
-                              className="secondary"
-                              onClick={() => resolvePermission(permission, option.optionId)}
-                            >
-                              {option.name}
-                            </button>
-                          ))}
-                        </div>
-                      </section>
-                    );
-                  })}
-                </div>
-              </>
-            ) : null}
-            {activeSessionHasPendingQuestion ? (
-              <>
-                <p className="composer-pending-title">待回答问题</p>
-                <div className="composer-pending-list">
-                  {groupQuestionsByGroup(activeSession?.questions ?? []).map((group) => (
-                    <MultiQuestionForm
-                      key={group[0].groupId ?? group[0].questionId}
-                      questions={group}
-                      onSubmit={(answers) => answerQuestionGroup(group, answers)}
-                    />
-                  ))}
-                </div>
-              </>
-            ) : null}
-          </div>
+            <div className="cli-terminal-container" ref={cliTerminalContainerRef} />
+          </>
         ) : (
-          <div className="composer" ref={composerContainerRef}>
-            <div className="composer-mode-row">
-              <span>会话模式</span>
-              <select
-                value={activeSession?.defaultModeId ?? "default"}
-                disabled={!activeSession?.sessionId || activeSessionIsRunning}
-                onChange={(event) => {
-                  if (activeSession) {
-                    changeSessionMode(activeSession.clientSessionId, event.target.value);
-                  }
-                }}
-              >
-                {activeSessionModeOptions.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <p className="composer-capability-summary">
-              ACP 能力：{activeAvailableCommands.length}
-            </p>
-            {isCompletionOpen && commandCompletions.length > 0 ? (
-              <div className="composer-completions" role="listbox" aria-label="命令补全">
-                {completionSections.map((section) => (
-                  <div key={section.key} className="composer-completion-section">
-                    {section.title ? <p className="composer-completion-section-title">{section.title}</p> : null}
-                    {section.items.map(({ command, index }) => (
-                      <button
-                        key={command.name}
-                        type="button"
-                        className={`composer-completion-item ${index === commandSuggestionIndex ? "active" : ""}`}
-                        onMouseDown={(event) => {
-                          event.preventDefault();
-                          applyCommandSuggestion(command.name);
-                          setIsCompletionOpen(false);
-                        }}
-                      >
-                        <span>
-                          {renderCompletionLabel(command.name, completionQuery)}
-                        </span>
-                        <small>{command.description || "命令"}</small>
-                      </button>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            {pendingQueue.length > 0 ? (
-              <div className="composer-pending-queue">
-                <p className="composer-pending-queue-title">待发送队列 ({pendingQueue.length})</p>
-                <div className="composer-pending-queue-list">
-                  {pendingQueue.map((item) => (
-                    <div key={item.id} className="composer-pending-queue-item">
-                      {item.images && item.images.length > 0 ? (
-                        <div className="composer-pending-queue-images">
-                          {item.images.map((img, idx) => (
-                            <img
-                              key={idx}
-                              src={`data:${img.mimeType};base64,${img.data}`}
-                              alt={`图片 ${idx + 1}`}
-                              className="composer-pending-queue-img"
-                            />
-                          ))}
-                        </div>
-                      ) : null}
-                      <p className="composer-pending-queue-text">{item.text}</p>
-                      <div className="composer-pending-queue-actions">
-                        <button
-                          type="button"
-                          className="composer-pending-queue-btn"
-                          title="复制"
-                          onClick={() => { navigator.clipboard.writeText(item.text).catch(() => {}); }}
-                        >
-                          复制
-                        </button>
-                        <button
-                          type="button"
-                          className="composer-pending-queue-btn composer-pending-queue-btn-delete"
-                          title="删除"
-                          onClick={() => setPendingQueue((q) => q.filter((m) => m.id !== item.id))}
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-            <div className="composer-input-shell">
-            {pendingImages.length > 0 ? (
-              <div className="composer-image-previews">
-                {pendingImages.map((img, index) => (
-                  <div key={img.id} className="composer-image-preview">
-                    <div className="composer-image-preview-thumb">
-                      <img src={img.dataUrl} alt={`待发送图片 ${index + 1}`} />
-                    </div>
-                    <button
-                      type="button"
-                      className="composer-image-preview-remove"
-                      title="移除图片"
-                      onClick={() => setPendingImages((prev) => prev.filter((i) => i.id !== img.id))}
-                    >
-                      移除
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            <textarea
-              placeholder={activeSessionIsRunning ? "输入消息，将加入待发送队列…" : "例如：分析这个目录的仓库结构，然后给我一个重构计划。"}
-              value={promptText}
-              onFocus={() => {
-                if (commandCompletions.length > 0) {
-                  setIsCompletionOpen(true);
-                }
-              }}
-              onChange={(event) => {
-                const nextValue = event.target.value;
-                setPromptText(nextValue);
-                setIsCompletionOpen(Boolean(extractPromptCommandQuery(nextValue)));
-              }}
-              onPaste={(event) => {
-                const items = event.clipboardData?.items;
-                if (!items) return;
-                const imageItems = Array.from(items).filter((item) => item.type.startsWith("image/"));
-                if (imageItems.length === 0) return;
-                event.preventDefault();
-                for (const item of imageItems) {
-                  const blob = item.getAsFile();
-                  if (!blob) continue;
-                  const mimeType = item.type;
-                  const reader = new FileReader();
-                  reader.onload = (e) => {
-                    const dataUrl = e.target?.result;
-                    if (typeof dataUrl !== "string") return;
-                    setPendingImages((prev) => [...prev, { id: makeId(), dataUrl, mimeType }]);
-                  };
-                  reader.readAsDataURL(blob);
-                }
-              }}
-              onKeyDown={(event) => {
-                if (
-                  event.key === "Enter" &&
-                  !event.shiftKey &&
-                  !event.metaKey &&
-                  !event.ctrlKey &&
-                  isCompletionOpen &&
-                  commandCompletions.length > 0 &&
-                  Boolean(extractPromptCommandQuery(promptText))
-                ) {
-                  event.preventDefault();
-                  const selected = commandCompletions[commandSuggestionIndex] ?? commandCompletions[0];
-                  if (selected) {
-                    applyCommandSuggestion(selected.name);
-                    setIsCompletionOpen(false);
-                  }
-                  return;
-                }
-                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                  submitPrompt();
-                  return;
-                }
-                if (event.key === "Escape") {
-                  setIsCompletionOpen(false);
-                  return;
-                }
-                if (commandCompletions.length < 1) {
-                  return;
-                }
-                if (event.key === "ArrowDown") {
-                  event.preventDefault();
-                  setIsCompletionOpen(true);
-                  setCommandSuggestionIndex((current) => (current + 1) % commandCompletions.length);
-                  return;
-                }
-                if (event.key === "ArrowUp") {
-                  event.preventDefault();
-                  setIsCompletionOpen(true);
-                  setCommandSuggestionIndex((current) => (current - 1 + commandCompletions.length) % commandCompletions.length);
-                  return;
-                }
-                if (event.key === "Tab") {
-                  event.preventDefault();
-                  const selected = commandCompletions[commandSuggestionIndex] ?? commandCompletions[0];
-                  if (selected) {
-                    applyCommandSuggestion(selected.name);
-                    setIsCompletionOpen(false);
-                  }
-                }
-              }}
-            />
-            </div>
-            <div className="composer-actions">
-              <button className="primary composer-send" onClick={submitPrompt} disabled={(!promptText.trim() && pendingImages.length === 0) || !activeSession}>
-                {activeSessionIsRunning ? "加入队列" : "发送"}
-                <kbd className="composer-send-shortcut">⌘↩</kbd>
-              </button>
-              <button className="secondary composer-cancel" onClick={cancelActiveSession} disabled={!activeSessionIsRunning}>
-                <span aria-hidden="true">⏹</span>
-                停止
-              </button>
-            </div>
+          <div className="empty main-empty">
+            {sessions.length > 0
+              ? "选择左侧的会话开始交互。"
+              : "暂无会话。请先新建一个会话。"}
           </div>
         )}
       </main>
 
-      <aside className="panel approvals">
-        {activeSession ? (
-          <>
-            <section className="details session-meta session-meta-card">
-              <div className="session-meta-header">
-                <div>
-                  <p className="approval-label">会话详情</p>
-                  <h3>{formatSessionTitleForDisplay(activeSession.title)}</h3>
-                </div>
-              </div>
-              <div className="session-meta-grid">
-                <div className="session-meta-item session-meta-item-wide">
-                  <span>目录</span>
-                  <code>{activeSession.workspacePath}</code>
-                </div>
-                <div className="session-meta-item session-meta-item-wide">
-                  <span>Claude 会话 ID</span>
-                  <code>{activeSession.sessionId || "创建中..."}</code>
-                </div>
-                <div className="session-meta-item session-meta-item-wide">
-                  <span>会话模式</span>
-                  <code>{labelForMode(activeSession.defaultModeId)}</code>
-                </div>
-              </div>
-              <div className="session-meta-actions">
-                <button className="secondary session-open-vscode" onClick={() => openWorkspaceInVscode(activeSession.workspacePath)}>
-                  VSCode
-                </button>
-                <button className="secondary session-diff-trigger" onClick={openSessionDiff}>
-                  查看diff
-                </button>
-                <button className="secondary session-close" onClick={() => closeSession(activeSession.clientSessionId)}>
-                  关闭会话
-                </button>
-              </div>
-            </section>
-            {latestExecutionPlan ? (
-              <section className="details session-meta session-meta-card">
-                <p className="approval-label">执行计划</p>
-                {latestExecutionPlanSteps.length > 0 ? (
-                  <ol className="session-plan-list">
-                    {latestExecutionPlanSteps.map((step, index) => (
-                      <li key={`${index}-${step.content}`} className="session-plan-list-item">
-                        <span className={`session-plan-status session-plan-status-${step.status}`} aria-hidden="true" />
-                        <span className="session-plan-content">{step.content}</span>
-                      </li>
-                    ))}
-                  </ol>
-                ) : (
-                  <pre className="session-plan-preview">{latestExecutionPlan}</pre>
-                )}
-              </section>
-            ) : null}
-          </>
-        ) : (
-          <div className="empty">选择一个会话后再处理确认或关闭会话。</div>
-        )}
-      </aside>
-
+      {/* VSCode settings modal */}
       {vscodeSettingsOpen ? (
         <div className="modal-backdrop" onClick={() => setVscodeSettingsOpen(false)}>
           <div className="modal-card" onClick={(event) => event.stopPropagation()}>
@@ -2151,9 +722,7 @@ export default function App() {
                 <h3>VSCode 打开配置</h3>
                 <p className="modal-meta">远程模式需要 SSH 用户与主机（如 <code>dev@10.0.0.8</code>）；本地模式会直接打开当前目录。</p>
               </div>
-              <button className="secondary" onClick={() => setVscodeSettingsOpen(false)}>
-                关闭
-              </button>
+              <button className="secondary" onClick={() => setVscodeSettingsOpen(false)}>关闭</button>
             </div>
             <div className="modal-scroll-body">
               <div className="details">
@@ -2170,7 +739,6 @@ export default function App() {
                   <option value="remote">远程 SSH</option>
                   <option value="local">本地目录</option>
                 </select>
-
                 {vscodeLaunchConfig.mode === "remote" ? (
                   <>
                     <label htmlFor="vscode-open-ssh-host">SSH 主机</label>
@@ -2179,14 +747,12 @@ export default function App() {
                       placeholder="如 user@server"
                       value={vscodeLaunchConfig.sshHost}
                       onChange={(event) => {
-                        const value = event.target.value;
-                        setVscodeLaunchConfig((current) => ({ ...current, sshHost: value }));
+                        setVscodeLaunchConfig((current) => ({ ...current, sshHost: event.target.value }));
                         setVscodeLaunchNotice("");
                       }}
                     />
                   </>
                 ) : null}
-
                 <div className="session-meta-item session-meta-item-wide">
                   <span>当前一键打开目标</span>
                   <code>{workspaceForLaunch || "(未选择目录)"}</code>
@@ -2194,12 +760,10 @@ export default function App() {
                 {vscodeLaunchError ? <p className="modal-meta">{vscodeLaunchError}</p> : null}
                 {vscodeLaunchNotice ? <p className="modal-meta">{vscodeLaunchNotice}</p> : null}
                 <div className="session-meta-actions vscode-settings-actions">
-                  <button className="secondary" onClick={() => openWorkspaceInVscode(activeSession?.workspacePath ?? config?.workspacePath ?? "")} disabled={!canOpenWorkspaceInVscode}>
+                  <button className="secondary" onClick={() => openWorkspaceInVscode(workspaceForLaunch)} disabled={!canOpenWorkspaceInVscode}>
                     立即打开当前目录
                   </button>
-                  <button className="secondary" onClick={saveVscodeLaunchConfig}>
-                    保存配置
-                  </button>
+                  <button className="secondary" onClick={saveVscodeLaunchConfig}>保存配置</button>
                 </div>
               </div>
             </div>
@@ -2207,25 +771,16 @@ export default function App() {
         </div>
       ) : null}
 
+      {/* Create session modal */}
       {createSessionModalOpen ? (
         <div
           className="modal-backdrop"
-          onClick={() => {
-            setCreateSessionModalOpen(false);
-            setShowAllWorkspaceSuggestions(false);
-          }}
+          onClick={() => { setCreateSessionModalOpen(false); setShowAllWorkspaceSuggestions(false); }}
         >
           <div className="modal-card" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
-              <div>
-                <h3>新建会话</h3>
-              </div>
-              <button className="secondary" onClick={() => {
-                setCreateSessionModalOpen(false);
-                setShowAllWorkspaceSuggestions(false);
-              }}>
-                关闭
-              </button>
+              <div><h3>新建会话</h3></div>
+              <button className="secondary" onClick={() => { setCreateSessionModalOpen(false); setShowAllWorkspaceSuggestions(false); }}>关闭</button>
             </div>
             <div className="modal-scroll-body">
               <div className="details">
@@ -2277,7 +832,7 @@ export default function App() {
                       <button
                         type="button"
                         className="workspace-suggestion-item"
-                        onClick={() => setShowAllWorkspaceSuggestions((current) => !current)}
+                        onClick={() => setShowAllWorkspaceSuggestions((c) => !c)}
                       >
                         {showAllWorkspaceSuggestions ? "收起候选" : `展开更多（+${workspaceSuffixSuggestions.length - WORKSPACE_SUGGESTION_INITIAL_LIMIT}）`}
                       </button>
@@ -2291,72 +846,18 @@ export default function App() {
                   placeholder="可选，例如 leduo-api"
                   onChange={(event) => setNewSessionTitle(event.target.value)}
                 />
-                <label>默认模式</label>
-                <div className="mode-tile-grid" role="radiogroup" aria-label="默认模式">
-                  {MODE_OPTIONS.map((option) => (
-                    <button
-                      key={option.id}
-                      type="button"
-                      className={`mode-tile ${newSessionModeId === option.id ? "active" : ""}`}
-                      role="radio"
-                      aria-checked={newSessionModeId === option.id}
-                      onClick={() => setNewSessionModeId(option.id)}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
                 {directoryError ? <p>{directoryError}</p> : null}
               </div>
             </div>
             <div className="modal-footer">
-              <button className="primary" onClick={createSession} disabled={!workspacePath.trim()}>
-                新建目录会话
-              </button>
-              <button className="secondary" type="button" onClick={() => {
-                setCreateSessionModalOpen(false);
-                setShowAllWorkspaceSuggestions(false);
-              }}>
-                取消
-              </button>
+              <button className="primary" onClick={createSession} disabled={!workspacePath.trim()}>新建目录会话</button>
+              <button className="secondary" type="button" onClick={() => { setCreateSessionModalOpen(false); setShowAllWorkspaceSuggestions(false); }}>取消</button>
             </div>
           </div>
         </div>
       ) : null}
 
-      {selectedItem ? (
-        <MessageModal
-          sessionTitle={selectedItem.sessionTitle}
-          item={selectedItem.item}
-          onClose={() => setSelectedItem(null)}
-        />
-      ) : null}
-
-      {permissionDetail && activeSession ? (
-        <PermissionModal
-          sessionTitle={formatSessionTitleForDisplay(activeSession.title)}
-          permission={permissionDetail}
-          onResolve={(permission, optionId) => {
-            resolvePermission(permission, optionId);
-            setPermissionDetail(null);
-          }}
-          onClose={() => setPermissionDetail(null)}
-        />
-      ) : null}
-
-      {showGlobalErrors ? (
-        <SystemFeedModal
-          items={globalErrorItems}
-          title="应用错误"
-          subtitle="仅展示未归属到单个会话的全局异常。"
-          onClose={() => setShowGlobalErrors(false)}
-          onOpenItem={(item) => {
-            setShowGlobalErrors(false);
-            setSelectedItem({ sessionTitle: "应用错误", item });
-          }}
-        />
-      ) : null}
-
+      {/* Session Diff modal */}
       {sessionDiffOpen ? (
         <SessionDiffModal
           sessionTitle={activeSession ? formatSessionTitleForDisplay(activeSession.title) : "当前会话"}
@@ -2370,6 +871,7 @@ export default function App() {
         />
       ) : null}
 
+      {/* Bottom shell drawer */}
       {config?.enableShell ? (
         <div className={`terminal-drawer ${terminalOpen ? "terminal-drawer-open" : ""}`}>
           <div className="terminal-drawer-header">
@@ -2397,6 +899,8 @@ export default function App() {
     </>
   );
 }
+
+// --- Helper components ---
 
 function StatusCard(props: { label: string; value: string; tone?: "positive" | "negative" | "neutral" }) {
   return (
@@ -2442,2304 +946,6 @@ function ToastContainer(props: {
   );
 }
 
-function TimelineRow(props: {
-  item: TimelineItem;
-  depth?: number;
-  childCount?: number;
-  collapsed?: boolean;
-  onToggleCollapse?: () => void;
-  onOpen: () => void;
-  statusHint?: "running" | "completed" | null;
-}) {
-  const kindLabel = labelForKind(props.item.kind, props.item.title);
-  const expandedPreview = shouldUseExpandedPreview(props.item);
-  const summary = summarizeTimelineItem(props.item, expandedPreview);
-  return (
-    <button
-      className={`timeline-row ${props.item.kind} ${expandedPreview ? "timeline-row-multiline" : ""}`}
-      onClick={props.onOpen}
-      style={{ "--timeline-depth": `${Math.max(0, props.depth ?? 0)}` } as CSSProperties}
-    >
-      <span className="timeline-kind">
-        {kindLabel}
-        {props.childCount ? (
-          <span
-            className="timeline-fold"
-            role="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              props.onToggleCollapse?.();
-            }}
-          >
-            {props.collapsed ? "▸" : "▾"} 子项 {props.childCount}{props.statusHint === "running" ? " · 运行中" : props.statusHint === "completed" ? " · 已完成" : ""}
-          </span>
-        ) : null}
-      </span>
-      <span className={`timeline-body ${expandedPreview ? "multiline" : ""}`}>
-        {summary}
-        {props.item.images && props.item.images.length > 0 ? (
-          <span className="timeline-image-badge"> 🖼 {props.item.images.length}</span>
-        ) : null}
-      </span>
-      <span className="timeline-meta">{props.item.meta ?? "查看"}</span>
-    </button>
-  );
-}
-
-function buildToolTimelineItem(update: SessionUpdate): TimelineItem {
-  const normalizedTitle = normalizeAcpToolTitle(update.title) || undefined;
-  const parentToolCallId = extractParentToolCallId(update as Record<string, unknown>);
-  return {
-    id: makeId(),
-    kind: "tool",
-    title: summarizeToolTitle(normalizedTitle, update.rawInput, update.toolCallId),
-    body: formatToolDetails({
-      toolCallId: update.toolCallId,
-      title: normalizedTitle,
-      status: update.status,
-      rawInput: update.rawInput,
-      rawOutput: update.rawOutput,
-      parentToolCallId,
-    }),
-    meta: String(update.status ?? update.sessionUpdate),
-    parentToolCallId,
-  };
-}
-
-function labelForKind(kind: TimelineItem["kind"], fallbackTitle: string) {
-  switch (kind) {
-    case "user":
-      return "你";
-    case "agent":
-      return "Claude";
-    case "thought":
-      return "思路";
-    case "tool":
-      return "工具";
-    case "plan":
-      return "计划";
-    case "error":
-      return "错误";
-    case "system":
-      return fallbackTitle;
-    default:
-      return fallbackTitle;
-  }
-}
-
-function summarizeTimelineItem(item: TimelineItem, expandedPreview: boolean) {
-  if (expandedPreview) {
-    return toPreviewText(item.body);
-  }
-  if (item.kind === "tool") {
-    return toSingleLine(item.title);
-  }
-  return toSingleLine(item.body);
-}
-
-function shouldUseExpandedPreview(item: TimelineItem) {
-  return item.kind === "agent" || item.kind === "plan";
-}
-
-function canMergeToolTimelineItem(existingItem: TimelineItem, incomingItem: TimelineItem, toolCallId: string) {
-  if (existingItem.kind !== "tool" || incomingItem.kind !== "tool") {
-    return false;
-  }
-  const existingMeta = readToolMeta(existingItem);
-  const incomingMeta = readToolMeta(incomingItem);
-  if (existingMeta?.toolCallId !== toolCallId || incomingMeta?.toolCallId !== toolCallId) {
-    return false;
-  }
-  const existingIsSubagent = isSubagentToolTitle(existingMeta.rawTitle ?? existingMeta.title);
-  const incomingIsSubagent = isSubagentToolTitle(incomingMeta.rawTitle ?? incomingMeta.title);
-  // Allow merging when both sides are subagent tools with the same toolCallId
-  // (status updates like running→completed for the same task should be merged in place).
-  // Block cross-type merging (subagent + non-subagent) to prevent misattribution.
-  if (existingIsSubagent !== incomingIsSubagent) {
-    return false;
-  }
-  return true;
-}
-
-function mergeToolTimelineItems(existingItem: TimelineItem, incomingItem: TimelineItem) {
-  const existingEntries = parseToolTimelineEntries(existingItem.body);
-  const incomingEntries = parseToolTimelineEntries(incomingItem.body);
-  const mergedEntries = [...existingEntries, ...incomingEntries];
-  const mergedParent = incomingItem.parentToolCallId ?? existingItem.parentToolCallId;
-  return {
-    ...incomingItem,
-    id: existingItem.id,
-    title: resolveToolDisplayTitle(mergedEntries, incomingItem.title),
-    body: stringifyMaybe(mergedEntries),
-    parentToolCallId: mergedParent,
-  } satisfies TimelineItem;
-}
-
-function buildTimelineTreeRows(items: TimelineItem[]): TimelineTreeRow[] {
-  const rows: TimelineTreeRow[] = [];
-  const activeRoots: Array<{ rootId: string; toolCallId: string | null; rowIndex: number; depth: number }> = [];
-  // Track ALL subagent roots (including completed) so that children with
-  // explicit parentToolCallId can still find their parent after the root
-  // has been closed or was already terminal when first processed.
-  const allRootsByToolCallId = new Map<string, { rootId: string; toolCallId: string; rowIndex: number; depth: number }>();
-  // Track the most-recently-matched root for temporal-locality fallback.
-  // When parent_tool_use_id is missing from the stream, consecutive items
-  // from the same sub-agent context tend to arrive together — so re-using
-  // the last matched root is a reasonable heuristic.
-  let lastMatchedRoot: { rootId: string; toolCallId: string | null; rowIndex: number; depth: number } | null = null;
-
-  for (const item of items) {
-    const toolMeta = readToolMeta(item);
-    const shouldHandleAsSubagent = Boolean(toolMeta && isSubagentToolTitle(toolMeta.rawTitle ?? toolMeta.title));
-
-    if (toolMeta?.toolCallId) {
-      const candidateSummary = buildSubagentSummaryFromChild(toolMeta.title);
-      if (candidateSummary) {
-        let matchedRoot = findParentRoot(activeRoots, item.parentToolCallId, toolMeta.toolCallId);
-        if (!matchedRoot && item.parentToolCallId) {
-          const completed = allRootsByToolCallId.get(item.parentToolCallId);
-          if (completed) {
-            matchedRoot = completed;
-          }
-        }
-        if (matchedRoot) {
-          const row = rows[matchedRoot.rowIndex];
-          if (row && !row.displayTitle) {
-            row.displayTitle = `${row.item.title || "Task"} · ${candidateSummary}`;
-          }
-        }
-      }
-    }
-
-    const isTerminalByToolCall = Boolean(toolMeta?.toolCallId && isTerminalToolStatus(toolMeta.status));
-    if (isTerminalByToolCall) {
-      const closedRoot = closeSubagentRoot(activeRoots, toolMeta?.toolCallId ?? null, false);
-      if (closedRoot) {
-        const row = rows[closedRoot.rowIndex];
-        if (row) {
-          row.item = { ...item, id: row.item.id };
-        }
-        // If the closed root was the lastMatchedRoot, clear it so we don't
-        // route subsequent items to a closed root.
-        if (lastMatchedRoot?.rootId === closedRoot.rootId) {
-          lastMatchedRoot = null;
-        }
-        continue;
-      }
-    }
-
-    if (!shouldHandleAsSubagent) {
-      let parentRoot = findParentRoot(activeRoots, item.parentToolCallId, toolMeta?.toolCallId);
-      // Fallback: check completed roots by explicit parentToolCallId.
-      if (!parentRoot && item.parentToolCallId) {
-        const completed = allRootsByToolCallId.get(item.parentToolCallId);
-        if (completed) {
-          parentRoot = completed;
-        }
-      }
-      // Temporal-locality fallback: if findParentRoot returned null because
-      // of multi-root ambiguity, check whether the lastMatchedRoot is still
-      // active and re-use it.  This covers the common case where
-      // parent_tool_use_id is missing from the Claude Code stream.
-      if (!parentRoot && activeRoots.length > 1 && lastMatchedRoot) {
-        const stillActive = activeRoots.some((r) => r.rootId === lastMatchedRoot!.rootId);
-        if (stillActive) {
-          parentRoot = lastMatchedRoot;
-        }
-      }
-      if (parentRoot) {
-        lastMatchedRoot = parentRoot;
-      }
-      rows.push({
-        item,
-        depth: parentRoot ? parentRoot.depth + 1 : 0,
-        rootId: parentRoot?.rootId ?? null,
-      });
-      continue;
-    }
-
-    const subagentToolMeta = toolMeta;
-    if (!subagentToolMeta) {
-      continue;
-    }
-
-    const isTerminal = isTerminalToolStatus(subagentToolMeta.status);
-
-    if (isTerminal) {
-      const closedRoot = closeSubagentRoot(activeRoots, subagentToolMeta.toolCallId ?? null);
-      if (closedRoot) {
-        const row = rows[closedRoot.rowIndex];
-        if (row) {
-          row.item = { ...item, id: row.item.id };
-        }
-        if (lastMatchedRoot?.rootId === closedRoot.rootId) {
-          lastMatchedRoot = null;
-        }
-        continue;
-      }
-    }
-
-    let parentRoot = findParentRoot(activeRoots, item.parentToolCallId, subagentToolMeta.toolCallId, false);
-    if (!parentRoot && item.parentToolCallId) {
-      const completed = allRootsByToolCallId.get(item.parentToolCallId);
-      if (completed) {
-        parentRoot = completed;
-      }
-    }
-    const depth = parentRoot ? parentRoot.depth + 1 : 0;
-    rows.push({
-      item,
-      depth,
-      rootId: parentRoot?.rootId ?? null,
-    });
-
-    // Always track in allRootsByToolCallId for parentToolCallId lookups
-    // (including completed roots whose children arrive later in the timeline).
-    if (subagentToolMeta.toolCallId) {
-      allRootsByToolCallId.set(subagentToolMeta.toolCallId, { rootId: item.id, toolCallId: subagentToolMeta.toolCallId, rowIndex: rows.length - 1, depth });
-    }
-
-    if (!isTerminal) {
-      activeRoots.push({ rootId: item.id, toolCallId: subagentToolMeta.toolCallId, rowIndex: rows.length - 1, depth });
-    }
-  }
-
-  return regroupTreeRows(rows);
-}
-
-function closeSubagentRoot(
-  activeRoots: Array<{ rootId: string; toolCallId: string | null; rowIndex: number; depth: number }>,
-  toolCallId: string | null,
-  allowFallback = true,
-): { rootId: string; toolCallId: string | null; rowIndex: number; depth: number } | null {
-  if (toolCallId) {
-    let closedRoot: { rootId: string; toolCallId: string | null; rowIndex: number; depth: number } | null = null;
-    for (let i = activeRoots.length - 1; i >= 0; i -= 1) {
-      if (activeRoots[i]?.toolCallId === toolCallId) {
-        const [removed] = activeRoots.splice(i, 1);
-        // Keep the earliest (lowest-index) match as the canonical closed root,
-        // since it is the original root row whose display should be updated.
-        if (removed) {
-          closedRoot = removed;
-        }
-      }
-    }
-    if (closedRoot) return closedRoot;
-  }
-
-  if (allowFallback && activeRoots.length === 1) {
-    const closedRoot = activeRoots.pop() ?? null;
-    return closedRoot;
-  }
-
-  return null;
-}
-
-/**
- * Reorder rows so that children are grouped immediately after their parent root,
- * instead of being scattered in temporal (arrival) order.
- * Handles nested sub-agents recursively.
- */
-function regroupTreeRows(rows: TimelineTreeRow[]): TimelineTreeRow[] {
-  const childrenByRoot = new Map<string, TimelineTreeRow[]>();
-  const topLevel: TimelineTreeRow[] = [];
-
-  for (const row of rows) {
-    if (row.rootId) {
-      if (!childrenByRoot.has(row.rootId)) {
-        childrenByRoot.set(row.rootId, []);
-      }
-      childrenByRoot.get(row.rootId)!.push(row);
-    } else {
-      topLevel.push(row);
-    }
-  }
-
-  const result: TimelineTreeRow[] = [];
-  function insertWithChildren(row: TimelineTreeRow) {
-    result.push(row);
-    const children = childrenByRoot.get(row.item.id);
-    if (children) {
-      for (const child of children) {
-        insertWithChildren(child);
-      }
-    }
-  }
-
-  for (const row of topLevel) {
-    insertWithChildren(row);
-  }
-
-  // Safety: append any orphaned rows not reachable from topLevel
-  if (result.length < rows.length) {
-    const insertedIds = new Set(result.map((r) => r.item.id));
-    for (const row of rows) {
-      if (!insertedIds.has(row.item.id)) {
-        result.push(row);
-      }
-    }
-  }
-
-  return result;
-}
-
-/**
- * Find the parent root for a child item.
- * Priority: parentToolCallId (explicit) > toolCallId (self-match) > single active root (fallback).
- * When allowFallback is false, only explicit matches are considered (used for subagent nesting).
- * Fallback is only used when exactly one root is active to prevent misattribution with concurrent sub-agents.
- */
-function findParentRoot(
-  activeRoots: Array<{ rootId: string; toolCallId: string | null; rowIndex: number; depth: number }>,
-  parentToolCallId: string | undefined,
-  toolCallId: string | null | undefined,
-  allowFallback = true,
-): { rootId: string; toolCallId: string | null; rowIndex: number; depth: number } | null {
-  if (parentToolCallId) {
-    for (let i = activeRoots.length - 1; i >= 0; i -= 1) {
-      if (activeRoots[i]?.toolCallId === parentToolCallId) {
-        return activeRoots[i]!;
-      }
-    }
-  }
-  if (toolCallId) {
-    for (let i = activeRoots.length - 1; i >= 0; i -= 1) {
-      if (activeRoots[i]?.toolCallId === toolCallId) {
-        return activeRoots[i]!;
-      }
-    }
-  }
-  if (allowFallback && activeRoots.length === 1) {
-    return activeRoots[0]!;
-  }
-  return null;
-}
-
-
-function buildSubagentSummaryFromChild(title: string | null) {
-  const normalized = (title ?? "").trim();
-  if (!normalized) {
-    return null;
-  }
-  if (isSubagentToolTitle(normalized)) {
-    return null;
-  }
-  if (/^工具\s+tool_/.test(normalized) || /^tool_/.test(normalized)) {
-    return null;
-  }
-  return normalized;
-}
-
-
-function resolveCollapsedSubagentStatusHint(item: TimelineItem, childCount: number, collapsed: boolean, sessionRunning: boolean): "running" | "completed" | null {
-  if (item.kind !== "tool" || childCount < 1 || !collapsed) {
-    return null;
-  }
-  const status = readToolMeta(item)?.status?.toLowerCase() ?? "";
-  if (status === "completed") {
-    return "completed";
-  }
-  if (status === "running" || sessionRunning) {
-    return "running";
-  }
-  return null;
-}
-
-function truncatePendingToolLabel(label: string, max = 220) {
-  const normalized = toSingleLine(label);
-  if (normalized.length <= max) {
-    return normalized;
-  }
-  return `${normalized.slice(0, max - 1)}…`;
-}
-
-function countChildrenByRoot(rows: TimelineTreeRow[]) {
-  const count: Record<string, number> = {};
-  for (const row of rows) {
-    if (!row.rootId) {
-      continue;
-    }
-    count[row.rootId] = (count[row.rootId] ?? 0) + 1;
-  }
-  return count;
-}
-
-function readToolMeta(item: TimelineItem): { title: string | null; rawTitle: string | null; status: string | null; toolCallId: string | null } | null {
-  if (item.kind !== "tool") {
-    return null;
-  }
-  const entries = parseToolTimelineEntries(item.body);
-  const latestRecord = [...entries].reverse().map((entry) => asRecord(entry)).find((entry) => entry !== null) ?? null;
-  const rawTitle = typeof latestRecord?.title === "string" ? latestRecord.title : null;
-  const title = resolveToolDisplayTitle(entries, item.title) || item.title;
-  const status = typeof latestRecord?.status === "string" ? latestRecord.status : item.meta ?? null;
-  const toolCallId = typeof latestRecord?.toolCallId === "string" ? latestRecord.toolCallId : null;
-  return { title, rawTitle, status, toolCallId };
-}
-
-function isSubagentToolTitle(title: string | null) {
-  const normalized = (title ?? "").toLowerCase();
-  return normalized.includes("subagent") || normalized === "task" || normalized.includes(" task");
-}
-
-function isTerminalToolStatus(status: string | null) {
-  const normalized = (status ?? "").toLowerCase();
-  return normalized === "completed" || normalized === "failed" || normalized === "canceled" || normalized === "cancelled";
-}
-
-/**
- * Strip the `mcp__acp__` prefix that the ACP agent adds when it re-publishes
- * Claude Code built-in tools as MCP tools.
- */
-function normalizeAcpToolTitle(rawTitle: unknown): string {
-  if (typeof rawTitle !== "string") return "";
-  return rawTitle.replace(/^mcp__acp__/i, "");
-}
-
-function summarizeToolTitle(rawTitle: unknown, rawInput: unknown, rawToolCallId: unknown) {
-  const title = normalizeAcpToolTitle(rawTitle).trim();
-  const record = asRecord(rawInput) ?? asRecord(tryParseJson(rawInput));
-  const subagentTitle = summarizeSubagentToolTitle(title, record);
-  if (subagentTitle) {
-    return subagentTitle;
-  }
-
-  if (title && !/^工具\s+tool_/.test(title) && !/^tool_/.test(title)) {
-    return title;
-  }
-
-  const command =
-    typeof record?.command === "string"
-      ? record.command
-      : Array.isArray(record?.cmd)
-        ? record.cmd.filter((part): part is string => typeof part === "string").join(" ")
-        : null;
-  const pathValue =
-    typeof record?.path === "string"
-      ? record.path
-      : typeof record?.filePath === "string"
-        ? record.filePath
-        : typeof record?.cwd === "string"
-          ? record.cwd
-          : null;
-  const description = typeof record?.description === "string" ? record.description : null;
-  const args = Array.isArray(record?.args) ? record.args.filter((part): part is string => typeof part === "string").join(" ") : null;
-
-  // If description is available, use it as the primary label (replaces command in title)
-  if (description) {
-    return description;
-  }
-
-  const summary = [command, pathValue, args].filter(Boolean).join(" · ");
-
-  if (summary) {
-    return summary;
-  }
-  if (title) {
-    return title;
-  }
-  return typeof rawToolCallId === "string" ? `工具 ${rawToolCallId}` : "工具调用";
-}
-
-function summarizeSubagentToolTitle(title: string, record: Record<string, unknown> | null) {
-  if (!isSubagentToolTitle(title)) {
-    return null;
-  }
-  const preferred = readSubagentSummary(record);
-  if (!preferred) {
-    return title || "Task";
-  }
-  return `${title || "Task"} · ${preferred}`;
-}
-
-function readSubagentSummary(record: Record<string, unknown> | null): string | null {
-  if (!record) {
-    return null;
-  }
-
-  for (const key of ["title", "description"]) {
-    const value = record[key];
-    if (typeof value === "string" && value.trim()) {
-      return value.trim();
-    }
-  }
-
-  for (const key of ["rawInput", "input", "args", "payload", "params"]) {
-    if (!(key in record)) {
-      continue;
-    }
-    const nestedRecord = asRecord(record[key]) ?? asRecord(tryParseJson(record[key]));
-    const nested = readSubagentSummary(nestedRecord);
-    if (nested) {
-      return nested;
-    }
-  }
-
-  return null;
-}
-
-function formatToolDetails(details: {
-  toolCallId?: unknown;
-  title?: unknown;
-  status?: unknown;
-  rawInput?: unknown;
-  rawOutput?: unknown;
-  parentToolCallId?: string;
-}) {
-  return stringifyMaybe({
-    toolCallId: details.toolCallId,
-    title: details.title,
-    status: details.status,
-    rawInput: details.rawInput,
-    rawOutput: details.rawOutput,
-    ...(details.parentToolCallId ? { parentToolCallId: details.parentToolCallId } : undefined),
-  });
-}
-
-function formatToolBody(details: {
-  toolCallId?: unknown;
-  title?: unknown;
-  status?: unknown;
-  rawInput?: unknown;
-  rawOutput?: unknown;
-}) {
-  return formatToolDetails(details);
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-}
-
-function extractParentToolCallId(update: Record<string, unknown>): string | undefined {
-  const meta = asRecord(update._meta);
-  const claudeCode = asRecord(meta?.claudeCode);
-  const parentId = claudeCode?.parentToolUseId;
-  return typeof parentId === "string" && parentId ? parentId : undefined;
-}
-
-function extractPlanText(value: unknown) {
-  return extractPlanPreview(value)?.body ?? null;
-}
-
-function stringifyMaybe(value: unknown) {
-  if (typeof value === "string") {
-    return value;
-  }
-  return JSON.stringify(value, null, 2);
-}
-
-function resolveToolDisplayTitle(entries: unknown[], fallbackTitle: string) {
-  // Prefer description from rawInput — it is the most human-readable label
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const record = asRecord(entries[index]);
-    if (!record) continue;
-    const inputRecord = asRecord(record.rawInput) ?? asRecord(tryParseJson(record.rawInput));
-    const description = typeof inputRecord?.description === "string" ? inputRecord.description.trim() : "";
-    if (description && !isSubagentToolTitle(description)) {
-      return description;
-    }
-  }
-
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const record = asRecord(entries[index]);
-    const title = typeof record?.title === "string" ? record.title.trim() : "";
-    if (title) {
-      return title;
-    }
-  }
-
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const record = asRecord(entries[index]);
-    const toolCallId = typeof record?.toolCallId === "string" ? record.toolCallId.trim() : "";
-    if (toolCallId) {
-      return toolCallId;
-    }
-  }
-
-  return fallbackTitle;
-}
-
-function normalizeAvailableCommands(rawValue: unknown): AvailableCommand[] {
-  if (!Array.isArray(rawValue)) {
-    return [];
-  }
-
-  const seen = new Set<string>();
-  const normalized: AvailableCommand[] = [];
-
-  for (const item of rawValue) {
-    const record = asRecord(item);
-    const rawName =
-      typeof item === "string"
-        ? item.trim()
-        : typeof record?.name === "string"
-          ? record.name.trim()
-          : typeof record?.command === "string"
-            ? record.command.trim()
-            : "";
-    const name = normalizeCommandName(rawName);
-    if (!name || seen.has(name)) {
-      continue;
-    }
-    seen.add(name);
-    normalized.push({
-      name,
-      description:
-        typeof record?.description === "string"
-          ? record.description.trim()
-          : typeof record?.title === "string"
-            ? record.title.trim()
-            : "",
-      inputType: "unstructured",
-    });
-  }
-
-  return normalized.sort((left, right) => left.name.localeCompare(right.name, "zh-Hans-CN"));
-}
-
-function normalizeCommandName(rawName: string) {
-  const trimmed = rawName.trim();
-  if (!trimmed) {
-    return "";
-  }
-  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
-}
-
-function getPromptCommandCompletions(prompt: string, commands: AvailableCommand[]) {
-  const query = extractPromptCommandQuery(prompt);
-  if (!query) {
-    return [];
-  }
-
-  if (query === "/") {
-    return commands;
-  }
-
-  const normalizedQuery = query.toLowerCase();
-  return commands
-    .filter((command) => command.name.toLowerCase().startsWith(normalizedQuery))
-    .slice(0, 50);
-}
-
-function extractPromptCommandQuery(prompt: string) {
-  const match = prompt.match(/(^|\s)(\/[^\s]*)$/);
-  if (!match) {
-    return null;
-  }
-  return match[2] ?? null;
-}
-
-function applyPromptCommandCompletion(prompt: string, commandName: string) {
-  const trimmedName = commandName.trim();
-  if (!trimmedName) {
-    return prompt;
-  }
-  if (!prompt.trim()) {
-    return `${trimmedName} `;
-  }
-
-  const replaced = prompt.replace(/(^|\s)\/[^\s]*$/, (_match, prefix: string) => `${prefix}${trimmedName} `);
-  if (replaced !== prompt) {
-    return replaced;
-  }
-
-  const suffix = prompt.endsWith(" ") || prompt.endsWith("\n") ? "" : " ";
-  return `${prompt}${suffix}${trimmedName} `;
-}
-
-function splitCompletionLabel(commandName: string, query: string | null) {
-  const normalizedQuery = (query ?? "").trim();
-  if (!normalizedQuery) {
-    return { matched: "", rest: commandName };
-  }
-  if (!commandName.toLowerCase().startsWith(normalizedQuery.toLowerCase())) {
-    return { matched: "", rest: commandName };
-  }
-  return {
-    matched: commandName.slice(0, normalizedQuery.length),
-    rest: commandName.slice(normalizedQuery.length),
-  };
-}
-
-function renderCompletionLabel(commandName: string, query: string | null) {
-  const parts = splitCompletionLabel(commandName, query);
-  if (!parts.matched) {
-    return commandName;
-  }
-  return (
-    <>
-      <strong className="composer-completion-match">{parts.matched}</strong>
-      <span className="composer-completion-rest">{parts.rest}</span>
-    </>
-  );
-}
-
-function buildCompletionSections(commands: AvailableCommand[], query: string | null) {
-  const indexed = commands.map((command, index) => ({ command, index }));
-  if (!query || indexed.length === 0) {
-    return [];
-  }
-  return [{ key: "all", title: null, items: indexed }];
-}
-
-function parseToolTimelineEntries(body: string) {
-  const parsed = tryParseJson(body);
-  if (Array.isArray(parsed)) {
-    return parsed;
-  }
-  if (parsed !== null) {
-    return [parsed];
-  }
-  return [body];
-}
-
-function parseStructuredLogMessage(message: string): { level: string | null; detail: string } | null {
-  const parsed = tryParseJson(message);
-  const record = asRecord(parsed);
-  if (!record) {
-    return null;
-  }
-  const level = typeof record.level === "string" ? record.level.toLowerCase() : null;
-  const detail = typeof record.message === "string" ? record.message : message;
-  return { level, detail };
-}
-
-function labelForMode(modeId: string) {
-  return MODE_OPTIONS.find((option) => option.id === modeId)?.label ?? modeId;
-}
-
-function toneForConnectionState(connectionState: string): "positive" | "negative" | "neutral" {
-  if (connectionState === "connected") {
-    return "positive";
-  }
-  if (connectionState === "closed" || connectionState === "error") {
-    return "negative";
-  }
-  return "neutral";
-}
-
-function isSessionRunning(session: SessionRecord) {
-  return session.busy || session.permissions.length > 0 || session.questions.length > 0;
-}
-
-function shouldKeepSessionRunningAfterPromptFinished(stopReason: string) {
-  const normalized = stopReason.trim().toLowerCase();
-  return normalized === "pause_turn" || normalized === "pause-turn" || normalized.includes("permission");
-}
-
-function getSessionSidebarStatus(session: SessionRecord): SessionSidebarStatus | null {
-  if (session.permissions.length > 0 || session.questions.length > 0) {
-    return { label: "待处理", tone: "pending" };
-  }
-  if (isSessionRunning(session)) {
-    return { label: "运行中", tone: "running" };
-  }
-  if (!hasCompletedPrompt(session) && hasSessionErrorLog(session)) {
-    return { label: "运行中", tone: "running" };
-  }
-  if (shouldShowSessionException(session)) {
-    return { label: "异常", tone: "error" };
-  }
-  if (hasCompletedPrompt(session)) {
-    // Safety net: if a content event arrived *after* prompt_finished and
-    // within the grace window, keep showing "运行中" so the user doesn't
-    // see a brief flash of "已完成" while late updates are still flowing.
-    if (isWithinContentGracePeriod(session)) {
-      return { label: "运行中", tone: "running" };
-    }
-    return { label: "已完成", tone: "completed" };
-  }
-  if (session.connectionState === "connecting") {
-    return { label: "连接中", tone: "connecting" };
-  }
-  return null;
-}
-
-function hasCompletedPrompt(session: SessionRecord) {
-  return session.timeline.some((item) => item.kind === "system" && item.title === "本轮完成");
-}
-
-/** Grace period (ms) – if content arrived after completion within this window, treat as still running. */
-const CONTENT_GRACE_MS = 2000;
-
-function isWithinContentGracePeriod(session: SessionRecord): boolean {
-  const { lastContentEventAt, completedAt } = session;
-  if (!lastContentEventAt || !completedAt) return false;
-  if (lastContentEventAt <= completedAt) return false;
-  return Date.now() - lastContentEventAt < CONTENT_GRACE_MS;
-}
-
-function hasSessionErrorLog(session: SessionRecord) {
-  return session.timeline.some((item) => item.kind === "error");
-}
-
-function shouldShowSessionException(session: SessionRecord) {
-  if (isSessionRunning(session) || session.connectionState !== "error") {
-    return false;
-  }
-  if (!hasCompletedPrompt(session)) {
-    return false;
-  }
-  const lastItem = [...session.timeline].reverse().find((item) => item.kind !== "system" || item.title !== "本轮完成");
-  return Boolean(lastItem && lastItem.kind === "error");
-}
-
-function truncateUnknownText(value: unknown, maxLength = 500) {
-  const raw = typeof value === "string" ? value : stringifyMaybe(value);
-  const normalized = raw.trim();
-  if (!normalized) {
-    return "(空)";
-  }
-  if (normalized.length <= maxLength) {
-    return normalized;
-  }
-  return `${normalized.slice(0, maxLength)}...（已截断，原始 ${normalized.length} 字符）`;
-}
-
-function findLatestExecutionPlanBody(timeline: TimelineItem[]) {
-  for (let index = timeline.length - 1; index >= 0; index -= 1) {
-    const item = timeline[index];
-    if (item?.kind === "system" && item.title === "执行计划") {
-      return item.body;
-    }
-  }
-  return null;
-}
-
-function findLatestExecutionPlan(timeline: TimelineItem[]) {
-  const planBody = findLatestExecutionPlanBody(timeline);
-  if (!planBody) {
-    return null;
-  }
-  return truncateUnknownText(planBody, 1800);
-}
-
-function parseExecutionPlanSteps(planBody: string | null): ExecutionPlanStep[] {
-  const parsed = tryParseJson(planBody);
-  if (!Array.isArray(parsed)) {
-    return [];
-  }
-
-  return parsed
-    .map((entry): ExecutionPlanStep | null => {
-      const record = asRecord(entry);
-      if (!record) {
-        return null;
-      }
-      const content = typeof record.content === "string" ? record.content.trim() : "";
-      if (!content) {
-        return null;
-      }
-      return {
-        content,
-        status: normalizeExecutionPlanStepStatus(record.status),
-      };
-    })
-    .filter((step): step is ExecutionPlanStep => Boolean(step));
-}
-
-function normalizeExecutionPlanStepStatus(value: unknown): ExecutionPlanStepStatus {
-  const normalized = typeof value === "string" ? value.toLowerCase() : "";
-  if (normalized === "completed") {
-    return "completed";
-  }
-  if (normalized === "in_progress") {
-    return "in_progress";
-  }
-  if (normalized === "pending") {
-    return "pending";
-  }
-  return "unknown";
-}
-
-function formatRelativeUpdatedAt(updatedAt: string, now = Date.now()) {
-  const timestamp = Date.parse(updatedAt);
-  if (!Number.isFinite(timestamp)) {
-    return "刚刚";
-  }
-
-  const elapsedMs = Math.max(0, now - timestamp);
-  const elapsedMinutes = Math.floor(elapsedMs / 60_000);
-  if (elapsedMinutes < 1) {
-    return "刚刚";
-  }
-  if (elapsedMinutes < 60) {
-    return `${elapsedMinutes} 分钟前`;
-  }
-
-  const elapsedHours = Math.floor(elapsedMinutes / 60);
-  if (elapsedHours < 24) {
-    return `${elapsedHours} 小时前`;
-  }
-
-  const elapsedDays = Math.floor(elapsedHours / 24);
-  return `${elapsedDays} 天前`;
-}
-
-function canNavigateUp(currentPath: string, allowedRoots: string[]) {
-  const normalizedCurrent = normalizePath(currentPath);
-  if (!normalizedCurrent) {
-    return false;
-  }
-
-  return allowedRoots.some((rootPath) => {
-    const normalizedRoot = normalizePath(rootPath);
-    return normalizedCurrent !== normalizedRoot && isWithinRoot(normalizedRoot, normalizedCurrent);
-  });
-}
-
-function parentDirectory(pathValue: string) {
-  const trimmed = pathValue.replace(/[\\/]+$/, "");
-  const lastSeparatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
-
-  if (lastSeparatorIndex <= 0) {
-    return trimmed.slice(0, 1) || trimmed;
-  }
-
-  return trimmed.slice(0, lastSeparatorIndex);
-}
-
-function isWithinRoot(rootPath: string, targetPath: string) {
-  return targetPath === rootPath || targetPath.startsWith(`${rootPath}/`);
-}
-
-function normalizePath(pathValue: string) {
-  const normalized = pathValue.replace(/\\/g, "/").replace(/\/+$/, "");
-  return normalized || "/";
-}
-
-function sanitizeWorkspaceSuffix(value: string) {
-  return value.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
-}
-
-function composeWorkspacePath(rootPath: string, suffixPath: string) {
-  const normalizedRoot = normalizePath(rootPath);
-  const normalizedSuffix = sanitizeWorkspaceSuffix(suffixPath);
-  if (!normalizedSuffix) {
-    return normalizedRoot;
-  }
-  return normalizePath(`${normalizedRoot}/${normalizedSuffix}`);
-}
-
-function resolveWorkspaceLookupPath(
-  rootPath: string,
-  suffixPath: string,
-  availableDirectories: Array<{ name: string; path: string }>,
-) {
-  const normalizedSuffix = sanitizeWorkspaceSuffix(suffixPath);
-  const composedPath = composeWorkspacePath(rootPath, normalizedSuffix);
-  if (!normalizedSuffix) {
-    return composedPath;
-  }
-  const normalizedComposedPath = normalizePath(composedPath);
-  const hasExactMatch = availableDirectories.some((entry) => normalizePath(entry.path) === normalizedComposedPath);
-  if (hasExactMatch) {
-    return composedPath;
-  }
-  return parentDirectory(composedPath);
-}
-
-function relativePathFromRoot(rootPath: string, targetPath: string) {
-  const normalizedRoot = normalizePath(rootPath);
-  const normalizedTarget = normalizePath(targetPath);
-  if (!isWithinRoot(normalizedRoot, normalizedTarget)) {
-    return "";
-  }
-  if (normalizedTarget === normalizedRoot) {
-    return "";
-  }
-  return normalizedTarget.slice(normalizedRoot.length).replace(/^\/+/, "");
-}
-
-function splitWorkspacePathByAllowedRoots(pathValue: string, allowedRoots: string[]) {
-  const normalizedPath = normalizePath(pathValue.trim() || "/");
-  const normalizedRoots = allowedRoots
-    .map((rootPath) => normalizePath(rootPath.trim()))
-    .filter(Boolean)
-    .sort((a, b) => b.length - a.length);
-  const matchedRoot = normalizedRoots.find((rootPath) => isWithinRoot(rootPath, normalizedPath));
-  const fallbackRoot = normalizedRoots[0] ?? "/";
-  const activeRoot = matchedRoot ?? fallbackRoot;
-  const suffix = relativePathFromRoot(activeRoot, normalizedPath);
-  return { root: activeRoot, suffix };
-}
-
-function buildPathBreadcrumbs(currentPath: string, allowedRoots: string[]) {
-  const normalizedCurrent = normalizePath(currentPath.trim());
-  if (!normalizedCurrent) {
-    return [];
-  }
-
-  const sortedRoots = allowedRoots
-    .map((rootPath) => normalizePath(rootPath.trim()))
-    .filter(Boolean)
-    .sort((a, b) => b.length - a.length);
-  const matchedRoot = sortedRoots.find((rootPath) => isWithinRoot(rootPath, normalizedCurrent));
-  const activeBase = matchedRoot ?? "/";
-
-  const remainder = normalizedCurrent === activeBase ? "" : normalizedCurrent.slice(activeBase.length).replace(/^\/+/, "");
-  const segments = remainder ? remainder.split("/").filter(Boolean) : [];
-
-  const crumbs: Array<{ label: string; path: string; active: boolean }> = [];
-  const baseLabel = matchedRoot ? "根目录" : "/";
-  crumbs.push({ label: baseLabel, path: activeBase, active: normalizedCurrent === activeBase });
-
-  let cursor = activeBase;
-  for (const segment of segments) {
-    const nextPath = cursor === "/" ? `/${segment}` : `${cursor}/${segment}`;
-    cursor = normalizePath(nextPath);
-    crumbs.push({ label: segment, path: cursor, active: cursor === normalizedCurrent });
-  }
-
-  if (crumbs.length === 0) {
-    return [{ label: "/", path: "/", active: normalizedCurrent === "/" }];
-  }
-  return crumbs;
-}
-
-function toSingleLine(value: string) {
-  return value.replace(/\s+/g, " ").trim() || "(空)";
-}
-
-function toPreviewText(value: string) {
-  return value.trim() || "(空)";
-}
-
-function normalizeSessionTitle(title: string) {
-  return title.trim() || "未命名会话";
-}
-
-function formatSessionTitleForDisplay(title: string) {
-  return title.replace(/_/g, "_\u200b");
-}
-
-function formatWorkspacePathForSidebar(workspacePath: string, allowedRoots: string[]) {
-  const normalizedPath = workspacePath.trim();
-  if (!normalizedPath) {
-    return workspacePath;
-  }
-
-  const matchingRoot = allowedRoots
-    .map((root) => root.trim())
-    .filter(Boolean)
-    .sort((a, b) => b.length - a.length)
-    .find((root) => isWithinRoot(root, normalizedPath));
-
-  if (!matchingRoot) {
-    return normalizedPath;
-  }
-  if (normalizedPath === matchingRoot) {
-    return "…/";
-  }
-
-  const suffix = normalizedPath.slice(matchingRoot.length).replace(/^\/+/, "");
-  return suffix ? `…/${suffix}` : "…/";
-}
-
-function normalizeSessionRecord(session: SessionRecord): SessionRecord {
-  const total = session.historyTotal ?? session.timeline.length;
-  const start = session.historyStart ?? Math.max(0, total - session.timeline.length);
-  const normalizedTitle = normalizeSessionTitle(session.title);
-
-  return {
-    ...session,
-    title: normalizedTitle,
-    timeline: normalizeMergedTimeline(session.timeline.map(normalizeTimelineItem)),
-    historyTotal: total,
-    historyStart: start,
-    questions: Array.isArray(session.questions) ? session.questions : [],
-    availableCommands: normalizeAvailableCommands(session.availableCommands),
-  };
-}
-
-function normalizeMergedTimeline(items: TimelineItem[]) {
-  const merged: TimelineItem[] = [];
-  for (const item of items) {
-    const normalized = normalizeTimelineItem(item);
-    if (normalized.kind !== "tool") {
-      merged.push(normalized);
-      continue;
-    }
-    if (isSubagentToolTitle(readToolMeta(normalized)?.rawTitle ?? normalized.title)) {
-      merged.push(normalized);
-      continue;
-    }
-    const toolMeta = readToolMeta(normalized);
-    const toolCallId = toolMeta?.toolCallId;
-    if (!toolCallId) {
-      merged.push(normalized);
-      continue;
-    }
-    let existingIndex = -1;
-    for (let index = merged.length - 1; index >= 0; index -= 1) {
-      const existing = merged[index];
-      if (existing?.kind === "system" && existing.title === "本轮完成") {
-        break;
-      }
-      if (canMergeToolTimelineItem(existing, normalized, toolCallId)) {
-        existingIndex = index;
-        break;
-      }
-    }
-    if (existingIndex < 0) {
-      merged.push(normalized);
-      continue;
-    }
-    merged[existingIndex] = mergeToolTimelineItems(merged[existingIndex] ?? normalized, normalized);
-  }
-  return merged;
-}
-
-function buildDemoFixtures(workspacePath: string, demoPreset: DemoPreset): DemoFixtures | null {
-  if (demoPreset !== "subagent-tree") {
-    return null;
-  }
-
-  const demoLongSessionTitle =
-    "demo_release_readiness_multi_service_validation_timeline_and_diff_walkthrough";
-  const demoLongWorkspacePath =
-    "/workspace/leduo-patrol/demo_assets/very_long_gallery_workspace/ink_landscape_collection_archive/seasonal_series_spring_morning_mist_over_mountains_with_boat_and_pines";
-
-  const demoSession: SessionRecord = normalizeSessionRecord({
-    clientSessionId: "demo-subagent-tree",
-    title: demoLongSessionTitle,
-    workspacePath: demoLongWorkspacePath,
-    connectionState: "connected",
-    sessionId: "demo-session",
-    modes: ["default", "plan"],
-    defaultModeId: "default",
-    currentModeId: "default",
-    busy: false,
-    timeline: [
-      {
-        id: "demo-user-1",
-        kind: "user",
-        title: "你",
-        body: "请完成“发布前检查”演练：拆分子任务、汇总风险，并给出最终建议。",
-      },
-      {
-        id: "demo-plan-1",
-        kind: "system",
-        title: "执行计划",
-        body: JSON.stringify(
-          [
-            { content: "检查环境变量与配置模板", priority: "medium", status: "completed" },
-            { content: "扫描 API / WebSocket 错误处理路径", priority: "medium", status: "completed" },
-            { content: "复核构建产物与静态资源缓存", priority: "medium", status: "in_progress" },
-            { content: "输出发布风险清单与回滚建议", priority: "medium", status: "pending" },
-          ],
-          null,
-          2,
-        ),
-      },
-      {
-        id: "demo-tool-task-start",
-        kind: "tool",
-        title: "Task",
-        body: JSON.stringify(
-          { toolCallId: "demo-task-1", title: "Task", status: "running", input: "并行执行发布前检查清单" },
-          null,
-          2,
-        ),
-        meta: "running",
-      },
-      {
-        id: "demo-agent-sub-1",
-        kind: "agent",
-        title: "Claude",
-        body: "子代理 A：正在扫描项目目录，确认关键配置、脚本入口和部署依赖。",
-      },
-      {
-        id: "demo-tool-sub-search",
-        kind: "tool",
-        title: "ripgrep",
-        body: JSON.stringify(
-          {
-            toolCallId: "demo-rg-1",
-            title: "ripgrep",
-            status: "completed",
-            result: ["server/index.ts", "server/session-manager.ts", "src/App.tsx"],
-          },
-          null,
-          2,
-        ),
-        meta: "completed",
-      },
-      {
-        id: "demo-tool-sub-lint",
-        kind: "tool",
-        title: "npm run check",
-        body: JSON.stringify(
-          {
-            toolCallId: "demo-check-1",
-            title: "npm run check",
-            status: "completed",
-            summary: "类型检查与静态检查通过",
-          },
-          null,
-          2,
-        ),
-        meta: "completed",
-      },
-      {
-        id: "demo-agent-sub-1-summary",
-        kind: "agent",
-        title: "Claude",
-        body: "子代理 A 总结：核心入口清晰，可继续进行构建与差异复核。",
-      },
-      {
-        id: "demo-tool-task-start-2",
-        kind: "tool",
-        title: "Task",
-        body: JSON.stringify(
-          { toolCallId: "demo-task-2", title: "Task", status: "running", input: "验证构建产物与回滚包" },
-          null,
-          2,
-        ),
-        meta: "running",
-      },
-      {
-        id: "demo-agent-sub-2-progress",
-        kind: "agent",
-        title: "Claude",
-        body: "子代理 B：正在对比 dist 产物哈希并检查版本元数据。",
-      },
-      {
-        id: "demo-tool-sub-test",
-        kind: "tool",
-        title: "npm test",
-        body: JSON.stringify(
-          {
-            toolCallId: "demo-test-1",
-            title: "npm test",
-            status: "completed",
-            summary: "46 passed / 0 failed",
-          },
-          null,
-          2,
-        ),
-        meta: "completed",
-      },
-      {
-        id: "demo-agent-sub-2",
-        kind: "agent",
-        title: "Claude",
-        body: "子代理 B 完成构建校验，发现 1 项中风险：静态资源缓存策略需要确认。",
-      },
-      {
-        id: "demo-tool-task-end-2",
-        kind: "tool",
-        title: "Task",
-        body: JSON.stringify({ toolCallId: "demo-task-2", title: "Task", status: "completed" }, null, 2),
-        meta: "completed",
-      },
-      {
-        id: "demo-tool-task-end",
-        kind: "tool",
-        title: "Task",
-        body: JSON.stringify({ toolCallId: "demo-task-1", title: "Task", status: "completed" }, null, 2),
-        meta: "completed",
-      },
-      {
-        id: "demo-agent-main-summary",
-        kind: "agent",
-        title: "Claude",
-        body: "主代理汇总：2 个子任务已完成。建议先确认缓存 TTL，再执行正式发布。",
-      },
-      {
-        id: "demo-tool-read",
-        kind: "tool",
-        title: "Read /src/config.ts",
-        body: JSON.stringify(
-          {
-            toolCallId: "demo-read-1",
-            title: "Read /src/config.ts",
-            status: "completed",
-            rawInput: { file_path: "/src/config.ts" },
-            rawOutput: "export const version = '1.1.0';",
-          },
-          null,
-          2,
-        ),
-        meta: "completed",
-      },
-      {
-        id: "demo-tool-write",
-        kind: "tool",
-        title: "Write /src/config.ts",
-        body: JSON.stringify(
-          {
-            toolCallId: "demo-write-1",
-            title: "Write /src/config.ts",
-            status: "completed",
-            rawInput: { file_path: "/src/config.ts", content: "export const version = '1.2.0';" },
-          },
-          null,
-          2,
-        ),
-        meta: "completed",
-      },
-      {
-        id: "demo-agent-main",
-        kind: "agent",
-        title: "Claude",
-        body: "演示提示：点击 `Task` 行右侧子项按钮，可折叠/展开子任务明细；同时可切换查看会话差异与文件 diff。",
-      },
-    ],
-    historyTotal: 19,
-    historyStart: 0,
-    permissions: [
-      {
-        clientSessionId: "demo-subagent-tree",
-        requestId: "demo-permission-1",
-        toolCall: {
-          toolCallId: "demo-task-1",
-          title: "Task",
-          status: "pending",
-          rawInput: { description: "是否允许执行“清理旧构建缓存”步骤" },
-        },
-        options: [
-          { optionId: "demo-allow", name: "允许", kind: "allow" },
-          { optionId: "demo-deny", name: "拒绝", kind: "deny" },
-        ],
-      },
-    ],
-    questions: [
-      {
-        clientSessionId: "demo-subagent-tree",
-        questionId: "demo-question-1",
-        groupId: "demo-question-group-1",
-        question: "GetVolumeJob 接口返回的作业列表是否已按时间排序？这会影响实现复杂度。",
-        header: "作业排序",
-        options: [
-          { id: "已排序", label: "已排序", description: "接口已按时间倒序返回，直接取第一个作业即可，实现简单高效" },
-          { id: "未排序", label: "未排序", description: "需要查询所有作业详情并按 create_time 排序，确保准确性" },
-          { id: "不确定", label: "不确定", description: "不确定接口行为，按未排序处理以确保正确性" },
-        ],
-        allowCustomAnswer: true,
-      },
-      {
-        clientSessionId: "demo-subagent-tree",
-        questionId: "demo-question-2",
-        groupId: "demo-question-group-1",
-        question: "应该选择哪种状态的作业作为\u201c最近一次扫描\u201d？",
-        header: "作业状态",
-        options: [
-          { id: "只选已完成的", label: "只选已完成的 (Recommended)", description: "只选择 JOB_STATUS_SUCC 状态的作业，确保数据完整性" },
-          { id: "优先已完成", label: "优先已完成", description: "优先选已完成的，如果没有则选正在运行的作业" },
-          { id: "选最新的", label: "选最新的", description: "选择创建时间最新的作业，无论状态如何" },
-        ],
-        allowCustomAnswer: true,
-      },
-      {
-        clientSessionId: "demo-subagent-tree",
-        questionId: "demo-question-3",
-        groupId: "demo-question-group-1",
-        question: "错误类型参数是否必须指定？",
-        header: "错误类型",
-        options: [
-          { id: "必须指定", label: "必须指定 (Recommended)", description: "用户必须指定错误类型，命令简单明确" },
-          { id: "可选参数", label: "可选参数", description: "错误类型可选，不指定时显示所有错误类型的汇总" },
-        ],
-        allowCustomAnswer: true,
-      },
-    ],
-    updatedAt: new Date().toISOString(),
-  });
-
-  const demoSessionDiff: SessionDiffResponse = {
-    workspacePath: demoLongWorkspacePath,
-    workspaceReadonly: false,
-    repositoryRoot: demoLongWorkspacePath,
-    workingTree: [
-      { filePath: "src/App.tsx", changeType: "修改" },
-      { filePath: "src/components/TimelinePanel.tsx", changeType: "修改" },
-      { filePath: "src/styles.css", changeType: "修改" },
-    ],
-    staged: [{ filePath: "docs/release-checklist.md", changeType: "修改" }],
-    untracked: [{ filePath: "scripts/verify-build-cache.ts", changeType: "新增" }],
-  };
-
-  const demoFileDiffs: Record<string, SessionFileDiffResponse> = {
-    "workingTree:src/App.tsx": {
-      category: "workingTree",
-      filePath: "src/App.tsx",
-      omitted: false,
-      diff: "@@ -1200,6 +1200,12 @@\n+const demo = true;\n+// demo timeline row\n",
-    },
-    "workingTree:src/styles.css": {
-      category: "workingTree",
-      filePath: "src/styles.css",
-      omitted: false,
-      diff: "@@ -610,6 +610,10 @@\n+.timeline-row {\n+  width: calc(100% - 18px);\n+}\n",
-    },
-    "staged:docs/release-checklist.md": {
-      category: "staged",
-      filePath: "docs/release-checklist.md",
-      omitted: false,
-      diff: "@@ -12,5 +12,9 @@\n+- [ ] 发布前确认缓存策略\n+- [ ] 回滚包完整性校验\n",
-    },
-    "untracked:scripts/verify-build-cache.ts": {
-      category: "untracked",
-      filePath: "scripts/verify-build-cache.ts",
-      omitted: false,
-      diff: "export async function verifyBuildCache() {\n+  return { ok: true, checked: [\"assets-manifest\", \"etag\"] };\n+}\n",
-    },
-  };
-
-  const overflowSessions = Array.from({ length: 7 }, (_, index) => {
-    const sequence = index + 2;
-    return normalizeSessionRecord({
-      clientSessionId: `demo-session-${sequence}`,
-      title: `demo_session_${sequence}_release_validation_iteration`,
-      workspacePath: `${workspacePath}/demo/session-${sequence}`,
-      connectionState: "connected",
-      sessionId: `demo-session-${sequence}`,
-      modes: ["default", "plan"],
-      defaultModeId: "default",
-      currentModeId: "default",
-      busy: sequence % 3 === 0,
-      timeline: [
-        {
-          id: `demo-${sequence}-user-1`,
-          kind: "user",
-          title: "你",
-          body: `请继续处理会话 ${sequence}：补充检查记录并同步风险状态。`,
-        },
-      ],
-      historyTotal: 1,
-      historyStart: 0,
-      permissions: [],
-      questions: [],
-      updatedAt: new Date(Date.now() - sequence * 60_000).toISOString(),
-    });
-  });
-
-  return {
-    createSession: {
-      workspacePath: `${workspacePath}/demo/new-session-showcase/client-dashboard`,
-      title: "demo_new_session_path_picker_showcase",
-      modeId: "plan",
-    },
-    bySessionId: {
-      [demoSession.clientSessionId]: {
-        session: demoSession,
-        sessionDiff: demoSessionDiff,
-        fileDiffs: demoFileDiffs,
-      },
-      ...Object.fromEntries(
-        overflowSessions.map((session) => [
-          session.clientSessionId,
-          {
-            session,
-            sessionDiff: demoSessionDiff,
-            fileDiffs: demoFileDiffs,
-          },
-        ]),
-      ),
-    },
-  };
-}
-
-function applyDemoPreset(sessions: SessionRecord[], fixtures: DemoFixtures | null): SessionRecord[] {
-  if (!fixtures) {
-    return sessions;
-  }
-
-  const demoSessions = Object.values(fixtures.bySessionId).map((entry) => entry.session);
-  const demoSessionIdSet = new Set(demoSessions.map((session) => session.clientSessionId));
-  const rest = sessions.filter((session) => !demoSessionIdSet.has(session.clientSessionId));
-  return [...demoSessions, ...rest];
-}
-
-function normalizeTimelineItem(item: TimelineItem): TimelineItem {
-  if (item.kind !== "tool") {
-    return item;
-  }
-
-  const planPreview = extractPlanPreview(item.body);
-  if (!planPreview) {
-    return item;
-  }
-
-  return {
-    ...item,
-    kind: "plan",
-    title: planPreview.title,
-    body: planPreview.body,
-  };
-}
-
-function extractPlanPreview(value: unknown): { title: string; body: string } | null {
-  const parsed = tryParseJson(value);
-  if (parsed !== null) {
-    return extractPlanPreview(parsed);
-  }
-
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      const preview = extractPlanPreview(entry);
-      if (preview) {
-        return preview;
-      }
-    }
-    return null;
-  }
-
-  const record = asRecord(value);
-  if (!record) {
-    return null;
-  }
-
-  if (typeof record.plan === "string") {
-    return {
-      title: "计划确认",
-      body: record.plan,
-    };
-  }
-
-  const filePath =
-    typeof record.file_path === "string"
-      ? record.file_path
-      : typeof record.path === "string"
-        ? record.path
-        : null;
-  const content =
-    typeof record.content === "string"
-      ? record.content
-      : typeof record.text === "string"
-        ? record.text
-        : null;
-
-  if (filePath?.includes("/.claude/plans/") && content) {
-    return {
-      title: "计划",
-      body: content,
-    };
-  }
-
-  for (const nestedKey of ["rawInput", "rawOutput", "input", "output", "content"]) {
-    if (nestedKey in record) {
-      const preview = extractPlanPreview(record[nestedKey]);
-      if (preview) {
-        return preview;
-      }
-    }
-  }
-
-  return null;
-}
-
-function tryParseJson(value: unknown) {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(trimmed) as unknown;
-  } catch {
-    return null;
-  }
-}
-
-function extractChunkText(content: unknown): string | null {
-  if (!content) {
-    return null;
-  }
-
-  if (Array.isArray(content)) {
-    const joined = content.map((item) => extractChunkText(item)).filter((item): item is string => Boolean(item)).join("\n");
-    return joined || null;
-  }
-
-  const record = asRecord(content);
-  if (!record) {
-    return null;
-  }
-
-  if (typeof record.text === "string" && record.text.trim()) {
-    return record.text;
-  }
-
-  if (record.type === "resource") {
-    const resource = asRecord(record.resource);
-    if (typeof resource?.text === "string" && resource.text.trim()) {
-      return resource.text;
-    }
-  }
-
-  if (record.type === "resource_link") {
-    const uri = typeof record.uri === "string" ? record.uri : "";
-    return uri ? `[resource] ${uri}` : "[resource]";
-  }
-
-  return null;
-}
-
-function makeId() {
-  const cryptoObject = globalThis.crypto as { randomUUID?: () => string } | undefined;
-  if (typeof cryptoObject?.randomUUID === "function") {
-    return cryptoObject.randomUUID();
-  }
-  return `lp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function renderMarkdownBlocks(source: string) {
-  const lines = source.replace(/\r\n/g, "\n").split("\n");
-  const blocks: Array<
-    | { kind: "heading" | "paragraph" | "list" | "code"; level?: number; lines: string[] }
-    | { kind: "table"; headers: string[]; rows: string[][] }
-  > = [];
-  let paragraph: string[] = [];
-  let list: string[] = [];
-  let code: string[] = [];
-  let inCode = false;
-
-  const flushParagraph = () => {
-    if (paragraph.length > 0) {
-      blocks.push({ kind: "paragraph", lines: paragraph });
-      paragraph = [];
-    }
-  };
-
-  const flushList = () => {
-    if (list.length > 0) {
-      blocks.push({ kind: "list", lines: list });
-      list = [];
-    }
-  };
-
-  let index = 0;
-  while (index < lines.length) {
-    const line = lines[index] ?? "";
-    if (line.startsWith("```")) {
-      flushParagraph();
-      flushList();
-      if (inCode) {
-        blocks.push({ kind: "code", lines: code });
-        code = [];
-        inCode = false;
-      } else {
-        inCode = true;
-      }
-      index += 1;
-      continue;
-    }
-
-    if (inCode) {
-      code.push(line);
-      index += 1;
-      continue;
-    }
-
-    const nextLine = lines[index + 1] ?? "";
-    if (isMarkdownTableRow(line) && isMarkdownTableSeparator(nextLine)) {
-      flushParagraph();
-      flushList();
-
-      const headers = parseMarkdownTableRow(line);
-      const rows: string[][] = [];
-      index += 2;
-      while (index < lines.length) {
-        const rowLine = lines[index] ?? "";
-        if (!isMarkdownTableRow(rowLine) || !rowLine.trim()) {
-          break;
-        }
-        rows.push(parseMarkdownTableRow(rowLine));
-        index += 1;
-      }
-
-      blocks.push({ kind: "table", headers, rows });
-      continue;
-    }
-
-    const heading = line.match(/^(#{1,6})\s+(.*)$/);
-    if (heading) {
-      flushParagraph();
-      flushList();
-      blocks.push({ kind: "heading", level: heading[1].length, lines: [heading[2]] });
-      index += 1;
-      continue;
-    }
-
-    const listMatch = line.match(/^\s*[-*+]\s+(.*)$/);
-    if (listMatch) {
-      flushParagraph();
-      list.push(listMatch[1]);
-      index += 1;
-      continue;
-    }
-
-    if (!line.trim()) {
-      flushParagraph();
-      flushList();
-      index += 1;
-      continue;
-    }
-
-    flushList();
-    paragraph.push(line);
-    index += 1;
-  }
-
-  flushParagraph();
-  flushList();
-  if (code.length > 0) {
-    blocks.push({ kind: "code", lines: code });
-  }
-
-  return blocks.map((block, index) => {
-    if (block.kind === "heading") {
-      const headingContent = renderMarkdownInline(block.lines[0] ?? "");
-      switch (Math.min(block.level ?? 3, 6)) {
-        case 1:
-          return <h1 key={`md-heading-${index}`}>{headingContent}</h1>;
-        case 2:
-          return <h2 key={`md-heading-${index}`}>{headingContent}</h2>;
-        case 3:
-          return <h3 key={`md-heading-${index}`}>{headingContent}</h3>;
-        case 4:
-          return <h4 key={`md-heading-${index}`}>{headingContent}</h4>;
-        case 5:
-          return <h5 key={`md-heading-${index}`}>{headingContent}</h5>;
-        default:
-          return <h6 key={`md-heading-${index}`}>{headingContent}</h6>;
-      }
-    }
-    if (block.kind === "list") {
-      return (
-        <ul key={`md-list-${index}`}>
-          {block.lines.map((item, itemIndex) => (
-            <li key={`md-list-${index}-${itemIndex}`}>{renderMarkdownInline(item)}</li>
-          ))}
-        </ul>
-      );
-    }
-    if (block.kind === "code") {
-      return (
-        <pre key={`md-code-${index}`}>
-          <code>{block.lines.join("\n")}</code>
-        </pre>
-      );
-    }
-    if (block.kind === "table") {
-      return (
-        <table key={`md-table-${index}`}>
-          <thead>
-            <tr>
-              {block.headers.map((header, cellIndex) => (
-                <th key={`md-table-${index}-h-${cellIndex}`}>{renderMarkdownInline(header)}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {block.rows.map((row, rowIndex) => (
-              <tr key={`md-table-${index}-r-${rowIndex}`}>
-                {block.headers.map((_, cellIndex) => (
-                  <td key={`md-table-${index}-r-${rowIndex}-c-${cellIndex}`}>
-                    {renderMarkdownInline(row[cellIndex] ?? "")}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      );
-    }
-    return <p key={`md-paragraph-${index}`}>{renderMarkdownInline(block.lines.join(" "))}</p>;
-  });
-}
-
-function isMarkdownTableRow(line: string) {
-  return line.includes("|") && parseMarkdownTableRow(line).length > 0;
-}
-
-function isMarkdownTableSeparator(line: string) {
-  const cells = parseMarkdownTableRow(line);
-  if (cells.length === 0) {
-    return false;
-  }
-  return cells.every((cell) => /^:?-{3,}:?$/.test(cell));
-}
-
-function parseMarkdownTableRow(line: string) {
-  return line
-    .trim()
-    .replace(/^\|/, "")
-    .replace(/\|$/, "")
-    .split("|")
-    .map((cell) => cell.trim());
-}
-
-function renderMarkdownInline(text: string) {
-  const parts = text.split(/(\[[^\]]+\]\([^\)]+\)|`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/g).filter(Boolean);
-  return parts.map((part, index) => {
-    const linkMatch = part.match(/^\[([^\]]+)\]\(([^\)]+)\)$/);
-    if (linkMatch) {
-      return (
-        <a key={`md-link-${index}`} href={linkMatch[2]} target="_blank" rel="noreferrer">
-          {linkMatch[1]}
-        </a>
-      );
-    }
-    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
-      return <strong key={`md-bold-${index}`}>{part.slice(2, -2)}</strong>;
-    }
-    if (part.startsWith("*") && part.endsWith("*") && part.length > 2) {
-      return <em key={`md-italic-${index}`}>{part.slice(1, -1)}</em>;
-    }
-    if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
-      return <code key={`md-inline-${index}`}>{part.slice(1, -1)}</code>;
-    }
-    return <Fragment key={`md-text-${index}`}>{part}</Fragment>;
-  });
-}
-
-function shouldRenderMarkdown(item: TimelineItem) {
-  return item.kind === "agent" || item.kind === "plan";
-}
-
-function isReadToolTitle(title: string | null): boolean {
-  const t = normalizeAcpToolTitle(title).trim().toLowerCase();
-  const prefixes = ["read", "readfile", "read_file", "read file", "file_read", "fileread"];
-  return prefixes.some((p) => t === p || t.startsWith(p + " "));
-}
-
-function isWriteToolTitle(title: string | null): boolean {
-  const t = normalizeAcpToolTitle(title).trim().toLowerCase();
-  const prefixes = ["write", "writefile", "write_file", "write file"];
-  // "create" variants use exact match only – "Create <path>" is not a
-  // recognised title pattern from Claude Code, whereas "Write <path>" is.
-  const exact = ["create", "createfile", "create_file", "create file"];
-  return prefixes.some((p) => t === p || t.startsWith(p + " ")) || exact.some((p) => t === p);
-}
-
-function FileContentView(props: { content: string; filePath: string | null; mode: "read" | "write" }) {
-  // Trim all trailing newlines so files ending in \n don't show blank last lines
-  const normalized = props.content.replace(/\n+$/, "");
-  const lines = normalized.split("\n");
-  const lineCount = lines.length;
-  const trimmed = lines.length > FILE_VIEWER_MAX_LINES;
-  const visibleLines = trimmed ? lines.slice(0, FILE_VIEWER_MAX_LINES) : lines;
-  const modeLabel = FILE_VIEWER_MODE_LABEL[props.mode];
-
-  return (
-    <div className={`tool-read-output tool-read-output-${props.mode}`}>
-      <div className="tool-read-header">
-        {props.filePath ? <code className="tool-read-path">{props.filePath}</code> : null}
-        <span className="tool-read-linecount">{modeLabel} · {lineCount} 行</span>
-      </div>
-      <div className="tool-read-body">
-        <table className="tool-read-table" cellSpacing={0} cellPadding={0}>
-          <tbody>
-            {visibleLines.map((line, i) => (
-              <tr key={i} className="tool-read-line">
-                <td className="tool-read-lineno">{i + 1}</td>
-                <td className="tool-read-linetext">{line}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {trimmed ? (
-          <p className="tool-read-truncated">（已截断，仅显示前 {FILE_VIEWER_MAX_LINES} 行，共 {lineCount} 行）</p>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function ToolCallDetailView(props: { body: string }) {
-  const entries = parseToolTimelineEntries(props.body);
-  let rawTitle: string | null = null;
-  let status: string | null = null;
-  let description: string | null = null;
-  let command: string | null = null;
-  let pathValue: string | null = null;
-  let rawOutput: unknown = undefined;
-  let writeContent: string | null = null;
-
-  for (const entry of [...entries].reverse()) {
-    const record = asRecord(entry);
-    if (!record) continue;
-
-    if (!rawTitle && typeof record.title === "string" && record.title.trim()) {
-      rawTitle = record.title.trim();
-    }
-    if (!status && typeof record.status === "string" && record.status.trim()) {
-      status = record.status.trim();
-    }
-    if (rawOutput === undefined && record.rawOutput !== undefined && record.rawOutput !== null) {
-      rawOutput = record.rawOutput;
-    }
-    const inputRecord = asRecord(record.rawInput) ?? asRecord(tryParseJson(record.rawInput));
-    if (inputRecord) {
-      if (!description && typeof inputRecord.description === "string" && inputRecord.description.trim()) {
-        description = inputRecord.description.trim();
-      }
-      if (!command) {
-        // `command` is a string in bash-style tools; `cmd` is an array in exec-style tools
-        if (typeof inputRecord.command === "string" && inputRecord.command.trim()) {
-          command = inputRecord.command.trim();
-        } else if (Array.isArray(inputRecord.cmd)) {
-          const parts = inputRecord.cmd.filter((p): p is string => typeof p === "string");
-          if (parts.length) command = parts.join(" ");
-        }
-      }
-      if (!pathValue) {
-        for (const key of ["path", "filePath", "file_path", "cwd"]) {
-          const val = inputRecord[key];
-          if (typeof val === "string" && val.trim()) {
-            pathValue = val.trim();
-            break;
-          }
-        }
-      }
-      // Extract write content from rawInput (Write/Create tool)
-      if (writeContent === null) {
-        for (const key of ["content", "new_content", "new_string", "new_str"]) {
-          const val = inputRecord[key];
-          if (typeof val === "string") {
-            writeContent = val;
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  const isReadTool = isReadToolTitle(rawTitle);
-  const isWriteTool = isWriteToolTitle(rawTitle);
-  const suppressPath = isReadTool || isWriteTool;
-  const hasStructuredInfo = description || command || (pathValue && !suppressPath) || status;
-  const outputText =
-    rawOutput !== undefined && rawOutput !== null
-      ? typeof rawOutput === "string"
-        ? rawOutput
-        : stringifyMaybe(rawOutput)
-      : null;
-
-  return (
-    <div className="tool-detail-view">
-      {hasStructuredInfo ? (
-        <div className="tool-detail-fields">
-          {status ? (
-            <div className="tool-detail-row">
-              <span className="tool-detail-key">状态</span>
-              <span className={`tool-detail-status tool-detail-status-${status.toLowerCase()}`}>{status}</span>
-            </div>
-          ) : null}
-          {description ? (
-            <div className="tool-detail-row">
-              <span className="tool-detail-key">描述</span>
-              <span className="tool-detail-val">{description}</span>
-            </div>
-          ) : null}
-          {command ? (
-            <div className="tool-detail-row">
-              <span className="tool-detail-key">命令</span>
-              <code className="tool-detail-val tool-detail-code">{command}</code>
-            </div>
-          ) : null}
-          {pathValue && !suppressPath ? (
-            <div className="tool-detail-row">
-              <span className="tool-detail-key">路径</span>
-              <code className="tool-detail-val tool-detail-code">{pathValue}</code>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      {isReadTool && outputText !== null ? (
-        <FileContentView content={outputText} filePath={pathValue} mode="read" />
-      ) : isWriteTool && writeContent !== null ? (
-        <FileContentView content={writeContent} filePath={pathValue} mode="write" />
-      ) : outputText !== null ? (
-        <details className="tool-detail-section" open>
-          <summary className="tool-detail-summary">输出</summary>
-          <pre className="modal-body tool-detail-content">{outputText}</pre>
-        </details>
-      ) : null}
-
-      <details className="tool-detail-section">
-        <summary className="tool-detail-summary">原始数据</summary>
-        <pre className="modal-body tool-detail-content">{props.body}</pre>
-      </details>
-    </div>
-  );
-}
-
-function MessageModal(props: {
-  sessionTitle: string;
-  item: TimelineItem;
-  onClose: () => void;
-}) {
-  return (
-    <div className="modal-backdrop" onClick={props.onClose}>
-      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-header">
-          <div>
-            <p className="eyebrow">{props.sessionTitle}</p>
-            <h3>{props.item.title}</h3>
-          </div>
-          <button className="secondary" onClick={props.onClose}>
-            关闭
-          </button>
-        </div>
-        <div className="modal-scroll-body">
-          <p className="modal-meta">{props.item.meta ?? "详细内容"}</p>
-          {props.item.images && props.item.images.length > 0 ? (
-            <div className="modal-attached-images">
-              {props.item.images.map((img, idx) => (
-                <img
-                  key={idx}
-                  src={`data:${img.mimeType};base64,${img.data}`}
-                  alt={`附件图片 ${idx + 1}`}
-                  className="modal-attached-image"
-                />
-              ))}
-            </div>
-          ) : null}
-          {props.item.kind === "tool" ? (
-            <ToolCallDetailView body={props.item.body} />
-          ) : shouldRenderMarkdown(props.item) ? (
-            <div className="modal-body markdown-body">{renderMarkdownBlocks(props.item.body)}</div>
-          ) : (
-            <pre className="modal-body">{props.item.body}</pre>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** Group questions by groupId so related questions are answered together. */
-function groupQuestionsByGroup(questions: QuestionPayload[]): QuestionPayload[][] {
-  const groups: Map<string, QuestionPayload[]> = new Map();
-  for (const q of questions) {
-    const key = q.groupId ?? q.questionId; // ungrouped questions are their own group
-    const list = groups.get(key) ?? [];
-    list.push(q);
-    groups.set(key, list);
-  }
-  return [...groups.values()];
-}
-
-/**
- * Multi-question form: renders all questions from one AskUserQuestion call.
- * The user selects/types an answer for EACH question, then submits ALL at once.
- */
-function MultiQuestionForm(props: {
-  questions: QuestionPayload[];
-  onSubmit: (answers: Record<string, string>) => void;
-}) {
-  // Track the selected answer per questionId
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  // Track which questions are in "custom input" mode
-  const [customMode, setCustomMode] = useState<Record<string, boolean>>({});
-  // Track custom input text per questionId
-  const [customTexts, setCustomTexts] = useState<Record<string, string>>({});
-
-  const allAnswered = props.questions.every((q) => {
-    const ans = answers[q.questionId];
-    return ans !== undefined && ans !== "";
-  });
-
-  function selectOption(questionId: string, label: string) {
-    setAnswers((prev) => ({ ...prev, [questionId]: label }));
-    setCustomMode((prev) => ({ ...prev, [questionId]: false }));
-  }
-
-  function toggleCustom(questionId: string) {
-    setCustomMode((prev) => ({ ...prev, [questionId]: true }));
-    // Clear the option selection; the custom text becomes the answer
-    setAnswers((prev) => {
-      const next = { ...prev };
-      delete next[questionId];
-      return next;
-    });
-  }
-
-  function setCustomText(questionId: string, text: string) {
-    setCustomTexts((prev) => ({ ...prev, [questionId]: text }));
-    if (text.trim()) {
-      setAnswers((prev) => ({ ...prev, [questionId]: text.trim() }));
-    } else {
-      setAnswers((prev) => {
-        const next = { ...prev };
-        delete next[questionId];
-        return next;
-      });
-    }
-  }
-
-  function handleSubmit() {
-    if (!allAnswered) return;
-    props.onSubmit(answers);
-  }
-
-  return (
-    <section className="multi-question-form">
-      {props.questions.map((q) => {
-        const selectedAnswer = answers[q.questionId];
-        const isCustom = customMode[q.questionId] ?? false;
-        return (
-          <div key={q.questionId} className="question-panel" data-question-id={q.questionId}>
-            {q.header ? <p className="question-header">{q.header}</p> : null}
-            <p className="question-text">{q.question}</p>
-            {q.options.length > 0 ? (
-              <div className="question-options">
-                {q.options.map((option) => (
-                  <button
-                    key={option.id}
-                    className={
-                      "question-option-btn" +
-                      (selectedAnswer === option.label && !isCustom ? " selected" : "")
-                    }
-                    onClick={() => selectOption(q.questionId, option.label)}
-                    title={option.description}
-                  >
-                    <span className="question-option-label">{option.label}</span>
-                    {option.description ? (
-                      <span className="question-option-desc">{option.description}</span>
-                    ) : null}
-                  </button>
-                ))}
-                {/* Always show custom input toggle */}
-                <button
-                  className={"question-option-btn question-custom-toggle" + (isCustom ? " selected" : "")}
-                  onClick={() => toggleCustom(q.questionId)}
-                >
-                  <span className="question-option-label">✏️ 自定义回答</span>
-                </button>
-              </div>
-            ) : null}
-            {isCustom || q.options.length === 0 ? (
-              <div className="question-custom-answer">
-                <input
-                  type="text"
-                  className="question-custom-input"
-                  placeholder="输入自定义回答..."
-                  value={customTexts[q.questionId] ?? ""}
-                  onChange={(event) => setCustomText(q.questionId, event.target.value)}
-                />
-              </div>
-            ) : null}
-            {selectedAnswer && !isCustom ? (
-              <p className="question-selected-answer">✓ 已选：{selectedAnswer}</p>
-            ) : null}
-          </div>
-        );
-      })}
-      <button
-        className="question-submit-all"
-        onClick={handleSubmit}
-        disabled={!allAnswered}
-      >
-        {allAnswered
-          ? `提交全部 ${props.questions.length} 个回答`
-          : `请回答所有问题 (${Object.keys(answers).filter((k) => answers[k]).length}/${props.questions.length})`}
-      </button>
-    </section>
-  );
-}
-
-function PermissionModal(props: {
-  sessionTitle: string;
-  permission: PermissionPayload;
-  onResolve: (permission: PermissionPayload, optionId: string) => void;
-  onClose: () => void;
-}) {
-  const toolTitle = summarizeToolTitle(
-    props.permission.toolCall.title,
-    props.permission.toolCall.rawInput,
-    props.permission.toolCall.toolCallId,
-  );
-  const body = formatToolBody({
-    toolCallId: props.permission.toolCall.toolCallId,
-    title: props.permission.toolCall.title,
-    status: props.permission.toolCall.status ?? "pending",
-    rawInput: props.permission.toolCall.rawInput,
-  });
-  const planText = extractPlanText(props.permission.toolCall.rawInput);
-  const rawCommandText = extractPermissionRawCommand(props.permission.toolCall.rawInput);
-  return (
-    <div className="modal-backdrop" onClick={props.onClose}>
-      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-header">
-          <div>
-            <p className="eyebrow">{props.sessionTitle}</p>
-            <h3 title={toolTitle}>{truncatePendingToolLabel(toolTitle, 100)}</h3>
-          </div>
-          <button className="secondary" onClick={props.onClose}>
-            关闭
-          </button>
-        </div>
-        <div className="modal-scroll-body">
-          <p className="modal-meta">待处理确认</p>
-          {planText ? (
-            <div className="modal-body markdown-body">{renderMarkdownBlocks(planText)}</div>
-          ) : (
-            <ToolCallDetailView body={body} />
-          )}
-          {rawCommandText ? (
-            <>
-              <label htmlFor="permission-raw-command">完整命令</label>
-              <textarea id="permission-raw-command" className="permission-command-textarea" value={rawCommandText} readOnly />
-            </>
-          ) : null}
-        </div>
-        <div className="modal-footer">
-          {props.permission.options.map((option) => (
-            <button
-              key={option.optionId}
-              className="secondary"
-              onClick={() => props.onResolve(props.permission, option.optionId)}
-            >
-              {option.name}
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SystemFeedModal(props: {
-  items: TimelineItem[];
-  title: string;
-  subtitle: string;
-  onClose: () => void;
-  onOpenItem: (item: TimelineItem) => void;
-}) {
-  return (
-    <div className="modal-backdrop" onClick={props.onClose}>
-      <div className="modal-card system-modal-card" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-header">
-          <div>
-            <p className="eyebrow">{props.title}</p>
-            <h3>{props.subtitle}</h3>
-          </div>
-          <button className="secondary" onClick={props.onClose}>
-            关闭
-          </button>
-        </div>
-        <div className="modal-scroll-body">
-          <div className="system-modal-list">
-            {props.items.map((item) => (
-              <TimelineRow key={item.id} item={item} onOpen={() => props.onOpenItem(item)} />
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function SessionDiffModal(props: {
   sessionTitle: string;
   loading: boolean;
@@ -4757,9 +963,7 @@ function SessionDiffModal(props: {
   const [selectedFileError, setSelectedFileError] = useState("");
 
   const currentCategoryFiles = useMemo(() => {
-    if (!props.snapshot) {
-      return [] as SessionDiffFileEntry[];
-    }
+    if (!props.snapshot) return [] as SessionDiffFileEntry[];
     return props.snapshot[categoryTab];
   }, [categoryTab, props.snapshot]);
 
@@ -4774,14 +978,9 @@ function SessionDiffModal(props: {
   }, [currentCategoryFiles, selectedFilePath]);
 
   useEffect(() => {
-    if (viewMode !== "byFile" || !selectedFilePath) {
-      return;
-    }
+    if (viewMode !== "byFile" || !selectedFilePath) return;
     const cacheKey = `${categoryTab}:${selectedFilePath}`;
-    if (props.fileDiffCache[cacheKey]) {
-      return;
-    }
-
+    if (props.fileDiffCache[cacheKey]) return;
     setSelectedFileLoading(true);
     setSelectedFileError("");
     props.onLoadFileDiff(categoryTab, selectedFilePath)
@@ -4811,12 +1010,8 @@ function SessionDiffModal(props: {
             ) : null}
           </div>
           <div className="modal-actions-inline">
-            <button className="secondary modal-btn-refresh" onClick={props.onRefresh} disabled={props.loading}>
-              刷新
-            </button>
-            <button className="secondary modal-btn-close" onClick={props.onClose}>
-              关闭
-            </button>
+            <button className="secondary modal-btn-refresh" onClick={props.onRefresh} disabled={props.loading}>刷新</button>
+            <button className="secondary modal-btn-close" onClick={props.onClose}>关闭</button>
           </div>
         </div>
         {props.loading ? <p className="modal-meta modal-meta-padded">正在读取 Git Diff...</p> : null}
@@ -4836,13 +1031,11 @@ function SessionDiffModal(props: {
                   </select>
                 ) : null}
               </div>
-
               <div className="diff-toolbar-tabs" role="tablist" aria-label="Diff 分类">
                 <button className={`diff-tab ${categoryTab === "workingTree" ? "active" : ""}`} onClick={() => setCategoryTab("workingTree")} role="tab" aria-selected={categoryTab === "workingTree"} type="button">未暂存修改 ({props.snapshot.workingTree.length})</button>
                 <button className={`diff-tab ${categoryTab === "staged" ? "active" : ""}`} onClick={() => setCategoryTab("staged")} role="tab" aria-selected={categoryTab === "staged"} type="button">已暂存修改 ({props.snapshot.staged.length})</button>
                 <button className={`diff-tab ${categoryTab === "untracked" ? "active" : ""}`} onClick={() => setCategoryTab("untracked")} role="tab" aria-selected={categoryTab === "untracked"} type="button">未跟踪文件 ({props.snapshot.untracked.length})</button>
               </div>
-
               {viewMode === "flat" ? (
                 <>
                   <h4>{categoryLabel(categoryTab)}</h4>
@@ -4876,21 +1069,14 @@ function SessionDiffModal(props: {
 }
 
 function categoryLabel(category: DiffCategory) {
-  if (category === "workingTree") {
-    return "未暂存修改 (working tree)";
-  }
-  if (category === "staged") {
-    return "已暂存修改 (staged)";
-  }
+  if (category === "workingTree") return "未暂存修改 (working tree)";
+  if (category === "staged") return "已暂存修改 (staged)";
   return "未跟踪文件";
 }
 
 function DiffBlock(props: { diff: string }) {
   const trimmed = props.diff.trim();
-  if (!trimmed) {
-    return <p>(空)</p>;
-  }
-
+  if (!trimmed) return <p>(空)</p>;
   const lines = props.diff.replace(/\r\n/g, "\n").split("\n");
   return (
     <pre className="diff-block">
@@ -4906,104 +1092,131 @@ function DiffBlock(props: { diff: string }) {
 }
 
 function classNameForDiffLine(line: string) {
-  if (line.startsWith("+++ ") || line.startsWith("--- ")) {
-    return "diff-line-file";
-  }
-  if (line.startsWith("@@ ")) {
-    return "diff-line-hunk";
-  }
-  if (line.startsWith("diff --git") || line.startsWith("index ") || line.startsWith("new file mode") || line.startsWith("deleted file mode")) {
-    return "diff-line-header";
-  }
-  if (line.startsWith("+")) {
-    return "diff-line-add";
-  }
-  if (line.startsWith("-")) {
-    return "diff-line-remove";
-  }
+  if (line.startsWith("+++ ") || line.startsWith("--- ")) return "diff-line-file";
+  if (line.startsWith("@@ ")) return "diff-line-hunk";
+  if (line.startsWith("diff --git") || line.startsWith("index ") || line.startsWith("new file mode") || line.startsWith("deleted file mode")) return "diff-line-header";
+  if (line.startsWith("+")) return "diff-line-add";
+  if (line.startsWith("-")) return "diff-line-remove";
   return "";
 }
 
+// --- Utility functions ---
 
-function extractPermissionRawCommand(rawInput: unknown): string {
-  const candidates: unknown[] = [rawInput];
-  const rootRecord = asRecord(rawInput) ?? asRecord(tryParseJson(rawInput));
-  if (rootRecord) {
-    candidates.push(rootRecord.command, rootRecord.cmd, rootRecord.text, rootRecord.script);
-    for (const nestedKey of ["rawInput", "input", "args", "payload", "params"]) {
-      const nested = asRecord(rootRecord[nestedKey]) ?? asRecord(tryParseJson(rootRecord[nestedKey]));
-      if (nested) {
-        candidates.push(nested.command, nested.cmd, nested.text, nested.script);
-      }
-    }
+function makeId() {
+  const cryptoObject = globalThis.crypto as { randomUUID?: () => string } | undefined;
+  if (typeof cryptoObject?.randomUUID === "function") {
+    return cryptoObject.randomUUID();
   }
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim()) {
-      return candidate.trim();
-    }
-  }
-  return "";
+  return `lp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function formatSessionTitleForDisplay(title: string) {
+  return title.replace(/_/g, "_\u200b");
+}
+
+function formatRelativeUpdatedAt(updatedAt: string, now = Date.now()) {
+  const timestamp = Date.parse(updatedAt);
+  if (!Number.isFinite(timestamp)) return "刚刚";
+  const elapsedMs = Math.max(0, now - timestamp);
+  const elapsedMinutes = Math.floor(elapsedMs / 60_000);
+  if (elapsedMinutes < 1) return "刚刚";
+  if (elapsedMinutes < 60) return `${elapsedMinutes} 分钟前`;
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  if (elapsedHours < 24) return `${elapsedHours} 小时前`;
+  const elapsedDays = Math.floor(elapsedHours / 24);
+  return `${elapsedDays} 天前`;
+}
+
+function toneForConnectionState(connectionState: string): "positive" | "negative" | "neutral" {
+  if (connectionState === "connected") return "positive";
+  if (connectionState === "closed" || connectionState === "error") return "negative";
+  return "neutral";
+}
+
+function formatWorkspacePathForSidebar(workspacePath: string, allowedRoots: string[]) {
+  const normalizedPath = workspacePath.trim();
+  if (!normalizedPath) return workspacePath;
+  const matchingRoot = allowedRoots
+    .map((root) => root.trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)
+    .find((root) => isWithinRoot(root, normalizedPath));
+  if (!matchingRoot) return normalizedPath;
+  if (normalizedPath === matchingRoot) return "…/";
+  const suffix = normalizedPath.slice(matchingRoot.length).replace(/^\/+/, "");
+  return suffix ? `…/${suffix}` : "…/";
+}
+
+function normalizePath(pathValue: string) {
+  const normalized = pathValue.replace(/\\/g, "/").replace(/\/+$/, "");
+  return normalized || "/";
+}
+
+function isWithinRoot(rootPath: string, targetPath: string) {
+  return targetPath === rootPath || targetPath.startsWith(`${rootPath}/`);
+}
+
+function relativePathFromRoot(rootPath: string, targetPath: string) {
+  const normalizedRoot = normalizePath(rootPath);
+  const normalizedTarget = normalizePath(targetPath);
+  if (!isWithinRoot(normalizedRoot, normalizedTarget)) return "";
+  if (normalizedTarget === normalizedRoot) return "";
+  return normalizedTarget.slice(normalizedRoot.length).replace(/^\/+/, "");
+}
+
+function sanitizeWorkspaceSuffix(value: string) {
+  return value.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+function composeWorkspacePath(rootPath: string, suffixPath: string) {
+  const normalizedRoot = normalizePath(rootPath);
+  const normalizedSuffix = sanitizeWorkspaceSuffix(suffixPath);
+  if (!normalizedSuffix) return normalizedRoot;
+  return normalizePath(`${normalizedRoot}/${normalizedSuffix}`);
+}
+
+function resolveWorkspaceLookupPath(
+  rootPath: string,
+  suffixPath: string,
+  availableDirectories: Array<{ name: string; path: string }>,
+) {
+  const normalizedSuffix = sanitizeWorkspaceSuffix(suffixPath);
+  const composedPath = composeWorkspacePath(rootPath, normalizedSuffix);
+  if (!normalizedSuffix) return composedPath;
+  const normalizedComposedPath = normalizePath(composedPath);
+  const hasExactMatch = availableDirectories.some((entry) => normalizePath(entry.path) === normalizedComposedPath);
+  if (hasExactMatch) return composedPath;
+  return parentDirectory(composedPath);
+}
+
+function parentDirectory(pathValue: string) {
+  const trimmed = pathValue.replace(/[\\/]+$/, "");
+  const lastSeparatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  if (lastSeparatorIndex <= 0) return trimmed.slice(0, 1) || trimmed;
+  return trimmed.slice(0, lastSeparatorIndex);
+}
+
+function splitWorkspacePathByAllowedRoots(pathValue: string, allowedRoots: string[]) {
+  const normalizedPath = normalizePath(pathValue.trim() || "/");
+  const normalizedRoots = allowedRoots
+    .map((rootPath) => normalizePath(rootPath.trim()))
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  const matchedRoot = normalizedRoots.find((rootPath) => isWithinRoot(rootPath, normalizedPath));
+  const fallbackRoot = normalizedRoots[0] ?? "/";
+  const activeRoot = matchedRoot ?? fallbackRoot;
+  const suffix = relativePathFromRoot(activeRoot, normalizedPath);
+  return { root: activeRoot, suffix };
 }
 
 export const appTestables = {
-  summarizeToolTitle,
-  formatToolDetails,
-  formatToolBody,
-  asRecord,
-  extractPlanText,
-  stringifyMaybe,
-  labelForMode,
-  toneForConnectionState,
-  getSessionSidebarStatus,
-  shouldShowSessionException,
-  hasCompletedPrompt,
-  hasSessionErrorLog,
   formatRelativeUpdatedAt,
-  canNavigateUp,
-  parentDirectory,
-  isWithinRoot,
   normalizePath,
-  buildPathBreadcrumbs,
-  toSingleLine,
-  toPreviewText,
-  normalizeTimelineItem,
-  normalizeMergedTimeline,
-  normalizeSessionTitle,
+  isWithinRoot,
+  parentDirectory,
   formatSessionTitleForDisplay,
   formatWorkspacePathForSidebar,
-  resolveToolDisplayTitle,
-  extractPlanPreview,
-  extractChunkText,
-  tryParseJson,
-  normalizeAvailableCommands,
-  getPromptCommandCompletions,
-  applyPromptCommandCompletion,
-  extractPromptCommandQuery,
-  splitCompletionLabel,
-  buildCompletionSections,
-  normalizeAcpToolTitle,
-  isReadToolTitle,
-  isWriteToolTitle,
-  canMergeToolTimelineItem,
   resolveWorkspaceLookupPath,
-  buildTimelineTreeRows,
-  regroupTreeRows,
-  countChildrenByRoot,
-  isSubagentToolTitle,
-  buildDemoFixtures,
-  applyDemoPreset,
-  shouldUseExpandedPreview,
-  shouldRenderMarkdown,
-  parseMarkdownTableRow,
-  isMarkdownTableSeparator,
-  isMarkdownTableRow,
-  findLatestExecutionPlan,
-  findLatestExecutionPlanBody,
-  parseExecutionPlanSteps,
-  truncateUnknownText,
-  shouldKeepSessionRunningAfterPromptFinished,
-  groupQuestionsByGroup,
-  mergeToolTimelineItems,
-  readToolMeta,
-  isTerminalToolStatus,
+  splitWorkspacePathByAllowedRoots,
+  toneForConnectionState,
 };
