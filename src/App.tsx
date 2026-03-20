@@ -1473,9 +1473,14 @@ export default function App() {
             <strong title={activeSession.title}>{formatSessionTitleForDisplay(activeSession.title)}</strong>
             <span title={activeSession.workspacePath}>{activeSession.workspacePath}</span>
           </div>
-          <button className="secondary mobile-terminal-toggle" type="button" onClick={toggleMobileTerminalInput}>
-            {mobileTerminalInputVisible ? "收起输入" : "移动输入"}
-          </button>
+          <div className="mobile-terminal-fullscreen-actions">
+            <button className="secondary session-diff-trigger mobile-terminal-diff-trigger" type="button" onClick={openSessionDiff}>
+              Diff
+            </button>
+            <button className="secondary mobile-terminal-toggle" type="button" onClick={toggleMobileTerminalInput}>
+              {mobileTerminalInputVisible ? "收起输入" : "移动输入"}
+            </button>
+          </div>
         </div>
         <div className="mobile-terminal-fullscreen-body">
           <div className="cli-stage cli-stage-fullscreen">

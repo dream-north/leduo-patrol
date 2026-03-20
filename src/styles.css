@@ -801,6 +801,13 @@ h1 {
   gap: 4px;
 }
 
+.mobile-terminal-fullscreen-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  align-items: center;
+}
+
 .mobile-terminal-fullscreen-copy strong,
 .mobile-terminal-fullscreen-copy span {
   overflow: hidden;
@@ -827,6 +834,11 @@ h1 {
 }
 
 .mobile-terminal-fullscreen .mobile-terminal-toggle {
+  color: #f5ede4;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.mobile-terminal-fullscreen .mobile-terminal-diff-trigger {
   color: #f5ede4;
   background: rgba(255, 255, 255, 0.1);
 }
