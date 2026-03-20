@@ -78,3 +78,47 @@ test("app splitWorkspacePathByAllowedRoots splits path correctly", () => {
   assert.equal(exact.root, "/repo");
   assert.equal(exact.suffix, "");
 });
+
+test("app mobile terminal detection prefers narrow touch devices", () => {
+  assert.equal(
+    appTestables.shouldEnableMobileTerminalInput({
+      viewportWidth: 430,
+      coarsePointer: true,
+      touchPoints: 5,
+    }),
+    true,
+  );
+  assert.equal(
+    appTestables.shouldEnableMobileTerminalInput({
+      viewportWidth: 430,
+      coarsePointer: false,
+      touchPoints: 0,
+    }),
+    false,
+  );
+  assert.equal(
+    appTestables.shouldEnableMobileTerminalInput({
+      viewportWidth: 1280,
+      coarsePointer: true,
+      touchPoints: 5,
+    }),
+    false,
+  );
+});
+
+test("app mobile terminal key mapping returns expected control sequences", () => {
+  assert.equal(appTestables.mapMobileTerminalActionToSequence("enter"), "\r");
+  assert.equal(appTestables.mapMobileTerminalActionToSequence("backspace"), "\u007f");
+  assert.equal(appTestables.mapMobileTerminalActionToSequence("pageUp"), "");
+  assert.equal(appTestables.mapMobileTerminalActionToSequence("pageDown"), "");
+  assert.equal(appTestables.mapMobileTerminalActionToSequence("arrowUp"), "\u001b[A");
+  assert.equal(appTestables.mapMobileTerminalActionToSequence("arrowRight"), "\u001b[C");
+  assert.equal(appTestables.mapMobileTerminalActionToSequence("ctrlC"), "\u0003");
+});
+
+test("app mobile terminal input disables when session or connection is unavailable", () => {
+  assert.equal(appTestables.shouldDisableMobileTerminalInput(null, "connected"), true);
+  assert.equal(appTestables.shouldDisableMobileTerminalInput("session-1", "closed"), true);
+  assert.equal(appTestables.shouldDisableMobileTerminalInput("session-1", "connected", "error"), true);
+  assert.equal(appTestables.shouldDisableMobileTerminalInput("session-1", "connected"), false);
+});

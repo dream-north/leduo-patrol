@@ -49,6 +49,18 @@ pre {
   height: 100vh;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ── Access Gate ─────────────────────────────────────── */
 
 .access-gate {
@@ -104,6 +116,10 @@ pre {
   gap: 12px;
   height: 100vh;
   padding: 12px;
+}
+
+.shell-has-terminal-drawer {
+  padding-bottom: 48px;
 }
 
 .panel {
@@ -642,6 +658,106 @@ h1 {
   caret-color: transparent;
 }
 
+.cli-stage {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.mobile-terminal-toggle {
+  background: rgba(23, 117, 109, 0.14);
+  color: #0d6a63;
+}
+
+.mobile-terminal-input-shell {
+  --mobile-terminal-input-offset: 0px;
+  flex-shrink: 0;
+  position: sticky;
+  bottom: calc(var(--mobile-terminal-input-offset) + env(safe-area-inset-bottom, 0px));
+  z-index: 3;
+  display: grid;
+  gap: 10px;
+  padding: 12px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(30, 22, 18, 0.96), rgba(21, 15, 12, 0.98)),
+    #1a1a1a;
+  box-shadow: 0 -14px 30px rgba(0, 0, 0, 0.28);
+}
+
+.mobile-terminal-input-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  color: #f5ede4;
+}
+
+.mobile-terminal-input-header strong {
+  display: block;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.mobile-terminal-input-header p {
+  margin-top: 4px;
+  color: rgba(245, 237, 228, 0.7);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.mobile-terminal-input-collapse {
+  flex-shrink: 0;
+  color: #f5ede4;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.mobile-terminal-input-compose {
+  display: grid;
+  gap: 8px;
+}
+
+.mobile-terminal-input-compose textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #24180e;
+  line-height: 1.5;
+}
+
+.mobile-terminal-input-compose textarea:focus-visible {
+  outline: 2px solid rgba(216, 91, 52, 0.4);
+  outline-offset: 2px;
+}
+
+.mobile-terminal-send {
+  min-height: 40px;
+}
+
+.mobile-terminal-action-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mobile-terminal-action {
+  min-height: 40px;
+  padding: 0 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #f5ede4;
+}
+
+.mobile-terminal-action-accent {
+  background: rgba(216, 91, 52, 0.24);
+  color: #fff4ef;
+}
+
 .main-empty {
   display: flex;
   align-items: center;
@@ -991,6 +1107,25 @@ h1 {
     min-height: 70vh;
   }
 
+  .cli-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .cli-toolbar-info,
+  .cli-toolbar-actions {
+    width: 100%;
+  }
+
+  .cli-toolbar-actions {
+    flex-wrap: wrap;
+  }
+
+  .cli-toolbar-actions .secondary {
+    flex: 1 1 140px;
+    justify-content: center;
+  }
+
   body {
     overflow: auto;
   }
@@ -1004,6 +1139,25 @@ h1 {
 
 .vscode-settings-actions {
   grid-template-columns: 1fr;
+}
+
+@media (max-width: 720px) {
+  .shell-mobile-terminal-input-visible .main-content {
+    min-height: calc(100vh - 180px);
+  }
+
+  .cli-terminal-container {
+    padding: 4px 6px;
+  }
+
+  .mobile-terminal-input-shell {
+    gap: 8px;
+    padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .mobile-terminal-action-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 /* ── Terminal Drawer ─────────────────────────────────── */

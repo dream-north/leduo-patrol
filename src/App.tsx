@@ -1,6 +1,24 @@
-import { useState, useEffect, useRef, useMemo, type CSSProperties, type FormEvent, Fragment } from "react";
+import { useState, useEffect, useRef, useMemo, type CSSProperties, type FormEvent, type KeyboardEvent, Fragment } from "react";
 
 type ActivityState = "running" | "completed" | "pending" | "idle";
+type ConnectionState = "connecting" | "connected" | "closed";
+type MobileTerminalActionKey =
+  | "enter"
+  | "backspace"
+  | "tab"
+  | "escape"
+  | "pageUp"
+  | "pageDown"
+  | "arrowUp"
+  | "arrowDown"
+  | "arrowLeft"
+  | "arrowRight"
+  | "ctrlC";
+type MobileTerminalEnvironment = {
+  viewportWidth: number;
+  coarsePointer: boolean;
+  touchPoints: number;
+};
 
 type SessionRecord = {
   clientSessionId: string;
@@ -74,6 +92,20 @@ type EventMessage =
 
 const VSCODE_LAUNCH_CONFIG_STORAGE_KEY = "leduo_vscode_launch_config";
 const WORKSPACE_SUGGESTION_INITIAL_LIMIT = 6;
+const MOBILE_TERMINAL_BREAKPOINT = 960;
+const MOBILE_TERMINAL_ACTIONS: Array<{ key: MobileTerminalActionKey; label: string; accent?: boolean }> = [
+  { key: "enter", label: "Enter", accent: true },
+  { key: "backspace", label: "Backspace" },
+  { key: "tab", label: "Tab" },
+  { key: "escape", label: "Esc" },
+  { key: "pageUp", label: "PgUp" },
+  { key: "pageDown", label: "PgDn" },
+  { key: "arrowUp", label: "↑" },
+  { key: "arrowDown", label: "↓" },
+  { key: "arrowLeft", label: "←" },
+  { key: "arrowRight", label: "→" },
+  { key: "ctrlC", label: "Ctrl+C" },
+];
 
 function withAccessKey(path: string, accessKey: string) {
   const separator = path.includes("?") ? "&" : "?";
@@ -122,11 +154,16 @@ function loadVscodeLaunchConfig(sshHost: string): VscodeLaunchConfig {
 export default function App() {
   const [accessKey, setAccessKey] = useState(() => getAccessKeyFromUrl());
   const [accessKeyInput, setAccessKeyInput] = useState(() => getAccessKeyFromUrl());
-  const [connectionState, setConnectionState] = useState<"connecting" | "connected" | "closed">("connecting");
+  const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
+  const [mobileTerminalDraft, setMobileTerminalDraft] = useState("");
+  const [mobileTerminalInputDetected, setMobileTerminalInputDetected] = useState(false);
+  const [mobileTerminalInputForced, setMobileTerminalInputForced] = useState(false);
+  const [mobileTerminalInputDismissed, setMobileTerminalInputDismissed] = useState(false);
+  const [mobileTerminalKeyboardInset, setMobileTerminalKeyboardInset] = useState(0);
 
   // Create session modal
   const [createSessionModalOpen, setCreateSessionModalOpen] = useState(false);
@@ -165,6 +202,18 @@ export default function App() {
     () => sessions.find((s) => s.clientSessionId === activeSessionId) ?? null,
     [sessions, activeSessionId],
   );
+  const mobileTerminalInputEnabled = mobileTerminalInputDetected || mobileTerminalInputForced;
+  const mobileTerminalInputDisabled = shouldDisableMobileTerminalInput(
+    activeSessionId,
+    connectionState,
+    activeSession?.connectionState,
+  );
+  const mobileTerminalInputVisible = mobileTerminalInputEnabled && !mobileTerminalInputDismissed && Boolean(activeSession);
+  const shellClassName = [
+    "shell",
+    config?.enableShell ? "shell-has-terminal-drawer" : "",
+    mobileTerminalInputVisible ? "shell-mobile-terminal-input-visible" : "",
+  ].filter(Boolean).join(" ");
 
   // --- Derived workspace creation state ---
   const createWorkspaceRoot = useMemo(() => {
@@ -232,6 +281,66 @@ export default function App() {
         setDirectoryError(error instanceof Error ? error.message : String(error));
       });
   }, [accessKey, directoryBrowserPath]);
+
+  useEffect(() => {
+    const updateMobileTerminalCapability = () => {
+      const coarsePointer = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+      const touchPoints = navigator.maxTouchPoints ?? 0;
+      setMobileTerminalInputDetected(
+        shouldEnableMobileTerminalInput({
+          viewportWidth: window.innerWidth,
+          coarsePointer,
+          touchPoints,
+        }),
+      );
+    };
+
+    updateMobileTerminalCapability();
+    window.addEventListener("resize", updateMobileTerminalCapability);
+    window.addEventListener("orientationchange", updateMobileTerminalCapability);
+    return () => {
+      window.removeEventListener("resize", updateMobileTerminalCapability);
+      window.removeEventListener("orientationchange", updateMobileTerminalCapability);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!mobileTerminalInputEnabled) {
+      setMobileTerminalInputDismissed(false);
+      setMobileTerminalKeyboardInset(0);
+    }
+  }, [mobileTerminalInputEnabled]);
+
+  useEffect(() => {
+    setMobileTerminalDraft("");
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    if (!mobileTerminalInputVisible) {
+      setMobileTerminalKeyboardInset(0);
+      return;
+    }
+
+    const visualViewport = window.visualViewport;
+    if (!visualViewport) {
+      return;
+    }
+
+    const updateViewportInset = () => {
+      const nextInset = Math.max(0, window.innerHeight - visualViewport.height - visualViewport.offsetTop);
+      setMobileTerminalKeyboardInset(nextInset);
+    };
+
+    updateViewportInset();
+    visualViewport.addEventListener("resize", updateViewportInset);
+    visualViewport.addEventListener("scroll", updateViewportInset);
+    window.addEventListener("orientationchange", updateViewportInset);
+    return () => {
+      visualViewport.removeEventListener("resize", updateViewportInset);
+      visualViewport.removeEventListener("scroll", updateViewportInset);
+      window.removeEventListener("orientationchange", updateViewportInset);
+    };
+  }, [mobileTerminalInputVisible]);
 
   // --- WebSocket connection ---
   useEffect(() => {
@@ -385,6 +494,92 @@ export default function App() {
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 8000);
+  }
+
+  function sendCliInput(data: string) {
+    if (!activeSessionId || !data) {
+      return false;
+    }
+
+    return sendCommand({
+      type: "cli_input",
+      payload: { clientSessionId: activeSessionId, data },
+    });
+  }
+
+  function sendMobileTerminalDraft() {
+    if (!mobileTerminalDraft || mobileTerminalInputDisabled) {
+      return;
+    }
+
+    if (sendCliInput(mobileTerminalDraft)) {
+      setMobileTerminalDraft("");
+    }
+  }
+
+  function sendMobileTerminalAction(key: MobileTerminalActionKey) {
+    if (mobileTerminalInputDisabled) {
+      return;
+    }
+
+    if (key === "pageUp" || key === "pageDown") {
+      scrollActiveCliTerminalPages(key === "pageUp" ? -1 : 1);
+      return;
+    }
+
+    sendCliInput(mapMobileTerminalActionToSequence(key));
+  }
+
+  function scrollActiveCliTerminalPages(direction: -1 | 1) {
+    if (!activeSessionId) {
+      return;
+    }
+
+    const cached = cliTerminalsRef.current.get(activeSessionId);
+    if (!cached) {
+      return;
+    }
+
+    const terminal = cached.terminal as { rows?: number; scrollLines?: (lineCount: number) => void };
+    const lineCount = Math.max(1, Math.round((terminal.rows ?? 24) * 0.55));
+    if (typeof terminal.scrollLines === "function") {
+      terminal.scrollLines(direction * lineCount);
+      return;
+    }
+
+    const viewport = cached.element.querySelector(".xterm-viewport");
+    if (viewport instanceof HTMLElement) {
+      viewport.scrollBy({
+        top: direction * viewport.clientHeight * 0.55,
+        behavior: "smooth",
+      });
+    }
+  }
+
+  function toggleMobileTerminalInput() {
+    if (mobileTerminalInputDetected) {
+      setMobileTerminalInputDismissed((current) => !current);
+      return;
+    }
+
+    if (mobileTerminalInputVisible) {
+      setMobileTerminalInputForced(false);
+      setMobileTerminalInputDismissed(false);
+      return;
+    }
+
+    setMobileTerminalInputForced(true);
+    setMobileTerminalInputDismissed(false);
+  }
+
+  function hideMobileTerminalInput() {
+    if (mobileTerminalInputDetected) {
+      setMobileTerminalInputDismissed(true);
+      return;
+    }
+
+    setMobileTerminalInputForced(false);
+    setMobileTerminalInputDismissed(false);
   }
 
   function dismissToast(id: string) {
@@ -768,7 +963,7 @@ export default function App() {
 
   return (
     <>
-    <div className="shell">
+    <div className={shellClassName}>
       <aside className="panel masthead">
         <div className="brand-stack">
           <div className="brand-lockup">
@@ -839,6 +1034,19 @@ export default function App() {
                 <code className="cli-toolbar-path" title={activeSession.workspacePath}>{activeSession.workspacePath}</code>
               </div>
               <div className="cli-toolbar-actions">
+                {activeSession ? (
+                  <button
+                    className="secondary mobile-terminal-toggle"
+                    type="button"
+                    onClick={toggleMobileTerminalInput}
+                  >
+                    {mobileTerminalInputVisible
+                      ? "收起输入"
+                      : mobileTerminalInputDetected
+                        ? "移动输入"
+                        : "试用移动输入"}
+                  </button>
+                ) : null}
                 <button className="secondary session-open-vscode" onClick={() => openWorkspaceInVscode(activeSession.workspacePath)}>
                   VSCode
                 </button>
@@ -850,7 +1058,20 @@ export default function App() {
                 </button>
               </div>
             </div>
-            <div className="cli-terminal-container" ref={cliTerminalContainerRef} />
+            <div className="cli-stage">
+              <div className="cli-terminal-container" ref={cliTerminalContainerRef} />
+              {mobileTerminalInputVisible ? (
+                <MobileTerminalInputBar
+                  draft={mobileTerminalDraft}
+                  disabled={mobileTerminalInputDisabled}
+                  keyboardInset={mobileTerminalKeyboardInset}
+                  onChangeDraft={setMobileTerminalDraft}
+                  onSendDraft={sendMobileTerminalDraft}
+                  onAction={sendMobileTerminalAction}
+                  onToggleVisibility={hideMobileTerminalInput}
+                />
+              ) : null}
+            </div>
           </>
         ) : (
           <div className="empty main-empty">
@@ -1062,6 +1283,79 @@ export default function App() {
 }
 
 // --- Helper components ---
+
+function MobileTerminalInputBar(props: {
+  draft: string;
+  disabled: boolean;
+  keyboardInset: number;
+  onChangeDraft: (value: string) => void;
+  onSendDraft: () => void;
+  onAction: (key: MobileTerminalActionKey) => void;
+  onToggleVisibility: () => void;
+}) {
+  const mobileInputStyle = {
+    "--mobile-terminal-input-offset": `${props.keyboardInset}px`,
+  } as CSSProperties;
+
+  function handleDraftKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      props.onSendDraft();
+    }
+  }
+
+  return (
+    <div className="mobile-terminal-input-shell" style={mobileInputStyle}>
+      <div className="mobile-terminal-input-header">
+        <div>
+          <strong>移动端终端输入</strong>
+          <p>粘贴文本后点“发送文本”，确认时再用 Enter 或方向键。</p>
+        </div>
+        <button className="secondary mobile-terminal-input-collapse" type="button" onClick={props.onToggleVisibility}>
+          收起
+        </button>
+      </div>
+      <div className="mobile-terminal-input-compose">
+        <label className="sr-only" htmlFor="mobile-terminal-input">
+          终端输入
+        </label>
+        <textarea
+          id="mobile-terminal-input"
+          value={props.draft}
+          onChange={(event) => props.onChangeDraft(event.target.value)}
+          onKeyDown={handleDraftKeyDown}
+          placeholder="在这里粘贴命令、确认文字或多行文本"
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          rows={3}
+          disabled={props.disabled}
+        />
+        <button
+          className="primary mobile-terminal-send"
+          type="button"
+          onClick={props.onSendDraft}
+          disabled={props.disabled || !props.draft}
+        >
+          发送文本
+        </button>
+      </div>
+      <div className="mobile-terminal-action-grid" role="group" aria-label="终端快捷按键">
+        {MOBILE_TERMINAL_ACTIONS.map((action) => (
+          <button
+            key={action.key}
+            className={`secondary mobile-terminal-action ${action.accent ? "mobile-terminal-action-accent" : ""}`}
+            type="button"
+            onClick={() => props.onAction(action.key)}
+            disabled={props.disabled}
+          >
+            {action.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function SessionActivityTag(props: { activityState?: ActivityState }) {
   switch (props.activityState) {
@@ -1383,6 +1677,49 @@ function splitWorkspacePathByAllowedRoots(pathValue: string, allowedRoots: strin
   return { root: activeRoot, suffix };
 }
 
+function shouldEnableMobileTerminalInput(environment: MobileTerminalEnvironment) {
+  return environment.viewportWidth <= MOBILE_TERMINAL_BREAKPOINT
+    && (environment.coarsePointer || environment.touchPoints > 0);
+}
+
+function mapMobileTerminalActionToSequence(key: MobileTerminalActionKey) {
+  switch (key) {
+    case "enter":
+      return "\r";
+    case "backspace":
+      return "\u007f";
+    case "tab":
+      return "\t";
+    case "escape":
+      return "\u001b";
+    case "pageUp":
+    case "pageDown":
+      return "";
+    case "arrowUp":
+      return "\u001b[A";
+    case "arrowDown":
+      return "\u001b[B";
+    case "arrowRight":
+      return "\u001b[C";
+    case "arrowLeft":
+      return "\u001b[D";
+    case "ctrlC":
+      return "\u0003";
+    default:
+      return "";
+  }
+}
+
+function shouldDisableMobileTerminalInput(
+  activeSessionId: string | null,
+  connectionState: ConnectionState,
+  sessionConnectionState?: SessionRecord["connectionState"],
+) {
+  return !activeSessionId
+    || connectionState !== "connected"
+    || (sessionConnectionState != null && sessionConnectionState !== "connected");
+}
+
 export const appTestables = {
   buildLocationWithAccessKey,
   formatRelativeUpdatedAt,
@@ -1392,7 +1729,10 @@ export const appTestables = {
   parentDirectory,
   formatSessionTitleForDisplay,
   formatWorkspacePathForSidebar,
+  mapMobileTerminalActionToSequence,
   resolveWorkspaceLookupPath,
+  shouldDisableMobileTerminalInput,
+  shouldEnableMobileTerminalInput,
   splitWorkspacePathByAllowedRoots,
   toneForConnectionState,
 };
