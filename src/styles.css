@@ -647,6 +647,9 @@ h1 {
 
 .cli-terminal-container .xterm-viewport {
   overflow-y: auto !important;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
 }
 
 /* Suppress browser focus indicators on xterm's internal textarea */
@@ -663,6 +666,10 @@ h1 {
   flex: 1;
   min-height: 0;
   flex-direction: column;
+}
+
+.cli-stage-fullscreen {
+  background: #1a1a1a;
 }
 
 .mobile-terminal-toggle {
@@ -684,6 +691,13 @@ h1 {
     linear-gradient(180deg, rgba(30, 22, 18, 0.96), rgba(21, 15, 12, 0.98)),
     #1a1a1a;
   box-shadow: 0 -14px 30px rgba(0, 0, 0, 0.28);
+}
+
+.mobile-terminal-input-shell-fullscreen {
+  position: relative;
+  bottom: auto;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  box-shadow: none;
 }
 
 .mobile-terminal-input-header {
@@ -756,6 +770,79 @@ h1 {
 .mobile-terminal-action-accent {
   background: rgba(216, 91, 52, 0.24);
   color: #fff4ef;
+}
+
+.mobile-terminal-fullscreen {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 320;
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(180deg, rgba(31, 23, 18, 0.98), rgba(16, 12, 10, 0.98)),
+    #15110e;
+  color: #f5ede4;
+}
+
+.mobile-terminal-fullscreen-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: calc(12px + env(safe-area-inset-top, 0px)) 12px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mobile-terminal-fullscreen-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mobile-terminal-fullscreen-copy strong,
+.mobile-terminal-fullscreen-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-terminal-fullscreen-copy strong {
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.mobile-terminal-fullscreen-copy span {
+  color: rgba(245, 237, 228, 0.62);
+  font-size: 11px;
+}
+
+.mobile-terminal-back {
+  flex-shrink: 0;
+  min-height: 36px;
+  padding: 0 12px;
+  color: #f5ede4;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.mobile-terminal-fullscreen .mobile-terminal-toggle {
+  color: #f5ede4;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.mobile-terminal-fullscreen-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.cli-terminal-container-fullscreen {
+  border-radius: 0;
+  padding: 6px 8px;
 }
 
 .main-empty {
@@ -1146,6 +1233,19 @@ h1 {
     min-height: calc(100vh - 180px);
   }
 
+  .shell {
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .panel {
+    border-radius: 16px;
+  }
+
+  .masthead {
+    padding: 12px;
+  }
+
   .cli-terminal-container {
     padding: 4px 6px;
   }
@@ -1157,6 +1257,15 @@ h1 {
 
   .mobile-terminal-action-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mobile-terminal-fullscreen-header {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .mobile-terminal-fullscreen-copy strong {
+    font-size: 12px;
   }
 }
 
@@ -1239,6 +1348,9 @@ h1 {
 
 .terminal-viewport .xterm-viewport {
   overflow-y: auto !important;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
 }
 
 /* Pad the bottom of the page so content doesn't hide under the drawer */

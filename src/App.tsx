@@ -93,6 +93,8 @@ type EventMessage =
 const VSCODE_LAUNCH_CONFIG_STORAGE_KEY = "leduo_vscode_launch_config";
 const WORKSPACE_SUGGESTION_INITIAL_LIMIT = 6;
 const MOBILE_TERMINAL_BREAKPOINT = 960;
+const MOBILE_TERMINAL_FONT_SIZE = 12;
+const DEFAULT_TERMINAL_FONT_SIZE = 13;
 const MOBILE_TERMINAL_ACTIONS: Array<{ key: MobileTerminalActionKey; label: string; accent?: boolean }> = [
   { key: "enter", label: "Enter", accent: true },
   { key: "backspace", label: "Backspace" },
@@ -164,6 +166,8 @@ export default function App() {
   const [mobileTerminalInputForced, setMobileTerminalInputForced] = useState(false);
   const [mobileTerminalInputDismissed, setMobileTerminalInputDismissed] = useState(false);
   const [mobileTerminalKeyboardInset, setMobileTerminalKeyboardInset] = useState(0);
+  const [mobileTerminalViewportHeight, setMobileTerminalViewportHeight] = useState<number | null>(null);
+  const [mobileTerminalViewportOffsetTop, setMobileTerminalViewportOffsetTop] = useState(0);
 
   // Create session modal
   const [createSessionModalOpen, setCreateSessionModalOpen] = useState(false);
@@ -203,17 +207,27 @@ export default function App() {
     [sessions, activeSessionId],
   );
   const mobileTerminalInputEnabled = mobileTerminalInputDetected || mobileTerminalInputForced;
+  const mobileTerminalFullscreenVisible = mobileTerminalInputDetected && Boolean(activeSession);
   const mobileTerminalInputDisabled = shouldDisableMobileTerminalInput(
     activeSessionId,
     connectionState,
     activeSession?.connectionState,
   );
   const mobileTerminalInputVisible = mobileTerminalInputEnabled && !mobileTerminalInputDismissed && Boolean(activeSession);
+  const inlineMobileTerminalInputVisible = mobileTerminalInputVisible && !mobileTerminalFullscreenVisible;
   const shellClassName = [
     "shell",
     config?.enableShell ? "shell-has-terminal-drawer" : "",
-    mobileTerminalInputVisible ? "shell-mobile-terminal-input-visible" : "",
+    inlineMobileTerminalInputVisible ? "shell-mobile-terminal-input-visible" : "",
   ].filter(Boolean).join(" ");
+  const mobileTerminalFullscreenStyle = useMemo(
+    () =>
+      ({
+        top: mobileTerminalViewportOffsetTop ? `${mobileTerminalViewportOffsetTop}px` : undefined,
+        height: mobileTerminalViewportHeight != null ? `${mobileTerminalViewportHeight}px` : undefined,
+      }) as CSSProperties,
+    [mobileTerminalViewportHeight, mobileTerminalViewportOffsetTop],
+  );
 
   // --- Derived workspace creation state ---
   const createWorkspaceRoot = useMemo(() => {
@@ -308,16 +322,23 @@ export default function App() {
     if (!mobileTerminalInputEnabled) {
       setMobileTerminalInputDismissed(false);
       setMobileTerminalKeyboardInset(0);
+      setMobileTerminalViewportHeight(null);
+      setMobileTerminalViewportOffsetTop(0);
     }
   }, [mobileTerminalInputEnabled]);
 
   useEffect(() => {
     setMobileTerminalDraft("");
-  }, [activeSessionId]);
+    if (mobileTerminalInputDetected && activeSessionId) {
+      setMobileTerminalInputDismissed(true);
+    }
+  }, [activeSessionId, mobileTerminalInputDetected]);
 
   useEffect(() => {
-    if (!mobileTerminalInputVisible) {
+    if (!mobileTerminalFullscreenVisible && !inlineMobileTerminalInputVisible) {
       setMobileTerminalKeyboardInset(0);
+      setMobileTerminalViewportHeight(null);
+      setMobileTerminalViewportOffsetTop(0);
       return;
     }
 
@@ -329,6 +350,10 @@ export default function App() {
     const updateViewportInset = () => {
       const nextInset = Math.max(0, window.innerHeight - visualViewport.height - visualViewport.offsetTop);
       setMobileTerminalKeyboardInset(nextInset);
+      if (mobileTerminalFullscreenVisible) {
+        setMobileTerminalViewportHeight(visualViewport.height);
+        setMobileTerminalViewportOffsetTop(visualViewport.offsetTop);
+      }
     };
 
     updateViewportInset();
@@ -340,7 +365,46 @@ export default function App() {
       visualViewport.removeEventListener("scroll", updateViewportInset);
       window.removeEventListener("orientationchange", updateViewportInset);
     };
-  }, [mobileTerminalInputVisible]);
+  }, [inlineMobileTerminalInputVisible, mobileTerminalFullscreenVisible]);
+
+  useEffect(() => {
+    if (!mobileTerminalFullscreenVisible) {
+      return;
+    }
+
+    const scrollY = window.scrollY;
+    const body = document.body;
+    const documentElement = document.documentElement;
+    const previousBodyPosition = body.style.position;
+    const previousBodyTop = body.style.top;
+    const previousBodyLeft = body.style.left;
+    const previousBodyRight = body.style.right;
+    const previousBodyWidth = body.style.width;
+    const previousBodyOverflow = body.style.overflow;
+    const previousHtmlOverflow = documentElement.style.overflow;
+    const previousHtmlOverscrollBehavior = documentElement.style.overscrollBehavior;
+
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.left = "0";
+    body.style.right = "0";
+    body.style.width = "100%";
+    body.style.overflow = "hidden";
+    documentElement.style.overflow = "hidden";
+    documentElement.style.overscrollBehavior = "none";
+
+    return () => {
+      body.style.position = previousBodyPosition;
+      body.style.top = previousBodyTop;
+      body.style.left = previousBodyLeft;
+      body.style.right = previousBodyRight;
+      body.style.width = previousBodyWidth;
+      body.style.overflow = previousBodyOverflow;
+      documentElement.style.overflow = previousHtmlOverflow;
+      documentElement.style.overscrollBehavior = previousHtmlOverscrollBehavior;
+      window.scrollTo(0, scrollY);
+    };
+  }, [mobileTerminalFullscreenVisible]);
 
   // --- WebSocket connection ---
   useEffect(() => {
@@ -382,7 +446,15 @@ export default function App() {
     switch (message.type) {
       case "ready":
         setSessions(message.payload.sessions);
-        if (message.payload.sessions.length > 0 && !activeSessionId) {
+        if (
+          message.payload.sessions.length > 0
+          && !activeSessionId
+          && !shouldEnableMobileTerminalInput({
+            viewportWidth: window.innerWidth,
+            coarsePointer: window.matchMedia?.("(pointer: coarse)").matches ?? false,
+            touchPoints: navigator.maxTouchPoints ?? 0,
+          })
+        ) {
           setActiveSessionId(message.payload.sessions[0].clientSessionId);
         }
         break;
@@ -597,7 +669,16 @@ export default function App() {
     const cached = cliTerminalsRef.current.get(activeSessionId);
     if (cached) {
       const fit = cached.fitAddon as { fit: () => void };
-      const term = cached.terminal as { focus: () => void; refresh: (start: number, end: number) => void; cols: number; rows: number };
+      const term = cached.terminal as {
+        focus: () => void;
+        refresh: (start: number, end: number) => void;
+        cols: number;
+        rows: number;
+        options?: { fontSize?: number };
+      };
+      if (term.options) {
+        term.options.fontSize = getTerminalFontSize(mobileTerminalInputEnabled);
+      }
       // Move the cached wrapper back into the visible container (never re-call open())
       containerEl.innerHTML = "";
       containerEl.appendChild(cached.element);
@@ -636,7 +717,7 @@ export default function App() {
         cursorBlink: false,
         cursorInactiveStyle: "none",
         fontFamily: '"IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace',
-        fontSize: 13,
+        fontSize: getTerminalFontSize(mobileTerminalInputEnabled),
         theme: {
           background: "#1a1a1a",
           foreground: "#e8e8e8",
@@ -723,7 +804,7 @@ export default function App() {
         containerEl.innerHTML = "";
       }
     };
-  }, [activeSessionId, connectionState]);
+  }, [activeSessionId, connectionState, mobileTerminalInputEnabled]);
 
   // Cleanup cached terminals when sessions are removed
   useEffect(() => {
@@ -763,7 +844,7 @@ export default function App() {
         scrollback: 1000,
         cursorBlink: true,
         fontFamily: '"IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace',
-        fontSize: 13,
+        fontSize: getTerminalFontSize(mobileTerminalInputEnabled),
         theme: {
           background: "#1a1a1a",
           foreground: "#e8e8e8",
@@ -825,7 +906,7 @@ export default function App() {
       disposed = true;
       cleanupResizeObserver?.();
     };
-  }, [terminalOpen, activeSession?.clientSessionId, config?.enableShell]);
+  }, [terminalOpen, activeSession?.clientSessionId, config?.enableShell, mobileTerminalInputEnabled]);
 
   // --- Session actions ---
   function createSession() {
@@ -1021,7 +1102,7 @@ export default function App() {
       </aside>
 
       <main className="panel main-content">
-        {activeSession ? (
+        {activeSession && !mobileTerminalFullscreenVisible ? (
           <>
             <div className="cli-toolbar">
               <div className="cli-toolbar-info">
@@ -1060,11 +1141,12 @@ export default function App() {
             </div>
             <div className="cli-stage">
               <div className="cli-terminal-container" ref={cliTerminalContainerRef} />
-              {mobileTerminalInputVisible ? (
+              {inlineMobileTerminalInputVisible ? (
                 <MobileTerminalInputBar
                   draft={mobileTerminalDraft}
                   disabled={mobileTerminalInputDisabled}
                   keyboardInset={mobileTerminalKeyboardInset}
+                  fullscreen={false}
                   onChangeDraft={setMobileTerminalDraft}
                   onSendDraft={sendMobileTerminalDraft}
                   onAction={sendMobileTerminalAction}
@@ -1277,6 +1359,39 @@ export default function App() {
         </div>
       ) : null}
     </div>
+    {mobileTerminalFullscreenVisible && activeSession ? (
+      <div className="mobile-terminal-fullscreen" style={mobileTerminalFullscreenStyle}>
+        <div className="mobile-terminal-fullscreen-header">
+          <button className="secondary mobile-terminal-back" type="button" onClick={() => setActiveSessionId(null)}>
+            返回
+          </button>
+          <div className="mobile-terminal-fullscreen-copy">
+            <strong title={activeSession.title}>{formatSessionTitleForDisplay(activeSession.title)}</strong>
+            <span title={activeSession.workspacePath}>{activeSession.workspacePath}</span>
+          </div>
+          <button className="secondary mobile-terminal-toggle" type="button" onClick={toggleMobileTerminalInput}>
+            {mobileTerminalInputVisible ? "收起输入" : "移动输入"}
+          </button>
+        </div>
+        <div className="mobile-terminal-fullscreen-body">
+          <div className="cli-stage cli-stage-fullscreen">
+            <div className="cli-terminal-container cli-terminal-container-fullscreen" ref={cliTerminalContainerRef} />
+            {mobileTerminalInputVisible ? (
+              <MobileTerminalInputBar
+                draft={mobileTerminalDraft}
+                disabled={mobileTerminalInputDisabled}
+                keyboardInset={mobileTerminalKeyboardInset}
+                fullscreen
+                onChangeDraft={setMobileTerminalDraft}
+                onSendDraft={sendMobileTerminalDraft}
+                onAction={sendMobileTerminalAction}
+                onToggleVisibility={hideMobileTerminalInput}
+              />
+            ) : null}
+          </div>
+        </div>
+      </div>
+    ) : null}
     <ToastContainer toasts={toasts} onDismiss={dismissToast} onNavigate={(sessionId) => setActiveSessionId(sessionId)} />
     </>
   );
@@ -1288,6 +1403,7 @@ function MobileTerminalInputBar(props: {
   draft: string;
   disabled: boolean;
   keyboardInset: number;
+  fullscreen: boolean;
   onChangeDraft: (value: string) => void;
   onSendDraft: () => void;
   onAction: (key: MobileTerminalActionKey) => void;
@@ -1305,7 +1421,10 @@ function MobileTerminalInputBar(props: {
   }
 
   return (
-    <div className="mobile-terminal-input-shell" style={mobileInputStyle}>
+    <div
+      className={`mobile-terminal-input-shell ${props.fullscreen ? "mobile-terminal-input-shell-fullscreen" : ""}`}
+      style={mobileInputStyle}
+    >
       <div className="mobile-terminal-input-header">
         <div>
           <strong>移动端终端输入</strong>
@@ -1677,6 +1796,10 @@ function splitWorkspacePathByAllowedRoots(pathValue: string, allowedRoots: strin
   return { root: activeRoot, suffix };
 }
 
+function getTerminalFontSize(useCompactMobileFont: boolean) {
+  return useCompactMobileFont ? MOBILE_TERMINAL_FONT_SIZE : DEFAULT_TERMINAL_FONT_SIZE;
+}
+
 function shouldEnableMobileTerminalInput(environment: MobileTerminalEnvironment) {
   return environment.viewportWidth <= MOBILE_TERMINAL_BREAKPOINT
     && (environment.coarsePointer || environment.touchPoints > 0);
@@ -1729,6 +1852,7 @@ export const appTestables = {
   parentDirectory,
   formatSessionTitleForDisplay,
   formatWorkspacePathForSidebar,
+  getTerminalFontSize,
   mapMobileTerminalActionToSequence,
   resolveWorkspaceLookupPath,
   shouldDisableMobileTerminalInput,

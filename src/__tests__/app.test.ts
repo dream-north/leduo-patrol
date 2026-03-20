@@ -116,6 +116,11 @@ test("app mobile terminal key mapping returns expected control sequences", () =>
   assert.equal(appTestables.mapMobileTerminalActionToSequence("ctrlC"), "\u0003");
 });
 
+test("app terminal font size uses compact value on mobile", () => {
+  assert.equal(appTestables.getTerminalFontSize(true), 12);
+  assert.equal(appTestables.getTerminalFontSize(false), 13);
+});
+
 test("app mobile terminal input disables when session or connection is unavailable", () => {
   assert.equal(appTestables.shouldDisableMobileTerminalInput(null, "connected"), true);
   assert.equal(appTestables.shouldDisableMobileTerminalInput("session-1", "closed"), true);
