@@ -16,7 +16,7 @@ import { resolveBindMode } from "./launch-mode.js";
 
 type ClientCommand =
   | { type: "hello" }
-  | { type: "create_session"; payload: { workspacePath: string; title?: string } }
+  | { type: "create_session"; payload: { workspacePath: string; title?: string; allowSkipPermissions?: boolean } }
   | { type: "close_session"; payload: { clientSessionId: string } }
   | { type: "cli_start"; payload: { clientSessionId: string; cols: number; rows: number } }
   | { type: "cli_input"; payload: { clientSessionId: string; data: string } }
@@ -51,6 +51,7 @@ const launchUser = userInfo().username;
 const claudeBin = process.env.LEDUO_PATROL_CLAUDE_BIN?.trim() || undefined;
 const accessKey = process.env.LEDUO_PATROL_ACCESS_KEY?.trim() || createAccessKey();
 const enableShell = process.env.LEDUO_ENABLE_SHELL === "true";
+const allowSkipPermissions = process.env.LEDUO_PATROL_ALLOW_SKIP_PERMISSIONS === "true";
 
 const app = express();
 const server = createServer(app);
@@ -58,6 +59,7 @@ const wss = new WebSocketServer({ server, path: "/ws" });
 const sessionManager = new SessionManager({
   allowedRoots,
   claudeBin,
+  allowSkipPermissions,
 });
 
 await sessionManager.initialize();
@@ -107,6 +109,7 @@ app.get("/api/config", (_req, res) => {
     launchMode: bindMode,
     launchHost,
     launchUser,
+    allowSkipPermissions,
   });
 });
 
@@ -221,6 +224,7 @@ wss.on("connection", (socket, request) => {
           await sessionManager.createSession(
             message.payload.workspacePath,
             message.payload.title,
+            message.payload.allowSkipPermissions,
           );
           break;
         case "close_session":

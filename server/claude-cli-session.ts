@@ -9,6 +9,7 @@ export interface ClaudeCliSessionOptions {
   cols?: number;
   rows?: number;
   claudeBin?: string;
+  allowSkipPermissions?: boolean;
 }
 
 /**
@@ -33,6 +34,10 @@ export class ClaudeCliSession extends EventEmitter {
     const args: string[] = opts.resume
       ? ["--resume", opts.sessionId]
       : ["--session-id", opts.sessionId];
+
+    if (!opts.resume && opts.allowSkipPermissions) {
+      args.push("--allow-dangerously-skip-permissions");
+    }
 
     this.pty = spawn(bin, args, {
       name: "xterm-256color",

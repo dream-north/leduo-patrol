@@ -16,6 +16,7 @@ export type SessionSnapshot = {
   activityState: ActivityState;
   sessionId: string;
   updatedAt: string;
+  allowSkipPermissions?: boolean;
 };
 
 type PersistedSession = {
@@ -24,6 +25,7 @@ type PersistedSession = {
   workspacePath: string;
   sessionId: string;
   updatedAt: string;
+  allowSkipPermissions?: boolean;
 };
 
 export type SocketEvent =
@@ -99,11 +101,13 @@ type ManagedSession = {
 type SessionManagerOptions = {
   allowedRoots: string[];
   claudeBin?: string;
+  allowSkipPermissions?: boolean;
 };
 
 export class SessionManager {
   private readonly allowedRoots: string[];
   private readonly claudeBin: string | undefined;
+  private readonly allowSkipPermissions: boolean;
   private readonly stateFilePath: string;
   private readonly sessions = new Map<string, ManagedSession>();
   private readonly listeners = new Set<(event: SocketEvent) => void>();
@@ -130,6 +134,7 @@ export class SessionManager {
   constructor(options: SessionManagerOptions) {
     this.allowedRoots = options.allowedRoots;
     this.claudeBin = options.claudeBin;
+    this.allowSkipPermissions = options.allowSkipPermissions ?? false;
     this.stateFilePath = path.join(os.homedir(), ".leduo-patrol", "state.json");
     this.historyFilePath = path.join(
       process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude"),
@@ -159,6 +164,7 @@ export class SessionManager {
         activityState: "idle",
         sessionId: persisted.sessionId,
         updatedAt: persisted.updatedAt,
+        allowSkipPermissions: persisted.allowSkipPermissions,
       };
       this.sessions.set(snapshot.clientSessionId, {
         snapshot,
@@ -198,7 +204,7 @@ export class SessionManager {
     return this.getEntry(clientSessionId).snapshot.workspacePath;
   }
 
-  async createSession(requestedWorkspacePath: string, requestedTitle?: string) {
+  async createSession(requestedWorkspacePath: string, requestedTitle?: string, allowSkipPermissions?: boolean) {
     const resolvedWorkspacePath = await this.resolveRequestedWorkspace(requestedWorkspacePath);
     const existingEntry = [...this.sessions.values()].find(
       (entry) => entry.snapshot.workspacePath === resolvedWorkspacePath,
@@ -217,6 +223,7 @@ export class SessionManager {
     }
 
     const sessionId = randomUUID();
+    const effectiveAllowSkipPermissions = allowSkipPermissions ?? this.allowSkipPermissions;
     const snapshot: SessionSnapshot = {
       clientSessionId: randomUUID(),
       title: requestedTitle?.trim() || path.basename(resolvedWorkspacePath) || resolvedWorkspacePath,
@@ -225,6 +232,7 @@ export class SessionManager {
       activityState: "idle",
       sessionId,
       updatedAt: new Date().toISOString(),
+      allowSkipPermissions: effectiveAllowSkipPermissions,
     };
 
     const entry: ManagedSession = {
@@ -292,6 +300,7 @@ export class SessionManager {
         sessionId: snapshot.sessionId,
         resume,
         claudeBin: this.claudeBin,
+        allowSkipPermissions: snapshot.allowSkipPermissions,
       });
       entry.cliSession = cliSession;
 
@@ -350,6 +359,7 @@ export class SessionManager {
       workspacePath: session.workspacePath,
       sessionId: session.sessionId,
       updatedAt: session.updatedAt,
+      allowSkipPermissions: session.allowSkipPermissions,
     }));
     await mkdir(path.dirname(this.stateFilePath), { recursive: true });
     await writeFile(this.stateFilePath, JSON.stringify({ sessions: persistedSessions }, null, 2), "utf8");

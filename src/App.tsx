@@ -23,6 +23,7 @@ type AppConfig = {
   launchMode: string;
   launchHost: string;
   launchUser: string;
+  allowSkipPermissions?: boolean;
 };
 
 type SessionDiffFileEntry = { filePath: string; changeType: string };
@@ -111,6 +112,7 @@ export default function App() {
   const [createSessionModalOpen, setCreateSessionModalOpen] = useState(false);
   const [workspacePath, setWorkspacePath] = useState("");
   const [newSessionTitle, setNewSessionTitle] = useState("");
+  const [allowSkipPermissions, setAllowSkipPermissions] = useState(false);
   const [directoryBrowserPath, setDirectoryBrowserPath] = useState("");
   const [directoryOptions, setDirectoryOptions] = useState<Array<{ name: string; path: string }>>([]);
   const [directoryError, setDirectoryError] = useState("");
@@ -179,6 +181,7 @@ export default function App() {
         setWorkspacePath(data.workspacePath);
         setDirectoryBrowserPath(split.root);
         setCreateWorkspaceSuffix(split.suffix);
+        setAllowSkipPermissions(data.allowSkipPermissions ?? false);
       })
       .catch(() => undefined);
   }, [accessKey]);
@@ -448,6 +451,19 @@ export default function App() {
         }
       }, true);
 
+      // Handle Shift+Enter for multiline input
+      // Send \n (Line Feed) instead of \r (Carriage Return) for newline behavior
+      term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+        if (event.type === 'keydown' && event.key === 'Enter' && event.shiftKey) {
+          sendCommand({
+            type: "cli_input",
+            payload: { clientSessionId: sessionId, data: '\n' },
+          });
+          return false; // Prevent default xterm.js handling
+        }
+        return true; // Allow default handling for other keys
+      });
+
       cliTerminalsRef.current.set(sessionId, { terminal: term, fitAddon, element: wrapper });
 
       // Notify server
@@ -604,10 +620,12 @@ export default function App() {
       payload: {
         workspacePath: workspacePath.trim(),
         title: newSessionTitle.trim() || undefined,
+        allowSkipPermissions,
       },
     });
     setCreateSessionModalOpen(false);
     setNewSessionTitle("");
+    setAllowSkipPermissions(config?.allowSkipPermissions ?? false);
   }
 
   function closeSession(clientSessionId: string) {
@@ -854,12 +872,12 @@ export default function App() {
       {createSessionModalOpen ? (
         <div
           className="modal-backdrop"
-          onClick={() => { setCreateSessionModalOpen(false); setShowAllWorkspaceSuggestions(false); }}
+          onClick={() => { setCreateSessionModalOpen(false); setShowAllWorkspaceSuggestions(false); setAllowSkipPermissions(config?.allowSkipPermissions ?? false); }}
         >
           <div className="modal-card" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <div><h3>新建会话</h3></div>
-              <button className="secondary" onClick={() => { setCreateSessionModalOpen(false); setShowAllWorkspaceSuggestions(false); }}>关闭</button>
+              <button className="secondary" onClick={() => { setCreateSessionModalOpen(false); setShowAllWorkspaceSuggestions(false); setAllowSkipPermissions(config?.allowSkipPermissions ?? false); }}>关闭</button>
             </div>
             <div className="modal-scroll-body">
               <div className="details">
@@ -925,6 +943,19 @@ export default function App() {
                   placeholder="可选，例如 leduo-api"
                   onChange={(event) => setNewSessionTitle(event.target.value)}
                 />
+                <div className="checkbox-field">
+                  <label className="checkbox-label warning">
+                    <input
+                      type="checkbox"
+                      checked={allowSkipPermissions}
+                      onChange={(event) => setAllowSkipPermissions(event.target.checked)}
+                    />
+                    <span>允许YOLO模式</span>
+                  </label>
+                  <p className="checkbox-hint warning">
+                    启用后，可在会话中切换至YOLO模式，自动执行操作而无需确认。
+                  </p>
+                </div>
                 {directoryError ? <p>{directoryError}</p> : null}
               </div>
             </div>
