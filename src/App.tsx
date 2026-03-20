@@ -652,6 +652,10 @@ export default function App() {
       const res = await fetch(
         withAccessKey(`/api/session-diff/files?clientSessionId=${activeSession.clientSessionId}`, accessKey),
       );
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error((body as { message?: string })?.message ?? `请求失败 (${res.status})`);
+      }
       const data = (await res.json()) as SessionDiffResponse;
       setSessionDiff(data);
       setSessionFileDiffCache({});
@@ -672,6 +676,10 @@ export default function App() {
         accessKey,
       ),
     );
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error((body as { message?: string })?.message ?? `请求失败 (${res.status})`);
+    }
     const data = (await res.json()) as SessionFileDiffResponse;
     setSessionFileDiffCache((prev) => ({ ...prev, [cacheKey]: data }));
     return data;
