@@ -700,6 +700,7 @@ h1 {
   bottom: auto;
   padding-top: 0;
   padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(180deg, #1a1a1a 0%, rgba(26, 26, 26, 0.96) 100%);
   box-shadow: none;
 }
 

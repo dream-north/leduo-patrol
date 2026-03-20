@@ -917,11 +917,12 @@ export default function App() {
       return;
     }
 
-    refitActiveCliTerminal(mobileTerminalInputVisible);
+    refitActiveCliTerminal(mobileTerminalFullscreenVisible);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     activeSessionId,
     connectionState,
+    mobileTerminalFullscreenVisible,
     mobileTerminalInputVisible,
     mobileTerminalKeyboardInset,
     mobileTerminalViewportHeight,
