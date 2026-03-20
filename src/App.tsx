@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, type CSSProperties, Fragment } from "react";
+import { useState, useEffect, useRef, useMemo, type CSSProperties, type FormEvent, Fragment } from "react";
 
 type ActivityState = "running" | "completed" | "pending" | "idle";
 
@@ -80,9 +80,28 @@ function withAccessKey(path: string, accessKey: string) {
   return `${path}${separator}key=${encodeURIComponent(accessKey)}`;
 }
 
-function getAccessKeyFromUrl() {
-  const urlParams = new URLSearchParams(window.location.search);
+function getAccessKeyFromSearch(search: string) {
+  const urlParams = new URLSearchParams(search);
   return urlParams.get("key") ?? "";
+}
+
+function getAccessKeyFromUrl() {
+  return getAccessKeyFromSearch(window.location.search);
+}
+
+function buildLocationWithAccessKey(href: string, accessKey: string) {
+  const url = new URL(href, "http://localhost");
+  const normalizedAccessKey = accessKey.trim();
+  if (normalizedAccessKey) {
+    url.searchParams.set("key", normalizedAccessKey);
+  } else {
+    url.searchParams.delete("key");
+  }
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function syncAccessKeyToUrl(accessKey: string) {
+  window.history.replaceState(null, "", buildLocationWithAccessKey(window.location.href, accessKey));
 }
 
 function loadVscodeLaunchConfig(sshHost: string): VscodeLaunchConfig {
@@ -101,7 +120,8 @@ function loadVscodeLaunchConfig(sshHost: string): VscodeLaunchConfig {
 }
 
 export default function App() {
-  const accessKey = getAccessKeyFromUrl();
+  const [accessKey, setAccessKey] = useState(() => getAccessKeyFromUrl());
+  const [accessKeyInput, setAccessKeyInput] = useState(() => getAccessKeyFromUrl());
   const [connectionState, setConnectionState] = useState<"connecting" | "connected" | "closed">("connecting");
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
@@ -168,6 +188,19 @@ export default function App() {
 
   const workspaceForLaunch = activeSession?.workspacePath ?? config?.workspacePath ?? "";
   const canOpenWorkspaceInVscode = Boolean(workspaceForLaunch);
+
+  useEffect(() => {
+    function handlePopstate() {
+      const nextAccessKey = getAccessKeyFromUrl();
+      setAccessKey(nextAccessKey);
+      setAccessKeyInput(nextAccessKey);
+    }
+
+    window.addEventListener("popstate", handlePopstate);
+    return () => {
+      window.removeEventListener("popstate", handlePopstate);
+    };
+  }, []);
 
   // --- Fetch config ---
   useEffect(() => {
@@ -451,19 +484,6 @@ export default function App() {
         }
       }, true);
 
-      // Handle Shift+Enter for multiline input
-      // Send \n (Line Feed) instead of \r (Carriage Return) for newline behavior
-      term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
-        if (event.type === 'keydown' && event.key === 'Enter' && event.shiftKey) {
-          sendCommand({
-            type: "cli_input",
-            payload: { clientSessionId: sessionId, data: '\n' },
-          });
-          return false; // Prevent default xterm.js handling
-        }
-        return true; // Allow default handling for other keys
-      });
-
       cliTerminalsRef.current.set(sessionId, { terminal: term, fitAddon, element: wrapper });
 
       // Notify server
@@ -703,13 +723,44 @@ export default function App() {
     return data;
   }
 
+  function handleAccessKeySubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalizedAccessKey = accessKeyInput.trim();
+    if (!normalizedAccessKey) return;
+    syncAccessKeyToUrl(normalizedAccessKey);
+    setAccessKey(normalizedAccessKey);
+    setAccessKeyInput(normalizedAccessKey);
+    setConnectionState("connecting");
+  }
+
   // --- Access key check ---
   if (!accessKey) {
     return (
-      <div className="shell access-gate">
-        <div className="access-gate-card">
+      <div className="access-gate">
+        <div className="panel access-gate-card">
           <h2>{config?.appName ?? "乐多汪汪队"}</h2>
-          <p>请在 URL 中附加 <code>?key=YOUR_KEY</code> 以访问本页。</p>
+          <p>请输入访问 key。提交后会自动写回当前 URL，后续刷新页面也能继续使用。</p>
+          <form className="access-gate-form" onSubmit={handleAccessKeySubmit}>
+            <label className="access-gate-label" htmlFor="access-key-input">
+              访问 key
+            </label>
+            <input
+              id="access-key-input"
+              type="password"
+              autoFocus
+              autoComplete="off"
+              spellCheck={false}
+              value={accessKeyInput}
+              onChange={(event) => setAccessKeyInput(event.target.value)}
+              placeholder="请输入访问 key"
+            />
+            <button className="primary" type="submit" disabled={!accessKeyInput.trim()}>
+              进入控制台
+            </button>
+          </form>
+          <p className="access-gate-hint">
+            也可以继续使用 URL 参数方式，例如 <code>?key=YOUR_KEY</code>。
+          </p>
         </div>
       </div>
     );
@@ -1333,7 +1384,9 @@ function splitWorkspacePathByAllowedRoots(pathValue: string, allowedRoots: strin
 }
 
 export const appTestables = {
+  buildLocationWithAccessKey,
   formatRelativeUpdatedAt,
+  getAccessKeyFromSearch,
   normalizePath,
   isWithinRoot,
   parentDirectory,

@@ -21,6 +21,18 @@ test("app mode/connection helpers return expected labels", () => {
   assert.equal(appTestables.toneForConnectionState("error"), "negative");
 });
 
+test("app access key helpers read and preserve search params", () => {
+  assert.equal(appTestables.getAccessKeyFromSearch("?demo=subagent-tree&key=abc123"), "abc123");
+  assert.equal(
+    appTestables.buildLocationWithAccessKey("http://localhost/?demo=subagent-tree", " next-key "),
+    "/?demo=subagent-tree&key=next-key",
+  );
+  assert.equal(
+    appTestables.buildLocationWithAccessKey("http://localhost/?demo=subagent-tree&key=old#gate", ""),
+    "/?demo=subagent-tree#gate",
+  );
+});
+
 test("app path helpers parent/isWithinRoot", () => {
   assert.equal(appTestables.parentDirectory("/a/b/c"), "/a/b");
   assert.equal(appTestables.isWithinRoot("/a", "/a/b/c"), true);

@@ -66,12 +66,34 @@ pre {
   gap: 12px;
 }
 
+.access-gate-form {
+  display: grid;
+  gap: 10px;
+}
+
+.access-gate-label {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .access-gate-card input {
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.92);
+}
+
+.access-gate-card input:focus-visible {
+  outline: 2px solid rgba(216, 91, 52, 0.32);
+  outline-offset: 2px;
+}
+
+.access-gate-hint {
+  color: var(--muted);
+  line-height: 1.45;
 }
 
 /* ── Main Layout (2-column) ─────────────────────────── */
