@@ -107,8 +107,8 @@ test("app mobile terminal detection prefers narrow touch devices", () => {
 });
 
 test("app mobile terminal key mapping returns expected control sequences", () => {
-  assert.equal(appTestables.mapMobileTerminalActionToSequence("enter"), "\r");
   assert.equal(appTestables.mapMobileTerminalActionToSequence("backspace"), "\u007f");
+  assert.equal(appTestables.mapMobileTerminalActionToSequence("shiftTab"), "\u001b[Z");
   assert.equal(appTestables.mapMobileTerminalActionToSequence("arrowUp"), "\u001b[A");
   assert.equal(appTestables.mapMobileTerminalActionToSequence("arrowRight"), "\u001b[C");
   assert.equal(appTestables.mapMobileTerminalActionToSequence("ctrlC"), "\u0003");

@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useMemo, type CSSProperties, type FormEven
 type ActivityState = "running" | "completed" | "pending" | "idle";
 type ConnectionState = "connecting" | "connected" | "closed";
 type MobileTerminalActionKey =
-  | "enter"
+  | "shiftTab"
   | "backspace"
   | "tab"
   | "escape"
@@ -94,15 +94,14 @@ const MOBILE_TERMINAL_BREAKPOINT = 960;
 const MOBILE_TERMINAL_FONT_SIZE = 12;
 const DEFAULT_TERMINAL_FONT_SIZE = 13;
 const MOBILE_TERMINAL_ACTIONS: Array<{ key: MobileTerminalActionKey; label: string; accent?: boolean }> = [
-  { key: "enter", label: "Enter", accent: true },
+  { key: "escape", label: "Esc" },
   { key: "backspace", label: "Backspace" },
   { key: "tab", label: "Tab" },
-  { key: "escape", label: "Esc" },
+  { key: "shiftTab", label: "Shift+Tab" },
   { key: "arrowUp", label: "↑" },
   { key: "arrowDown", label: "↓" },
   { key: "arrowLeft", label: "←" },
   { key: "arrowRight", label: "→" },
-  { key: "ctrlC", label: "Ctrl+C" },
 ];
 
 function withAccessKey(path: string, accessKey: string) {
@@ -195,6 +194,7 @@ export default function App() {
   // Main CLI terminal
   const cliTerminalContainerRef = useRef<HTMLDivElement | null>(null);
   const cliTerminalsRef = useRef<Map<string, { terminal: unknown; fitAddon: unknown; element: HTMLDivElement }>>(new Map());
+  const previousMobileTerminalInputVisibleRef = useRef(false);
 
   const socketRef = useRef<WebSocket | null>(null);
 
@@ -577,11 +577,12 @@ export default function App() {
   }
 
   function sendMobileTerminalDraft() {
-    if (!mobileTerminalDraft || mobileTerminalInputDisabled) {
+    if (mobileTerminalInputDisabled) {
       return;
     }
 
-    if (sendCliInput(`${mobileTerminalDraft}\r`)) {
+    const payload = mobileTerminalDraft ? `${mobileTerminalDraft}\r` : "\r";
+    if (sendCliInput(payload)) {
       setMobileTerminalDraft("");
     }
   }
@@ -624,7 +625,78 @@ export default function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }
 
-  function refitActiveCliTerminal() {
+  function syncTerminalMobileReadonly(wrapper: HTMLDivElement) {
+    wrapper.dataset.mobileReadonly = mobileTerminalInputDetected ? "true" : "false";
+
+    const helper = wrapper.querySelector(".xterm-helper-textarea");
+    if (!(helper instanceof HTMLTextAreaElement)) {
+      return;
+    }
+
+    helper.readOnly = mobileTerminalInputDetected;
+    helper.tabIndex = mobileTerminalInputDetected ? -1 : 0;
+    helper.inputMode = mobileTerminalInputDetected ? "none" : "text";
+
+    if (mobileTerminalInputDetected) {
+      requestAnimationFrame(() => {
+        helper.blur();
+      });
+    }
+  }
+
+  function setupTerminalTouchScroll(wrapper: HTMLDivElement) {
+    const viewport = wrapper.querySelector(".xterm-viewport");
+    if (!(viewport instanceof HTMLElement)) {
+      return () => undefined;
+    }
+
+    const touchState = {
+      active: false,
+      startY: 0,
+      startScrollTop: 0,
+    };
+
+    const handleTouchStart = (event: TouchEvent) => {
+      if (wrapper.dataset.mobileReadonly !== "true" || event.touches.length !== 1) {
+        touchState.active = false;
+        return;
+      }
+
+      const touch = event.touches[0];
+      touchState.active = true;
+      touchState.startY = touch.clientY;
+      touchState.startScrollTop = viewport.scrollTop;
+    };
+
+    const handleTouchMove = (event: TouchEvent) => {
+      if (!touchState.active || wrapper.dataset.mobileReadonly !== "true" || event.touches.length !== 1) {
+        return;
+      }
+
+      const touch = event.touches[0];
+      const deltaY = touch.clientY - touchState.startY;
+      viewport.scrollTop = touchState.startScrollTop - deltaY;
+      event.preventDefault();
+    };
+
+    const handleTouchEnd = () => {
+      touchState.active = false;
+    };
+
+    wrapper.addEventListener("touchstart", handleTouchStart, { passive: true, capture: true });
+    wrapper.addEventListener("touchmove", handleTouchMove, { passive: false, capture: true });
+    wrapper.addEventListener("touchend", handleTouchEnd, { capture: true });
+    wrapper.addEventListener("touchcancel", handleTouchEnd, { capture: true });
+
+    return () => {
+      wrapper.removeEventListener("touchstart", handleTouchStart, { capture: true } as EventListenerOptions);
+      wrapper.removeEventListener("touchmove", handleTouchMove, { capture: true } as EventListenerOptions);
+      wrapper.removeEventListener("touchend", handleTouchEnd, { capture: true } as EventListenerOptions);
+      wrapper.removeEventListener("touchcancel", handleTouchEnd, { capture: true } as EventListenerOptions);
+    };
+  }
+
+  function refitActiveCliTerminal(forceBottom = false) {
     if (!activeSessionId) {
       return;
     }
@@ -649,7 +721,7 @@ export default function App() {
     requestAnimationFrame(() => {
       fit.fit();
       term.refresh(0, Math.max(0, term.rows - 1));
-      if (keepBottomPinned && typeof term.scrollToBottom === "function") {
+      if ((forceBottom || keepBottomPinned) && typeof term.scrollToBottom === "function") {
         term.scrollToBottom();
       }
       sendCommand({
@@ -680,6 +752,7 @@ export default function App() {
       if (term.options) {
         term.options.fontSize = getTerminalFontSize(mobileTerminalInputEnabled);
       }
+      syncTerminalMobileReadonly(cached.element);
       // Move the cached wrapper back into the visible container (never re-call open())
       containerEl.innerHTML = "";
       containerEl.appendChild(cached.element);
@@ -687,7 +760,9 @@ export default function App() {
       requestAnimationFrame(() => {
         fit.fit();
         term.refresh(0, term.rows - 1);
-        term.focus();
+        if (!mobileTerminalInputDetected) {
+          term.focus();
+        }
       });
 
       // Notify server of current size (no replay — cached terminal already has output)
@@ -739,6 +814,8 @@ export default function App() {
       containerEl.appendChild(wrapper);
       term.open(wrapper);
       fitAddon.fit();
+      syncTerminalMobileReadonly(wrapper);
+      const cleanupTouchScroll = setupTerminalTouchScroll(wrapper);
 
       // Prevent ESC from blurring the terminal.
       // Strategy: intercept keydown on the wrapper (capture phase) to preventDefault,
@@ -756,7 +833,27 @@ export default function App() {
         if (lastKeyWasEscape) {
           lastKeyWasEscape = false;
           requestAnimationFrame(() => {
-            if (!disposed) term.focus();
+            if (!disposed && !mobileTerminalInputDetected) term.focus();
+          });
+        }
+      }, true);
+      wrapper.addEventListener("focusin", () => {
+        if (wrapper.dataset.mobileReadonly === "true") {
+          requestAnimationFrame(() => {
+            const helper = wrapper.querySelector(".xterm-helper-textarea");
+            if (helper instanceof HTMLTextAreaElement) {
+              helper.blur();
+            }
+          });
+        }
+      }, true);
+      wrapper.addEventListener("touchend", () => {
+        if (wrapper.dataset.mobileReadonly === "true") {
+          requestAnimationFrame(() => {
+            const helper = wrapper.querySelector(".xterm-helper-textarea");
+            if (helper instanceof HTMLTextAreaElement) {
+              helper.blur();
+            }
           });
         }
       }, true);
@@ -795,6 +892,7 @@ export default function App() {
 
       // Store cleanup fn
       (term as unknown as Record<string, unknown>).__resizeObserver = resizeObserver;
+      (term as unknown as Record<string, unknown>).__touchScrollCleanup = cleanupTouchScroll;
     })();
 
     return () => {
@@ -805,14 +903,17 @@ export default function App() {
         containerEl.innerHTML = "";
       }
     };
-  }, [activeSessionId, connectionState, mobileTerminalInputEnabled]);
+  }, [activeSessionId, connectionState, mobileTerminalInputEnabled, mobileTerminalInputDetected]);
 
   useEffect(() => {
     if (!activeSessionId || connectionState !== "connected") {
+      previousMobileTerminalInputVisibleRef.current = mobileTerminalInputVisible;
       return;
     }
 
-    refitActiveCliTerminal();
+    const openedInput = !previousMobileTerminalInputVisibleRef.current && mobileTerminalInputVisible;
+    refitActiveCliTerminal(openedInput);
+    previousMobileTerminalInputVisibleRef.current = mobileTerminalInputVisible;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     activeSessionId,
@@ -829,7 +930,9 @@ export default function App() {
       if (!activeIds.has(id)) {
         const term = cached.terminal as { dispose: () => void };
         const obs = (cached.terminal as Record<string, unknown>).__resizeObserver as ResizeObserver | undefined;
+        const touchCleanup = (cached.terminal as Record<string, unknown>).__touchScrollCleanup as (() => void) | undefined;
         obs?.disconnect();
+        touchCleanup?.();
         term.dispose();
         cliTerminalsRef.current.delete(id);
       }
@@ -1170,7 +1273,6 @@ export default function App() {
                   onChangeDraft={setMobileTerminalDraft}
                   onSendDraft={sendMobileTerminalDraft}
                   onAction={sendMobileTerminalAction}
-                  onToggleVisibility={hideMobileTerminalInput}
                 />
               ) : null}
             </div>
@@ -1406,7 +1508,6 @@ export default function App() {
                 onChangeDraft={setMobileTerminalDraft}
                 onSendDraft={sendMobileTerminalDraft}
                 onAction={sendMobileTerminalAction}
-                onToggleVisibility={hideMobileTerminalInput}
               />
             ) : null}
           </div>
@@ -1428,7 +1529,6 @@ function MobileTerminalInputBar(props: {
   onChangeDraft: (value: string) => void;
   onSendDraft: () => void;
   onAction: (key: MobileTerminalActionKey) => void;
-  onToggleVisibility: () => void;
 }) {
   const mobileInputStyle = {
     "--mobile-terminal-input-offset": `${props.keyboardInset}px`,
@@ -1446,15 +1546,6 @@ function MobileTerminalInputBar(props: {
       className={`mobile-terminal-input-shell ${props.fullscreen ? "mobile-terminal-input-shell-fullscreen" : ""}`}
       style={mobileInputStyle}
     >
-      <div className="mobile-terminal-input-header">
-        <div>
-          <strong>移动端终端输入</strong>
-          <p>粘贴文本后点“发送文本”，确认时再用 Enter 或方向键。</p>
-        </div>
-        <button className="secondary mobile-terminal-input-collapse" type="button" onClick={props.onToggleVisibility}>
-          收起
-        </button>
-      </div>
       <div className="mobile-terminal-input-compose">
         <label className="sr-only" htmlFor="mobile-terminal-input">
           终端输入
@@ -1468,16 +1559,16 @@ function MobileTerminalInputBar(props: {
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
-          rows={3}
+          rows={2}
           disabled={props.disabled}
         />
         <button
           className="primary mobile-terminal-send"
           type="button"
           onClick={props.onSendDraft}
-          disabled={props.disabled || !props.draft}
+          disabled={props.disabled}
         >
-          发送文本
+          {props.draft ? "发送文本" : "Enter键"}
         </button>
       </div>
       <div className="mobile-terminal-action-grid" role="group" aria-label="终端快捷按键">
@@ -1828,12 +1919,12 @@ function shouldEnableMobileTerminalInput(environment: MobileTerminalEnvironment)
 
 function mapMobileTerminalActionToSequence(key: MobileTerminalActionKey) {
   switch (key) {
-    case "enter":
-      return "\r";
     case "backspace":
       return "\u007f";
     case "tab":
       return "\t";
+    case "shiftTab":
+      return "\u001b[Z";
     case "escape":
       return "\u001b";
     case "arrowUp":

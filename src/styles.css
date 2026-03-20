@@ -652,6 +652,11 @@ h1 {
   touch-action: pan-y;
 }
 
+.cli-terminal-container .xterm-screen,
+.cli-terminal-container .xterm-screen canvas {
+  touch-action: none;
+}
+
 /* Suppress browser focus indicators on xterm's internal textarea */
 .cli-terminal-container .xterm-helper-textarea:focus,
 .cli-terminal-container .xterm-helper-textarea:focus-visible {
@@ -696,45 +701,22 @@ h1 {
 .mobile-terminal-input-shell-fullscreen {
   position: relative;
   bottom: auto;
+  border-top: none;
+  padding-top: 8px;
   padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   box-shadow: none;
 }
 
-.mobile-terminal-input-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  color: #f5ede4;
-}
-
-.mobile-terminal-input-header strong {
-  display: block;
-  font-size: 12px;
-  line-height: 1.2;
-}
-
-.mobile-terminal-input-header p {
-  margin-top: 4px;
-  color: rgba(245, 237, 228, 0.7);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-.mobile-terminal-input-collapse {
-  flex-shrink: 0;
-  color: #f5ede4;
-  background: rgba(255, 255, 255, 0.1);
-}
-
 .mobile-terminal-input-compose {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
   gap: 8px;
+  align-items: stretch;
 }
 
 .mobile-terminal-input-compose textarea {
   width: 100%;
-  min-height: 72px;
+  min-height: 56px;
   resize: vertical;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 14px;
@@ -751,7 +733,8 @@ h1 {
 }
 
 .mobile-terminal-send {
-  min-height: 38px;
+  min-height: 56px;
+  align-self: stretch;
 }
 
 .mobile-terminal-action-grid {
@@ -766,6 +749,7 @@ h1 {
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.1);
   color: #f5ede4;
+  font-size: 11px;
 }
 
 .mobile-terminal-action-accent {
@@ -843,7 +827,7 @@ h1 {
 
 .cli-terminal-container-fullscreen {
   border-radius: 0;
-  padding: 6px 8px;
+  padding: 6px 8px 0;
 }
 
 .main-empty {
