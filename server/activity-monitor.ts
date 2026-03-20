@@ -50,6 +50,23 @@ function isLocalCommand(entry: JsonlEntry): boolean {
 }
 
 /**
+ * Detect if a user entry represents an interrupted request.
+ * Interrupted requests have content containing "[Request interrupted by user]".
+ */
+function isInterruptedRequest(entry: JsonlEntry): boolean {
+  const content = entry.message?.content;
+  if (typeof content === "string") {
+    return content.includes("[Request interrupted by user]");
+  }
+  if (Array.isArray(content)) {
+    return (content as { text?: string }[]).some(
+      (block) => typeof block.text === "string" && block.text.includes("[Request interrupted by user]"),
+    );
+  }
+  return false;
+}
+
+/**
  * Detect if a JSONL entry is a `/clear` command.
  */
 export function detectClearCommand(entry: JsonlEntry): boolean {
@@ -94,6 +111,8 @@ export function determineActivityState(entry: JsonlEntry): ActivityState {
   if (type === "user") {
     // Local CLI commands (/mcp, /status, /clear, etc.) are already finished
     if (isLocalCommand(entry)) return "completed";
+    // Interrupted requests should be treated as idle
+    if (isInterruptedRequest(entry)) return "idle";
     return "running";
   }
 
