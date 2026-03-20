@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { open, stat } from "node:fs/promises";
+import { open, stat, type FileHandle } from "node:fs/promises";
 import { watch, type FSWatcher } from "node:fs";
 
 export type ActivityState = "running" | "completed" | "pending" | "idle";
@@ -192,11 +192,19 @@ type MonitorEntry = {
   fileWatcher: FSWatcher | null;
   pollTimer: ReturnType<typeof setInterval> | null;
   debounceTimer: ReturnType<typeof setTimeout> | null;
+  /** promptId extracted from session file (for plan session detection) */
+  promptId?: string;
 };
 
 export class ActivityMonitor {
   private readonly monitors = new Map<string, MonitorEntry>();
   private readonly onChange: (sessionId: string, state: ActivityState) => void;
+  /** Map from promptId to sessionId for plan session detection */
+  private readonly promptIdToSessionId = new Map<string, string>();
+  /** Watchers for project directories (to detect new plan sessions) */
+  private readonly projectDirWatchers = new Map<string, FSWatcher>();
+  /** Callback when a new plan session is detected */
+  onPlanSessionDetected?: (newSessionId: string, promptId: string, workspacePath: string) => void;
 
   constructor(onChange: (sessionId: string, state: ActivityState) => void) {
     this.onChange = onChange;
@@ -218,6 +226,8 @@ export class ActivityMonitor {
     };
     this.monitors.set(sessionId, entry);
     this.tryStartWatching(entry);
+    // Also watch project directory for plan session detection
+    this.watchProjectDirectory(workspacePath);
   }
 
   unwatch(sessionId: string): void {
@@ -242,6 +252,31 @@ export class ActivityMonitor {
   switchWatch(oldSessionId: string, newSessionId: string, workspacePath: string): void {
     this.unwatch(oldSessionId);
     this.watch(newSessionId, workspacePath);
+  }
+
+  /** Get sessionId by promptId */
+  getSessionIdByPromptId(promptId: string): string | undefined {
+    return this.promptIdToSessionId.get(promptId);
+  }
+
+  /** Watch project directory for new session files (plan session detection) */
+  watchProjectDirectory(workspacePath: string): void {
+    const dirPath = projectDirPath(workspacePath);
+    if (this.projectDirWatchers.has(dirPath)) return;
+
+    try {
+      const watcher = watch(dirPath, (eventType, filename) => {
+        if (filename?.endsWith(".jsonl")) {
+          this.checkNewSessionFile(path.join(dirPath, filename), workspacePath);
+        }
+      });
+      watcher.on("error", () => {
+        // Ignore errors - directory may not exist yet
+      });
+      this.projectDirWatchers.set(dirPath, watcher);
+    } catch {
+      // Directory may not exist yet - that's OK
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -315,10 +350,67 @@ export class ActivityMonitor {
     const parsed = await readLastRelevantEntry(entry.jsonlPath);
     if (!parsed) return;
 
+    // Extract promptId from session file for plan session detection
+    await this.extractPromptId(entry);
+
     const newState = determineActivityState(parsed);
     if (newState !== entry.currentState) {
       entry.currentState = newState;
       this.onChange(entry.sessionId, newState);
+    }
+  }
+
+  /** Extract promptId from the beginning of the session file. */
+  private async extractPromptId(entry: MonitorEntry): Promise<void> {
+    if (entry.promptId) return; // Already extracted
+
+    let fd: FileHandle | undefined;
+    try {
+      fd = await open(entry.jsonlPath, "r");
+      const buf = Buffer.alloc(4096);
+      const { bytesRead } = await fd.read(buf, 0, 4096, 0);
+      const head = buf.toString("utf8", 0, bytesRead);
+      const match = head.match(/"promptId":"([^"]+)"/);
+      if (match) {
+        entry.promptId = match[1];
+        this.promptIdToSessionId.set(entry.promptId, entry.sessionId);
+      }
+    } catch {
+      // File may not exist or be readable
+    } finally {
+      await fd?.close();
+    }
+  }
+
+  /** Check if a new session file is a plan execution session. */
+  private async checkNewSessionFile(filePath: string, workspacePath: string): Promise<void> {
+    let fd: FileHandle | undefined;
+    try {
+      fd = await open(filePath, "r");
+      const buf = Buffer.alloc(4096);
+      const { bytesRead } = await fd.read(buf, 0, 4096, 0);
+      const head = buf.toString("utf8", 0, bytesRead);
+
+      // Check for planContent field - indicates plan execution session
+      if (!head.includes('"planContent"')) return;
+
+      // Extract promptId
+      const promptIdMatch = head.match(/"promptId":"([^"]+)"/);
+      if (!promptIdMatch) return;
+
+      const newSessionId = path.basename(filePath, ".jsonl");
+      const promptId = promptIdMatch[1];
+
+      // Check if we're tracking a session with this promptId
+      const oldSessionId = this.promptIdToSessionId.get(promptId);
+      if (oldSessionId && oldSessionId !== newSessionId) {
+        console.log(`[ActivityMonitor] Plan session detected: ${oldSessionId} → ${newSessionId} (promptId=${promptId})`);
+        this.onPlanSessionDetected?.(newSessionId, promptId, workspacePath);
+      }
+    } catch {
+      // File may not exist or be readable yet
+    } finally {
+      await fd?.close();
     }
   }
 

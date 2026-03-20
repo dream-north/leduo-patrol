@@ -151,6 +151,10 @@ export class SessionManager {
         payload: { clientSessionId, activityState },
       });
     });
+    // Set up plan session detection callback
+    this.activityMonitor.onPlanSessionDetected = (newSessionId, promptId, workspacePath) => {
+      this.handlePlanSessionDetected(newSessionId, promptId, workspacePath);
+    };
   }
 
   async initialize() {
@@ -409,6 +413,23 @@ export class SessionManager {
   // ---------------------------------------------------------------------------
   // /clear detection → session ID discovery
   // ---------------------------------------------------------------------------
+
+  private handlePlanSessionDetected(newSessionId: string, promptId: string, workspacePath: string) {
+    const oldSessionId = this.activityMonitor.getSessionIdByPromptId(promptId);
+    if (!oldSessionId) {
+      console.log(`[SessionManager] handlePlanSessionDetected: no oldSessionId found for promptId ${promptId}`);
+      return;
+    }
+
+    const clientSessionId = this.sessionIdIndex.get(oldSessionId);
+    if (!clientSessionId) {
+      console.log(`[SessionManager] handlePlanSessionDetected: no clientSessionId found for oldSessionId ${oldSessionId}`);
+      return;
+    }
+
+    console.log(`[SessionManager] Plan session detected: ${oldSessionId} → ${newSessionId} (promptId=${promptId})`);
+    this.completeSessionSwitch(clientSessionId, oldSessionId, newSessionId, workspacePath);
+  }
 
   private handleSessionClear(oldSessionId: string, workspacePath: string) {
     const clientSessionId = this.sessionIdIndex.get(oldSessionId);
