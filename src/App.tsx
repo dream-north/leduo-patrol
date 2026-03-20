@@ -194,7 +194,6 @@ export default function App() {
   // Main CLI terminal
   const cliTerminalContainerRef = useRef<HTMLDivElement | null>(null);
   const cliTerminalsRef = useRef<Map<string, { terminal: unknown; fitAddon: unknown; element: HTMLDivElement }>>(new Map());
-  const previousMobileTerminalInputVisibleRef = useRef(false);
 
   const socketRef = useRef<WebSocket | null>(null);
 
@@ -576,15 +575,27 @@ export default function App() {
     });
   }
 
-  function sendMobileTerminalDraft() {
+  function commitMobileTerminalDraft(submit: boolean) {
     if (mobileTerminalInputDisabled) {
       return;
     }
 
-    const payload = mobileTerminalDraft ? `${mobileTerminalDraft}\r` : "\r";
+    const payload = buildMobileTerminalDraftPayload(mobileTerminalDraft, submit);
+    if (!payload) {
+      return;
+    }
+
     if (sendCliInput(payload)) {
       setMobileTerminalDraft("");
     }
+  }
+
+  function sendMobileTerminalDraft() {
+    commitMobileTerminalDraft(true);
+  }
+
+  function typeMobileTerminalDraft() {
+    commitMobileTerminalDraft(false);
   }
 
   function sendMobileTerminalAction(key: MobileTerminalActionKey) {
@@ -907,13 +918,10 @@ export default function App() {
 
   useEffect(() => {
     if (!activeSessionId || connectionState !== "connected") {
-      previousMobileTerminalInputVisibleRef.current = mobileTerminalInputVisible;
       return;
     }
 
-    const openedInput = !previousMobileTerminalInputVisibleRef.current && mobileTerminalInputVisible;
-    refitActiveCliTerminal(openedInput);
-    previousMobileTerminalInputVisibleRef.current = mobileTerminalInputVisible;
+    refitActiveCliTerminal(mobileTerminalInputVisible);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     activeSessionId,
@@ -1265,15 +1273,16 @@ export default function App() {
             <div className="cli-stage">
               <div className="cli-terminal-container" ref={cliTerminalContainerRef} />
               {inlineMobileTerminalInputVisible ? (
-                <MobileTerminalInputBar
-                  draft={mobileTerminalDraft}
-                  disabled={mobileTerminalInputDisabled}
-                  keyboardInset={mobileTerminalKeyboardInset}
-                  fullscreen={false}
-                  onChangeDraft={setMobileTerminalDraft}
-                  onSendDraft={sendMobileTerminalDraft}
-                  onAction={sendMobileTerminalAction}
-                />
+              <MobileTerminalInputBar
+                draft={mobileTerminalDraft}
+                disabled={mobileTerminalInputDisabled}
+                keyboardInset={mobileTerminalKeyboardInset}
+                fullscreen={false}
+                onChangeDraft={setMobileTerminalDraft}
+                onTypeDraft={typeMobileTerminalDraft}
+                onSendDraft={sendMobileTerminalDraft}
+                onAction={sendMobileTerminalAction}
+              />
               ) : null}
             </div>
           </>
@@ -1506,6 +1515,7 @@ export default function App() {
                 keyboardInset={mobileTerminalKeyboardInset}
                 fullscreen
                 onChangeDraft={setMobileTerminalDraft}
+                onTypeDraft={typeMobileTerminalDraft}
                 onSendDraft={sendMobileTerminalDraft}
                 onAction={sendMobileTerminalAction}
               />
@@ -1527,12 +1537,14 @@ function MobileTerminalInputBar(props: {
   keyboardInset: number;
   fullscreen: boolean;
   onChangeDraft: (value: string) => void;
+  onTypeDraft: () => void;
   onSendDraft: () => void;
   onAction: (key: MobileTerminalActionKey) => void;
 }) {
   const mobileInputStyle = {
     "--mobile-terminal-input-offset": `${props.keyboardInset}px`,
   } as CSSProperties;
+  const hasDraft = props.draft.length > 0;
 
   function handleDraftKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -1562,14 +1574,35 @@ function MobileTerminalInputBar(props: {
           rows={2}
           disabled={props.disabled}
         />
-        <button
-          className="primary mobile-terminal-send"
-          type="button"
-          onClick={props.onSendDraft}
-          disabled={props.disabled}
-        >
-          {props.draft ? "发送文本" : "Enter键"}
-        </button>
+        {hasDraft ? (
+          <div className="mobile-terminal-send-stack">
+            <button
+              className="secondary mobile-terminal-send mobile-terminal-send-type"
+              type="button"
+              onClick={props.onTypeDraft}
+              disabled={props.disabled}
+            >
+              键入文本
+            </button>
+            <button
+              className="primary mobile-terminal-send"
+              type="button"
+              onClick={props.onSendDraft}
+              disabled={props.disabled}
+            >
+              发送文本
+            </button>
+          </div>
+        ) : (
+          <button
+            className="primary mobile-terminal-send"
+            type="button"
+            onClick={props.onSendDraft}
+            disabled={props.disabled}
+          >
+            Enter
+          </button>
+        )}
       </div>
       <div className="mobile-terminal-action-grid" role="group" aria-label="终端快捷按键">
         {MOBILE_TERMINAL_ACTIONS.map((action) => (
@@ -1942,6 +1975,13 @@ function mapMobileTerminalActionToSequence(key: MobileTerminalActionKey) {
   }
 }
 
+function buildMobileTerminalDraftPayload(draft: string, submit: boolean) {
+  if (draft.length === 0) {
+    return submit ? "\r" : "";
+  }
+  return `${draft}${submit ? "\r" : ""}`;
+}
+
 function shouldDisableMobileTerminalInput(
   activeSessionId: string | null,
   connectionState: ConnectionState,
@@ -1953,6 +1993,7 @@ function shouldDisableMobileTerminalInput(
 }
 
 export const appTestables = {
+  buildMobileTerminalDraftPayload,
   buildLocationWithAccessKey,
   formatRelativeUpdatedAt,
   getAccessKeyFromSearch,

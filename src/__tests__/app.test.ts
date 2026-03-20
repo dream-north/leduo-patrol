@@ -125,3 +125,10 @@ test("app mobile terminal input disables when session or connection is unavailab
   assert.equal(appTestables.shouldDisableMobileTerminalInput("session-1", "connected", "error"), true);
   assert.equal(appTestables.shouldDisableMobileTerminalInput("session-1", "connected"), false);
 });
+
+test("app mobile terminal draft payload supports type and submit flows", () => {
+  assert.equal(appTestables.buildMobileTerminalDraftPayload("", false), "");
+  assert.equal(appTestables.buildMobileTerminalDraftPayload("", true), "\r");
+  assert.equal(appTestables.buildMobileTerminalDraftPayload("hello", false), "hello");
+  assert.equal(appTestables.buildMobileTerminalDraftPayload("hello", true), "hello\r");
+});
