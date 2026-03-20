@@ -677,10 +677,6 @@ h1 {
   background: #1a1a1a;
 }
 
-.shell-mobile-terminal-input-visible .cli-terminal-container {
-  border-radius: 0;
-}
-
 .mobile-terminal-toggle {
   background: rgba(23, 117, 109, 0.14);
   color: #0d6a63;
@@ -1238,10 +1234,6 @@ h1 {
 }
 
 @media (max-width: 720px) {
-  .shell-mobile-terminal-input-visible .main-content {
-    min-height: calc(100vh - 180px);
-  }
-
   .shell {
     gap: 10px;
     padding: 10px;
