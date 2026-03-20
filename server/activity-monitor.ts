@@ -387,8 +387,9 @@ export class ActivityMonitor {
     let fd: FileHandle | undefined;
     try {
       fd = await open(filePath, "r");
-      const buf = Buffer.alloc(4096);
-      const { bytesRead } = await fd.read(buf, 0, 4096, 0);
+      // Use 16KB buffer - planContent can be large and may appear after several lines
+      const buf = Buffer.alloc(16384);
+      const { bytesRead } = await fd.read(buf, 0, 16384, 0);
       const head = buf.toString("utf8", 0, bytesRead);
 
       // Check for planContent field - indicates plan execution session

@@ -35,7 +35,7 @@ export class ClaudeCliSession extends EventEmitter {
       ? ["--resume", opts.sessionId]
       : ["--session-id", opts.sessionId];
 
-    if (!opts.resume && opts.allowSkipPermissions) {
+    if (opts.allowSkipPermissions) {
       args.push("--allow-dangerously-skip-permissions");
     }
 
