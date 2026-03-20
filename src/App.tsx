@@ -7,8 +7,6 @@ type MobileTerminalActionKey =
   | "backspace"
   | "tab"
   | "escape"
-  | "pageUp"
-  | "pageDown"
   | "arrowUp"
   | "arrowDown"
   | "arrowLeft"
@@ -100,8 +98,6 @@ const MOBILE_TERMINAL_ACTIONS: Array<{ key: MobileTerminalActionKey; label: stri
   { key: "backspace", label: "Backspace" },
   { key: "tab", label: "Tab" },
   { key: "escape", label: "Esc" },
-  { key: "pageUp", label: "PgUp" },
-  { key: "pageDown", label: "PgDn" },
   { key: "arrowUp", label: "↑" },
   { key: "arrowDown", label: "↓" },
   { key: "arrowLeft", label: "←" },
@@ -215,6 +211,7 @@ export default function App() {
   );
   const mobileTerminalInputVisible = mobileTerminalInputEnabled && !mobileTerminalInputDismissed && Boolean(activeSession);
   const inlineMobileTerminalInputVisible = mobileTerminalInputVisible && !mobileTerminalFullscreenVisible;
+  const shouldRenderMainContentPanel = !mobileTerminalInputDetected || (Boolean(activeSession) && !mobileTerminalFullscreenVisible);
   const shellClassName = [
     "shell",
     config?.enableShell ? "shell-has-terminal-drawer" : "",
@@ -584,7 +581,7 @@ export default function App() {
       return;
     }
 
-    if (sendCliInput(mobileTerminalDraft)) {
+    if (sendCliInput(`${mobileTerminalDraft}\r`)) {
       setMobileTerminalDraft("");
     }
   }
@@ -594,38 +591,7 @@ export default function App() {
       return;
     }
 
-    if (key === "pageUp" || key === "pageDown") {
-      scrollActiveCliTerminalPages(key === "pageUp" ? -1 : 1);
-      return;
-    }
-
     sendCliInput(mapMobileTerminalActionToSequence(key));
-  }
-
-  function scrollActiveCliTerminalPages(direction: -1 | 1) {
-    if (!activeSessionId) {
-      return;
-    }
-
-    const cached = cliTerminalsRef.current.get(activeSessionId);
-    if (!cached) {
-      return;
-    }
-
-    const terminal = cached.terminal as { rows?: number; scrollLines?: (lineCount: number) => void };
-    const lineCount = Math.max(1, Math.round((terminal.rows ?? 24) * 0.55));
-    if (typeof terminal.scrollLines === "function") {
-      terminal.scrollLines(direction * lineCount);
-      return;
-    }
-
-    const viewport = cached.element.querySelector(".xterm-viewport");
-    if (viewport instanceof HTMLElement) {
-      viewport.scrollBy({
-        top: direction * viewport.clientHeight * 0.55,
-        behavior: "smooth",
-      });
-    }
   }
 
   function toggleMobileTerminalInput() {
@@ -656,6 +622,41 @@ export default function App() {
 
   function dismissToast(id: string) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
+  }
+
+  function refitActiveCliTerminal() {
+    if (!activeSessionId) {
+      return;
+    }
+
+    const cached = cliTerminalsRef.current.get(activeSessionId);
+    if (!cached) {
+      return;
+    }
+
+    const fit = cached.fitAddon as { fit: () => void };
+    const term = cached.terminal as {
+      cols: number;
+      rows: number;
+      refresh: (start: number, end: number) => void;
+      scrollToBottom?: () => void;
+    };
+    const viewport = cached.element.querySelector(".xterm-viewport");
+    const keepBottomPinned = viewport instanceof HTMLElement
+      ? viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop < 32
+      : false;
+
+    requestAnimationFrame(() => {
+      fit.fit();
+      term.refresh(0, Math.max(0, term.rows - 1));
+      if (keepBottomPinned && typeof term.scrollToBottom === "function") {
+        term.scrollToBottom();
+      }
+      sendCommand({
+        type: "cli_resize",
+        payload: { clientSessionId: activeSessionId, cols: term.cols, rows: term.rows },
+      });
+    });
   }
 
   // --- Main CLI Terminal (xterm.js) ---
@@ -805,6 +806,21 @@ export default function App() {
       }
     };
   }, [activeSessionId, connectionState, mobileTerminalInputEnabled]);
+
+  useEffect(() => {
+    if (!activeSessionId || connectionState !== "connected") {
+      return;
+    }
+
+    refitActiveCliTerminal();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    activeSessionId,
+    connectionState,
+    mobileTerminalInputVisible,
+    mobileTerminalKeyboardInset,
+    mobileTerminalViewportHeight,
+  ]);
 
   // Cleanup cached terminals when sessions are removed
   useEffect(() => {
@@ -1099,8 +1115,12 @@ export default function App() {
             ))}
           </ul>
         )}
+        {mobileTerminalInputDetected && sessions.length > 0 && !activeSession ? (
+          <div className="session-mobile-hint">请选择会话开始交互。</div>
+        ) : null}
       </aside>
 
+      {shouldRenderMainContentPanel ? (
       <main className="panel main-content">
         {activeSession && !mobileTerminalFullscreenVisible ? (
           <>
@@ -1163,6 +1183,7 @@ export default function App() {
           </div>
         )}
       </main>
+      ) : null}
 
       {/* VSCode settings modal */}
       {vscodeSettingsOpen ? (
@@ -1815,9 +1836,6 @@ function mapMobileTerminalActionToSequence(key: MobileTerminalActionKey) {
       return "\t";
     case "escape":
       return "\u001b";
-    case "pageUp":
-    case "pageDown":
-      return "";
     case "arrowUp":
       return "\u001b[A";
     case "arrowDown":

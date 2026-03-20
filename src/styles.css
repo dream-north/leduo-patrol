@@ -739,6 +739,7 @@ h1 {
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 14px;
   padding: 10px 12px;
+  font-size: 16px;
   background: rgba(255, 255, 255, 0.96);
   color: #24180e;
   line-height: 1.5;
@@ -750,18 +751,18 @@ h1 {
 }
 
 .mobile-terminal-send {
-  min-height: 40px;
+  min-height: 38px;
 }
 
 .mobile-terminal-action-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 
 .mobile-terminal-action {
-  min-height: 40px;
-  padding: 0 10px;
+  min-height: 36px;
+  padding: 0 8px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.1);
   color: #f5ede4;
@@ -858,6 +859,14 @@ h1 {
   padding: 10px 12px;
   color: var(--muted);
   font-size: 11px;
+}
+
+.session-mobile-hint {
+  margin-top: 10px;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 /* ── Session meta (used in VSCode settings) ─────────── */
@@ -1253,10 +1262,6 @@ h1 {
   .mobile-terminal-input-shell {
     gap: 8px;
     padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
-  }
-
-  .mobile-terminal-action-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .mobile-terminal-fullscreen-header {
