@@ -202,6 +202,16 @@ export default function App() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const desktopTerminalContainerRef = useRef<HTMLDivElement | null>(null);
   const mobileTerminalContainerRef = useRef<HTMLDivElement | null>(null);
+  const shellTerminalRef = useRef<{
+    clientSessionId: string;
+    terminal: unknown;
+    fitAddon: unknown;
+    wrapper: HTMLDivElement;
+    resizeObserver: ResizeObserver;
+    touchCleanup: () => void;
+    shellHandler: (event: MessageEvent) => void;
+    blurReadonlyHandler: () => void;
+  } | null>(null);
 
   // Main CLI terminal
   const cliTerminalContainerRef = useRef<HTMLDivElement | null>(null);
@@ -660,6 +670,22 @@ export default function App() {
     setMobileTerminalSurface((current) => (current === "cli" ? "shell" : "cli"));
   }
 
+  function disposeShellTerminal() {
+    const cached = shellTerminalRef.current;
+    if (!cached) {
+      return;
+    }
+
+    cached.resizeObserver.disconnect();
+    cached.touchCleanup();
+    cached.wrapper.removeEventListener("focusin", cached.blurReadonlyHandler, true);
+    cached.wrapper.removeEventListener("touchend", cached.blurReadonlyHandler, true);
+    socketRef.current?.removeEventListener("message", cached.shellHandler);
+    sendCommand({ type: "shell_stop" });
+    (cached.terminal as { dispose: () => void }).dispose();
+    shellTerminalRef.current = null;
+  }
+
   function dismissToast(id: string) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }
@@ -993,8 +1019,35 @@ export default function App() {
       : desktopTerminalContainerRef.current;
     if (!containerEl) return;
 
+    const cached = shellTerminalRef.current;
+    if (cached && cached.clientSessionId === activeSession.clientSessionId) {
+      syncTerminalMobileReadonly(cached.wrapper);
+      containerEl.innerHTML = "";
+      containerEl.appendChild(cached.wrapper);
+
+      requestAnimationFrame(() => {
+        const fit = cached.fitAddon as { fit: () => void };
+        const term = cached.terminal as { cols: number; rows: number; refresh?: (start: number, end: number) => void };
+        fit.fit();
+        term.refresh?.(0, Math.max(0, term.rows - 1));
+        sendCommand({
+          type: "shell_resize",
+          payload: { cols: term.cols, rows: term.rows },
+        });
+      });
+
+      return () => {
+        if (containerEl) {
+          containerEl.innerHTML = "";
+        }
+      };
+    }
+
+    if (cached && cached.clientSessionId !== activeSession.clientSessionId) {
+      disposeShellTerminal();
+    }
+
     let disposed = false;
-    let cleanupResizeObserver: (() => void) | null = null;
 
     (async () => {
       const [xtermModule, fitModule] = await Promise.all([
@@ -1020,9 +1073,28 @@ export default function App() {
         },
       });
       term.loadAddon(fitAddon);
+      const wrapper = document.createElement("div");
+      wrapper.style.width = "100%";
+      wrapper.style.height = "100%";
+
       containerEl.innerHTML = "";
-      term.open(containerEl);
+      containerEl.appendChild(wrapper);
+      term.open(wrapper);
       fitAddon.fit();
+      syncTerminalMobileReadonly(wrapper);
+      const cleanupTouchScroll = setupTerminalTouchScroll(wrapper);
+      const blurShellHelperIfReadonly = () => {
+        if (wrapper.dataset.mobileReadonly === "true") {
+          requestAnimationFrame(() => {
+            const helper = wrapper.querySelector(".xterm-helper-textarea");
+            if (helper instanceof HTMLTextAreaElement) {
+              helper.blur();
+            }
+          });
+        }
+      };
+      wrapper.addEventListener("focusin", blurShellHelperIfReadonly, true);
+      wrapper.addEventListener("touchend", blurShellHelperIfReadonly, true);
 
       sendCommand({
         type: "shell_start",
@@ -1059,21 +1131,45 @@ export default function App() {
       const resizeObserver = new ResizeObserver(() => {
         if (!disposed) fitAddon.fit();
       });
-      resizeObserver.observe(containerEl);
+      resizeObserver.observe(wrapper);
 
-      cleanupResizeObserver = () => {
-        resizeObserver.disconnect();
-        socketRef.current?.removeEventListener("message", shellHandler);
-        sendCommand({ type: "shell_stop" });
-        term.dispose();
+      shellTerminalRef.current = {
+        clientSessionId: activeSession.clientSessionId,
+        terminal: term,
+        fitAddon,
+        wrapper,
+        resizeObserver,
+        touchCleanup: cleanupTouchScroll,
+        shellHandler,
+        blurReadonlyHandler: blurShellHelperIfReadonly,
       };
     })();
 
     return () => {
       disposed = true;
-      cleanupResizeObserver?.();
+      if (containerEl) {
+        containerEl.innerHTML = "";
+      }
     };
   }, [shellPanelVisible, activeSession?.clientSessionId, config?.enableShell, mobileTerminalInputDetected, mobileTerminalFullscreenVisible]);
+
+  useEffect(() => {
+    return () => {
+      disposeShellTerminal();
+    };
+  }, []);
+
+  useEffect(() => {
+    const cached = shellTerminalRef.current;
+    if (!cached) {
+      return;
+    }
+
+    const activeIds = new Set(sessions.map((s) => s.clientSessionId));
+    if (!activeIds.has(cached.clientSessionId)) {
+      disposeShellTerminal();
+    }
+  }, [sessions]);
 
   // --- Session actions ---
   function createSession() {

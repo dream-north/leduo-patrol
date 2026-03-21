@@ -702,6 +702,8 @@ h1 {
   position: relative;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
+  background: #1a1a1a;
 }
 
 .mobile-terminal-toggle {
@@ -725,7 +727,7 @@ h1 {
 .mobile-terminal-input-shell-fullscreen {
   position: relative;
   bottom: auto;
-  padding-top: 0;
+  padding-top: 8px;
   padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   background: linear-gradient(180deg, #1a1a1a 0%, rgba(26, 26, 26, 0.96) 100%);
   box-shadow: none;
