@@ -1,7 +1,5 @@
-import os from "node:os";
-import path from "node:path";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import readline from "node:readline/promises";
+import { loadStartupPreferences, saveStartupPreferences } from "./startup-preferences.js";
 
 export type BindMode = "server" | "local";
 
@@ -17,7 +15,6 @@ type LaunchPreferences = {
 };
 
 const DEFAULT_MODE: BindMode = "server";
-const PREFS_FILE_PATH = path.join(os.homedir(), ".leduo-patrol", "launch-preferences.json");
 
 export async function resolveBindMode(options: ResolveBindModeOptions = {}): Promise<BindMode> {
   const argv = options.argv ?? process.argv.slice(2);
@@ -63,7 +60,7 @@ function parseBindMode(raw: string | undefined | null): BindMode | null {
   return null;
 }
 
-function readOptionValue(argv: string[], optionName: string): string | undefined {
+export function readOptionValue(argv: string[], optionName: string): string | undefined {
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === optionName) {
@@ -100,13 +97,8 @@ async function promptShouldRemember(stdin: NodeJS.ReadStream, stdout: NodeJS.Wri
 }
 
 async function loadRememberedMode(): Promise<BindMode | null> {
-  if (!(await isReadable(PREFS_FILE_PATH))) {
-    return null;
-  }
-
   try {
-    const raw = await readFile(PREFS_FILE_PATH, "utf8");
-    const parsed = JSON.parse(raw) as LaunchPreferences;
+    const parsed = (await loadStartupPreferences()) as LaunchPreferences;
     return parseBindMode(parsed.bindMode ?? "");
   } catch {
     return null;
@@ -114,18 +106,7 @@ async function loadRememberedMode(): Promise<BindMode | null> {
 }
 
 async function saveRememberedMode(mode: BindMode) {
-  await mkdir(path.dirname(PREFS_FILE_PATH), { recursive: true });
-  const payload: LaunchPreferences = { bindMode: mode };
-  await writeFile(PREFS_FILE_PATH, JSON.stringify(payload, null, 2), "utf8");
-}
-
-async function isReadable(filePath: string) {
-  try {
-    await access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
+  await saveStartupPreferences({ bindMode: mode });
 }
 
 export const launchModeTestables = {

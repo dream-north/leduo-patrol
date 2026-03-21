@@ -10,9 +10,10 @@ import { SessionManager, type SocketEvent } from "./session-manager.js";
 import { formatError, resolveAllowedPath } from "./server-helpers.js";
 import { ShellSession } from "./shell-session.js";
 import { buildSingleFileDiff, buildWorkspaceDiffFilesSnapshot, type DiffCategory } from "./git-diff.js";
-import { buildAccessCookie, createAccessKey, hasAuthorizedAccessCookie, isAccessKeyAuthorized } from "./access-key.js";
+import { buildAccessCookie, hasAuthorizedAccessCookie, isAccessKeyAuthorized } from "./access-key.js";
 import { findAvailablePort, pickPreferredLanIp } from "./network.js";
 import { resolveBindMode } from "./launch-mode.js";
+import { resolveAccessKey } from "./access-key-prompt.js";
 
 type ClientCommand =
   | { type: "hello" }
@@ -50,8 +51,8 @@ const listenHost = bindMode === "local" ? "127.0.0.1" : "0.0.0.0";
 const launchHost = bindMode === "local" ? "127.0.0.1" : pickPreferredLanIp();
 const launchUser = userInfo().username;
 const claudeBin = process.env.LEDUO_PATROL_CLAUDE_BIN?.trim() || undefined;
-const accessKey = process.env.LEDUO_PATROL_ACCESS_KEY?.trim() || createAccessKey();
-const enableShell = process.env.LEDUO_ENABLE_SHELL === "true";
+const accessKey = await resolveAccessKey();
+const enableShell = parseBooleanFlag(process.env.LEDUO_ENABLE_SHELL, true);
 const allowSkipPermissions = process.env.LEDUO_PATROL_ALLOW_SKIP_PERMISSIONS === "true";
 
 const app = express();
@@ -338,6 +339,7 @@ if (isDevServer) {
   console.log("Web UI is unavailable on this start because bundled assets are missing.");
 }
 console.log(`Access URL: http://${displayHost}:${accessPort}/?key=${accessKey}`);
+console.log(`Shell feature: ${enableShell ? "enabled" : "disabled"}`);
 
 function sendEvent(socket: WebSocket, event: SocketEvent) {
   if (socket.readyState !== WebSocket.OPEN) {
@@ -353,4 +355,19 @@ async function hasReadableFile(filePath: string) {
   } catch {
     return false;
   }
+}
+
+function parseBooleanFlag(rawValue: string | undefined, defaultValue: boolean) {
+  if (rawValue == null || rawValue.trim() === "") {
+    return defaultValue;
+  }
+
+  const normalized = rawValue.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  return defaultValue;
 }

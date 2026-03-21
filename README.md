@@ -83,7 +83,7 @@
 - **目录浏览**：创建会话时可在允许根目录范围内浏览子目录，安全限制越权访问
 
 ### 工具与集成
-- **内置终端**：下方可展开终端抽屉，通过 xterm.js 提供完整 PTY 终端体验（需服务端开启 `LEDUO_ENABLE_SHELL=true`）
+- **内置终端**：下方可展开终端抽屉，通过 xterm.js 提供完整 PTY 终端体验；服务端默认开启，可通过 `LEDUO_ENABLE_SHELL=false` 显式关闭
 
 ### 界面与可访问性
 - **访问 Key 认证**：所有请求（HTTP / WebSocket）均需携带 key；浏览器检测到无效 key 时展示输入页
@@ -117,6 +117,7 @@ npm run dev:local
   - `local`：监听 `127.0.0.1`，仅本机可访问
 - 可通过命令行参数 `--mode=local|server` 或环境变量 `LEDUO_PATROL_BIND_MODE` 指定，命令行参数优先级更高
 - 若未显式指定，启动时会在终端提示选择模式；并可选择记住到 `~/.leduo-patrol/launch-preferences.json`，后续自动复用
+- 若未设置 `LEDUO_PATROL_ACCESS_KEY`，启动时会提示选择“手动输入自定义 key”或“随机生成 key”，并可选择是否记住到 `~/.leduo-patrol/launch-preferences.json`
 
 - 前端开发服务运行在自动探测到的可访问内网 IP（优先 `bond* / eth* / ens* / enp*` 网卡）上
 - 后端服务运行在 `PORT`（默认 `3001`，端口冲突时会自动递增寻找可用端口）
@@ -153,7 +154,7 @@ LEDUO_PATROL_CLAUDE_BIN=/absolute/path/to/claude
 LEDUO_PATROL_SHELL=/absolute/path/to/zsh
 ANTHROPIC_API_KEY=sk-...
 LEDUO_PATROL_ACCESS_KEY=your-fixed-key
-LEDUO_ENABLE_SHELL=true
+LEDUO_ENABLE_SHELL=false
 ```
 
 如果设置了 `LEDUO_PATROL_ALLOWED_ROOTS`，网页中只能连接这些根目录之下的路径；未设置时默认只允许启动命令所在目录。
@@ -177,7 +178,12 @@ LEDUO_ENABLE_SHELL=true
 
 ## 访问校验 Key
 
-服务启动时会自动生成一次性访问 key，并在控制台打印可直接打开的地址。
+服务启动时会优先按以下顺序确定访问 key，并在控制台打印可直接打开的地址：
+
+- `--access-key your-key`
+- `LEDUO_PATROL_ACCESS_KEY`
+- 已记住在 `~/.leduo-patrol/launch-preferences.json` 的 key
+- 若以上都没有：启动时交互选择“手动输入”或“随机生成”
 
 - 开发模式（`npm run dev`）下，`Access URL` 默认指向 Web 端口（默认 `5173`）。
 - 生产模式（`npm start`）下，Web 由同一个 Express 服务静态托管，因此不会出现独立的 Web 监听端口；`Access URL` 会指向 server 端口。若未找到打包后的 `dist/web` 资源，服务会给出错误提示页与启动日志提示。
@@ -191,6 +197,14 @@ LEDUO_ENABLE_SHELL=true
 ```bash
 LEDUO_PATROL_ACCESS_KEY=your-fixed-key
 LEDUO_PATROL_CLAUDE_BIN=/absolute/path/to/claude
+```
+
+也可以直接通过命令行传入：
+
+```bash
+npm run dev:server -- --access-key your-fixed-key
+# 或生产模式
+npm start -- --access-key your-fixed-key
 ```
 
 ## 已知限制
