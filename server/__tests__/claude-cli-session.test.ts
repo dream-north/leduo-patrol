@@ -30,3 +30,29 @@ test("claudeCliSessionTestables.resolveClaudeBin throws actionable error when cl
     /LEDUO_PATROL_CLAUDE_BIN/,
   );
 });
+
+test("claudeCliSessionTestables.buildShellWrappedClaudeLaunch uses a shell exec wrapper", () => {
+  const launch = claudeCliSessionTestables.buildShellWrappedClaudeLaunch(
+    "/opt/claude/bin/claude",
+    ["--session-id", "session-123"],
+    (candidate) => candidate === "/bin/sh",
+  );
+
+  assert.deepEqual(launch, {
+    command: "/bin/sh",
+    args: ["-c", 'exec "$0" "$@"', "/opt/claude/bin/claude", "--session-id", "session-123"],
+  });
+});
+
+test("claudeCliSessionTestables.shouldRetryClaudeSpawnWithShell matches posix_spawnp failures", () => {
+  const shouldRetry = claudeCliSessionTestables.shouldRetryClaudeSpawnWithShell(
+    new Error("posix_spawnp failed."),
+  );
+
+  assert.equal(typeof shouldRetry, "boolean");
+  if (process.platform === "win32") {
+    assert.equal(shouldRetry, false);
+  } else {
+    assert.equal(shouldRetry, true);
+  }
+});

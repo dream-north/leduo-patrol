@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { buildSpawnFailureMessage, ensureDirectoryExistsSync } from "./server-helpers.js";
+import { ensureNodePtySpawnHelperExecutable } from "./pty-runtime.js";
 
 type ShellLaunchConfig = {
   command: string;
@@ -74,6 +75,7 @@ export class ShellSession extends EventEmitter {
   constructor(workspacePath: string, cols = 80, rows = 24) {
     super();
     ensureDirectoryExistsSync(workspacePath, "Shell workspace");
+    ensureNodePtySpawnHelperExecutable();
     const shellLaunch = resolveShellLaunch();
 
     const env: Record<string, string> = {
