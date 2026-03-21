@@ -23,9 +23,9 @@ type ClientCommand =
   | { type: "cli_input"; payload: { clientSessionId: string; data: string } }
   | { type: "cli_resize"; payload: { clientSessionId: string; cols: number; rows: number } }
   | { type: "shell_start"; payload: { clientSessionId: string; cols: number; rows: number } }
-  | { type: "shell_input"; payload: { data: string } }
-  | { type: "shell_resize"; payload: { cols: number; rows: number } }
-  | { type: "shell_stop" };
+  | { type: "shell_input"; payload: { clientSessionId: string; data: string } }
+  | { type: "shell_resize"; payload: { clientSessionId: string; cols: number; rows: number } }
+  | { type: "shell_stop"; payload: { clientSessionId: string } };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const launchCwd = process.cwd();
@@ -209,8 +209,17 @@ wss.on("connection", (socket, request) => {
     return;
   }
 
-  const unsubscribe = sessionManager.subscribe((event) => sendEvent(socket, event));
-  let shellSession: ShellSession | null = null;
+  const shellSessions = new Map<string, ShellSession>();
+  const unsubscribe = sessionManager.subscribe((event) => {
+    if (event.type === "session_closed") {
+      const shellSession = shellSessions.get(event.payload.clientSessionId);
+      if (shellSession) {
+        shellSession.kill();
+        shellSessions.delete(event.payload.clientSessionId);
+      }
+    }
+    sendEvent(socket, event);
+  });
 
   socket.on("message", async (raw) => {
     try {
@@ -266,40 +275,45 @@ wss.on("connection", (socket, request) => {
           if (!enableShell) {
             throw new Error("Shell feature is disabled. Set LEDUO_ENABLE_SHELL=true to enable it.");
           }
-          shellSession?.kill();
-          shellSession = null;
+          const clientSessionId = message.payload.clientSessionId;
+          const existingShell = shellSessions.get(clientSessionId);
           const cols = Math.max(2, message.payload.cols);
           const rows = Math.max(2, message.payload.rows);
-          const shellWorkspacePath = sessionManager.getSessionWorkspacePath(message.payload.clientSessionId);
+          if (existingShell?.alive) {
+            existingShell.resize(cols, rows);
+            break;
+          }
+
+          const shellWorkspacePath = sessionManager.getSessionWorkspacePath(clientSessionId);
           const newShell = new ShellSession(shellWorkspacePath, cols, rows);
-          shellSession = newShell;
+          shellSessions.set(clientSessionId, newShell);
           newShell.on("output", (data: string) => {
             if (socket.readyState === WebSocket.OPEN) {
-              socket.send(JSON.stringify({ type: "shell_output", payload: { data } }));
+              socket.send(JSON.stringify({ type: "shell_output", payload: { clientSessionId, data } }));
             }
           });
           newShell.on("exit", (exitCode: number) => {
-            if (shellSession === newShell) {
-              shellSession = null;
+            if (shellSessions.get(clientSessionId) === newShell) {
+              shellSessions.delete(clientSessionId);
             }
             if (socket.readyState === WebSocket.OPEN) {
-              socket.send(JSON.stringify({ type: "shell_exited", payload: { exitCode } }));
+              socket.send(JSON.stringify({ type: "shell_exited", payload: { clientSessionId, exitCode } }));
             }
           });
           break;
         }
         case "shell_input":
-          if (!shellSession?.alive) {
+          if (!shellSessions.get(message.payload.clientSessionId)?.alive) {
             throw new Error("Shell is not running");
           }
-          shellSession.write(message.payload.data);
+          shellSessions.get(message.payload.clientSessionId)?.write(message.payload.data);
           break;
         case "shell_resize":
-          shellSession?.resize(message.payload.cols, message.payload.rows);
+          shellSessions.get(message.payload.clientSessionId)?.resize(message.payload.cols, message.payload.rows);
           break;
         case "shell_stop":
-          shellSession?.kill();
-          shellSession = null;
+          shellSessions.get(message.payload.clientSessionId)?.kill();
+          shellSessions.delete(message.payload.clientSessionId);
           break;
       }
     } catch (error) {
@@ -312,8 +326,10 @@ wss.on("connection", (socket, request) => {
 
   socket.on("close", () => {
     unsubscribe();
-    shellSession?.kill();
-    shellSession = null;
+    for (const shellSession of shellSessions.values()) {
+      shellSession.kill();
+    }
+    shellSessions.clear();
   });
 });
 

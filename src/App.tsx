@@ -95,9 +95,20 @@ type EventMessage =
   | { type: "cli_exited"; payload: { clientSessionId: string; exitCode: number } }
   | { type: "session_activity"; payload: { clientSessionId: string; activityState: ActivityState } }
   | { type: "session_id_updated"; payload: { clientSessionId: string; newSessionId: string } }
-  | { type: "shell_output"; payload: { data: string } }
-  | { type: "shell_exited"; payload: { exitCode: number } }
+  | { type: "shell_output"; payload: { clientSessionId: string; data: string } }
+  | { type: "shell_exited"; payload: { clientSessionId: string; exitCode: number } }
   | { type: "error"; payload: { message: string; fatal: boolean; clientSessionId?: string } };
+
+type CachedShellTerminal = {
+  clientSessionId: string;
+  terminal: unknown;
+  fitAddon: unknown;
+  wrapper: HTMLDivElement;
+  resizeObserver: ResizeObserver;
+  touchCleanup: () => void;
+  blurReadonlyHandler: () => void;
+  alive: boolean;
+};
 
 const VSCODE_LAUNCH_CONFIG_STORAGE_KEY = "leduo_vscode_launch_config";
 const WORKSPACE_SUGGESTION_INITIAL_LIMIT = 6;
@@ -202,16 +213,7 @@ export default function App() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const desktopTerminalContainerRef = useRef<HTMLDivElement | null>(null);
   const mobileTerminalContainerRef = useRef<HTMLDivElement | null>(null);
-  const shellTerminalRef = useRef<{
-    clientSessionId: string;
-    terminal: unknown;
-    fitAddon: unknown;
-    wrapper: HTMLDivElement;
-    resizeObserver: ResizeObserver;
-    touchCleanup: () => void;
-    shellHandler: (event: MessageEvent) => void;
-    blurReadonlyHandler: () => void;
-  } | null>(null);
+  const shellTerminalsRef = useRef<Map<string, CachedShellTerminal>>(new Map());
 
   // Main CLI terminal
   const cliTerminalContainerRef = useRef<HTMLDivElement | null>(null);
@@ -548,12 +550,23 @@ export default function App() {
         break;
 
       case "shell_output": {
-        // Handled by the bottom shell terminal xterm instance directly
+        const cached = shellTerminalsRef.current.get(message.payload.clientSessionId);
+        if (cached) {
+          (cached.terminal as { write: (data: string) => void }).write(message.payload.data);
+        }
         break;
       }
 
-      case "shell_exited":
+      case "shell_exited": {
+        const cached = shellTerminalsRef.current.get(message.payload.clientSessionId);
+        if (cached) {
+          cached.alive = false;
+          (cached.terminal as { write: (data: string) => void }).write(
+            `\r\n[Shell exited with code ${message.payload.exitCode}]\r\n`,
+          );
+        }
         break;
+      }
 
       case "error":
         if (message.payload.clientSessionId) {
@@ -599,13 +612,13 @@ export default function App() {
   }
 
   function sendShellInput(data: string) {
-    if (!data) {
+    if (!activeSessionId || !data) {
       return false;
     }
 
     return sendCommand({
       type: "shell_input",
-      payload: { data },
+      payload: { clientSessionId: activeSessionId, data },
     });
   }
 
@@ -670,8 +683,8 @@ export default function App() {
     setMobileTerminalSurface((current) => (current === "cli" ? "shell" : "cli"));
   }
 
-  function disposeShellTerminal() {
-    const cached = shellTerminalRef.current;
+  function disposeShellTerminal(clientSessionId: string) {
+    const cached = shellTerminalsRef.current.get(clientSessionId);
     if (!cached) {
       return;
     }
@@ -680,10 +693,15 @@ export default function App() {
     cached.touchCleanup();
     cached.wrapper.removeEventListener("focusin", cached.blurReadonlyHandler, true);
     cached.wrapper.removeEventListener("touchend", cached.blurReadonlyHandler, true);
-    socketRef.current?.removeEventListener("message", cached.shellHandler);
-    sendCommand({ type: "shell_stop" });
+    sendCommand({ type: "shell_stop", payload: { clientSessionId } });
     (cached.terminal as { dispose: () => void }).dispose();
-    shellTerminalRef.current = null;
+    shellTerminalsRef.current.delete(clientSessionId);
+  }
+
+  function disposeAllShellTerminals() {
+    for (const clientSessionId of Array.from(shellTerminalsRef.current.keys())) {
+      disposeShellTerminal(clientSessionId);
+    }
   }
 
   function dismissToast(id: string) {
@@ -1019,8 +1037,8 @@ export default function App() {
       : desktopTerminalContainerRef.current;
     if (!containerEl) return;
 
-    const cached = shellTerminalRef.current;
-    if (cached && cached.clientSessionId === activeSession.clientSessionId) {
+    const cached = shellTerminalsRef.current.get(activeSession.clientSessionId);
+    if (cached?.alive) {
       syncTerminalMobileReadonly(cached.wrapper);
       containerEl.innerHTML = "";
       containerEl.appendChild(cached.wrapper);
@@ -1032,7 +1050,7 @@ export default function App() {
         term.refresh?.(0, Math.max(0, term.rows - 1));
         sendCommand({
           type: "shell_resize",
-          payload: { cols: term.cols, rows: term.rows },
+          payload: { clientSessionId: cached.clientSessionId, cols: term.cols, rows: term.rows },
         });
       });
 
@@ -1043,8 +1061,8 @@ export default function App() {
       };
     }
 
-    if (cached && cached.clientSessionId !== activeSession.clientSessionId) {
-      disposeShellTerminal();
+    if (cached && !cached.alive) {
+      disposeShellTerminal(activeSession.clientSessionId);
     }
 
     let disposed = false;
@@ -1096,6 +1114,22 @@ export default function App() {
       wrapper.addEventListener("focusin", blurShellHelperIfReadonly, true);
       wrapper.addEventListener("touchend", blurShellHelperIfReadonly, true);
 
+      const resizeObserver = new ResizeObserver(() => {
+        if (!disposed) fitAddon.fit();
+      });
+      resizeObserver.observe(wrapper);
+
+      shellTerminalsRef.current.set(activeSession.clientSessionId, {
+        clientSessionId: activeSession.clientSessionId,
+        terminal: term,
+        fitAddon,
+        wrapper,
+        resizeObserver,
+        touchCleanup: cleanupTouchScroll,
+        blurReadonlyHandler: blurShellHelperIfReadonly,
+        alive: true,
+      });
+
       sendCommand({
         type: "shell_start",
         payload: {
@@ -1106,43 +1140,15 @@ export default function App() {
       });
 
       term.onData((data) => {
-        sendCommand({ type: "shell_input", payload: { data } });
+        sendCommand({ type: "shell_input", payload: { clientSessionId: activeSession.clientSessionId, data } });
       });
 
       term.onResize(({ cols, rows }) => {
-        sendCommand({ type: "shell_resize", payload: { cols, rows } });
+        sendCommand({
+          type: "shell_resize",
+          payload: { clientSessionId: activeSession.clientSessionId, cols, rows },
+        });
       });
-
-      // Listen for shell_output events
-      const shellHandler = (event: MessageEvent) => {
-        try {
-          const msg = JSON.parse(String(event.data)) as EventMessage;
-          if (msg.type === "shell_output") {
-            term.write(msg.payload.data);
-          } else if (msg.type === "shell_exited") {
-            term.write(`\r\n[Shell exited with code ${msg.payload.exitCode}]\r\n`);
-          }
-        } catch {
-          /* ignore */
-        }
-      };
-      socketRef.current?.addEventListener("message", shellHandler);
-
-      const resizeObserver = new ResizeObserver(() => {
-        if (!disposed) fitAddon.fit();
-      });
-      resizeObserver.observe(wrapper);
-
-      shellTerminalRef.current = {
-        clientSessionId: activeSession.clientSessionId,
-        terminal: term,
-        fitAddon,
-        wrapper,
-        resizeObserver,
-        touchCleanup: cleanupTouchScroll,
-        shellHandler,
-        blurReadonlyHandler: blurShellHelperIfReadonly,
-      };
     })();
 
     return () => {
@@ -1155,19 +1161,16 @@ export default function App() {
 
   useEffect(() => {
     return () => {
-      disposeShellTerminal();
+      disposeAllShellTerminals();
     };
   }, []);
 
   useEffect(() => {
-    const cached = shellTerminalRef.current;
-    if (!cached) {
-      return;
-    }
-
     const activeIds = new Set(sessions.map((s) => s.clientSessionId));
-    if (!activeIds.has(cached.clientSessionId)) {
-      disposeShellTerminal();
+    for (const clientSessionId of Array.from(shellTerminalsRef.current.keys())) {
+      if (!activeIds.has(clientSessionId)) {
+        disposeShellTerminal(clientSessionId);
+      }
     }
   }, [sessions]);
 
