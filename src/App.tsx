@@ -27,6 +27,7 @@ type MobileTerminalEnvironment = {
   coarsePointer: boolean;
   touchPoints: number;
 };
+type MobileTerminalSurface = "cli" | "shell";
 
 type SessionRecord = {
   clientSessionId: string;
@@ -169,6 +170,7 @@ export default function App() {
   const [mobileTerminalDraft, setMobileTerminalDraft] = useState("");
   const [mobileTerminalInputDetected, setMobileTerminalInputDetected] = useState(false);
   const [mobileTerminalInputDismissed, setMobileTerminalInputDismissed] = useState(false);
+  const [mobileTerminalSurface, setMobileTerminalSurface] = useState<MobileTerminalSurface>("cli");
   const [mobileTerminalKeyboardInset, setMobileTerminalKeyboardInset] = useState(0);
   const [mobileTerminalViewportHeight, setMobileTerminalViewportHeight] = useState<number | null>(null);
   const [mobileTerminalViewportOffsetTop, setMobileTerminalViewportOffsetTop] = useState(0);
@@ -198,7 +200,8 @@ export default function App() {
 
   // Bottom shell drawer
   const [terminalOpen, setTerminalOpen] = useState(false);
-  const terminalContainerRef = useRef<HTMLDivElement | null>(null);
+  const desktopTerminalContainerRef = useRef<HTMLDivElement | null>(null);
+  const mobileTerminalContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Main CLI terminal
   const cliTerminalContainerRef = useRef<HTMLDivElement | null>(null);
@@ -216,11 +219,14 @@ export default function App() {
     connectionState,
     activeSession?.connectionState,
   );
+  const shellPanelVisible = Boolean(
+    config?.enableShell && (mobileTerminalFullscreenVisible || terminalOpen),
+  );
   const mobileTerminalInputVisible = mobileTerminalInputDetected && !mobileTerminalInputDismissed && Boolean(activeSession);
   const shouldRenderMainContentPanel = !mobileTerminalInputDetected;
   const shellClassName = [
     "shell",
-    config?.enableShell ? "shell-has-terminal-drawer" : "",
+    config?.enableShell && terminalOpen && !mobileTerminalFullscreenVisible ? "shell-has-terminal-drawer" : "",
   ].filter(Boolean).join(" ");
   const mobileTerminalFullscreenStyle = useMemo(
     () =>
@@ -331,6 +337,7 @@ export default function App() {
 
   useEffect(() => {
     setMobileTerminalDraft("");
+    setMobileTerminalSurface("cli");
     if (mobileTerminalInputDetected && activeSessionId) {
       setMobileTerminalInputDismissed(false);
     }
@@ -581,6 +588,17 @@ export default function App() {
     });
   }
 
+  function sendShellInput(data: string) {
+    if (!data) {
+      return false;
+    }
+
+    return sendCommand({
+      type: "shell_input",
+      payload: { data },
+    });
+  }
+
   function commitMobileTerminalDraft(submit: boolean) {
     if (mobileTerminalInputDisabled) {
       return;
@@ -591,7 +609,10 @@ export default function App() {
       return;
     }
 
-    if (sendCliInput(payload)) {
+    const didSend = mobileTerminalSurface === "shell"
+      ? sendShellInput(payload)
+      : sendCliInput(payload);
+    if (didSend) {
       setMobileTerminalDraft("");
     }
   }
@@ -609,7 +630,12 @@ export default function App() {
       return;
     }
 
-    sendCliInput(mapMobileTerminalActionToSequence(key));
+    const sequence = mapMobileTerminalActionToSequence(key);
+    if (mobileTerminalSurface === "shell") {
+      sendShellInput(sequence);
+      return;
+    }
+    sendCliInput(sequence);
   }
 
   function toggleMobileTerminalInput() {
@@ -618,6 +644,20 @@ export default function App() {
     }
 
     setMobileTerminalInputDismissed((current) => !current);
+  }
+
+  function toggleTerminalPanel() {
+    if (!config?.enableShell) {
+      return;
+    }
+    setTerminalOpen((current) => !current);
+  }
+
+  function toggleMobileTerminalSurface() {
+    if (!config?.enableShell) {
+      return;
+    }
+    setMobileTerminalSurface((current) => (current === "cli" ? "shell" : "cli"));
   }
 
   function dismissToast(id: string) {
@@ -910,7 +950,7 @@ export default function App() {
         containerEl.innerHTML = "";
       }
     };
-  }, [activeSessionId, connectionState, mobileTerminalInputDetected]);
+  }, [activeSessionId, connectionState, mobileTerminalInputDetected, mobileTerminalSurface]);
 
   useLayoutEffect(() => {
     if (!activeSessionId || connectionState !== "connected") {
@@ -926,6 +966,7 @@ export default function App() {
     mobileTerminalInputVisible,
     mobileTerminalKeyboardInset,
     mobileTerminalViewportHeight,
+    mobileTerminalSurface,
   ]);
 
   // Cleanup cached terminals when sessions are removed
@@ -944,10 +985,12 @@ export default function App() {
     }
   }, [sessions]);
 
-  // --- Bottom shell terminal (xterm.js) - same as before ---
+  // --- Shell terminal (xterm.js) ---
   useEffect(() => {
-    if (!terminalOpen || !activeSession || !config?.enableShell) return;
-    const containerEl = terminalContainerRef.current;
+    if (!shellPanelVisible || !activeSession || !config?.enableShell) return;
+    const containerEl = mobileTerminalFullscreenVisible
+      ? mobileTerminalContainerRef.current
+      : desktopTerminalContainerRef.current;
     if (!containerEl) return;
 
     let disposed = false;
@@ -1030,7 +1073,7 @@ export default function App() {
       disposed = true;
       cleanupResizeObserver?.();
     };
-  }, [terminalOpen, activeSession?.clientSessionId, config?.enableShell, mobileTerminalInputDetected]);
+  }, [shellPanelVisible, activeSession?.clientSessionId, config?.enableShell, mobileTerminalInputDetected, mobileTerminalFullscreenVisible]);
 
   // --- Session actions ---
   function createSession() {
@@ -1246,6 +1289,18 @@ export default function App() {
                 <button className="secondary session-open-vscode" onClick={() => openWorkspaceInVscode(activeSession.workspacePath)}>
                   VSCode
                 </button>
+                {config?.enableShell ? (
+                  <button
+                    className={`secondary toolbar-icon-button session-terminal-trigger ${terminalOpen ? "active" : ""}`}
+                    type="button"
+                    onClick={toggleTerminalPanel}
+                    aria-pressed={terminalOpen}
+                    title={terminalOpen ? "收起终端" : "展开终端"}
+                  >
+                    <span aria-hidden="true">&gt;_</span>
+                    <span className="sr-only">{terminalOpen ? "收起终端" : "展开终端"}</span>
+                  </button>
+                ) : null}
                 <button className="secondary session-diff-trigger" onClick={openSessionDiff}>
                   查看 Diff
                 </button>
@@ -1440,8 +1495,8 @@ export default function App() {
       ) : null}
 
       {/* Bottom shell drawer */}
-      {config?.enableShell ? (
-        <div className={`terminal-drawer ${terminalOpen ? "terminal-drawer-open" : ""}`}>
+      {config?.enableShell && terminalOpen && !mobileTerminalFullscreenVisible ? (
+        <div className="terminal-drawer terminal-drawer-open">
           <div className="terminal-drawer-header">
             <button
               className="terminal-drawer-toggle"
@@ -1458,7 +1513,7 @@ export default function App() {
             </span>
           </div>
           {terminalOpen ? (
-            <div className="terminal-viewport" ref={terminalContainerRef} />
+            <div className="terminal-viewport" ref={desktopTerminalContainerRef} />
           ) : null}
         </div>
       ) : null}
@@ -1477,14 +1532,74 @@ export default function App() {
             <button className="secondary session-diff-trigger mobile-terminal-diff-trigger" type="button" onClick={openSessionDiff}>
               Diff
             </button>
-            <button className="secondary mobile-terminal-toggle" type="button" onClick={toggleMobileTerminalInput}>
-              {mobileTerminalInputVisible ? "收起输入" : "移动输入"}
+            {config?.enableShell ? (
+              <button
+                className="secondary toolbar-icon-button mobile-terminal-mode-button"
+                type="button"
+                onClick={toggleMobileTerminalSurface}
+                title={mobileTerminalSurface === "cli" ? "切换到终端" : "切换到 Claude Code"}
+              >
+                <span aria-hidden="true">{mobileTerminalSurface === "cli" ? ">_" : "CC"}</span>
+                <span className="sr-only">{mobileTerminalSurface === "cli" ? "切换到终端" : "切换到 Claude Code"}</span>
+              </button>
+            ) : null}
+            <button
+              className={`secondary mobile-terminal-toggle ${mobileTerminalInputVisible ? "active" : ""}`}
+              type="button"
+              onClick={toggleMobileTerminalInput}
+              aria-pressed={mobileTerminalInputVisible}
+            >
+              <svg
+                aria-hidden="true"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <rect x="2" y="5" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2" />
+                <path d="M6 9H7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                <path d="M10 9H11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                <path d="M14 9H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                <path d="M18 9H19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                <path d="M6 12H7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                <path d="M10 12H11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                <path d="M14 12H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                <path d="M18 12H19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                <path d="M9 15H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              <span className="sr-only">{mobileTerminalInputVisible ? "收起输入" : "移动输入"}</span>
             </button>
           </div>
         </div>
         <div className="mobile-terminal-fullscreen-body">
           <div className="cli-stage cli-stage-fullscreen">
-            <div className="cli-terminal-container cli-terminal-container-fullscreen" ref={cliTerminalContainerRef} />
+            <div className="mobile-terminal-stage-viewport">
+              <div
+                className={`cli-terminal-container cli-terminal-container-fullscreen mobile-terminal-surface ${
+                  mobileTerminalSurface === "shell" ? "mobile-terminal-surface-hidden" : ""
+                }`}
+                ref={cliTerminalContainerRef}
+              />
+              {config?.enableShell ? (
+                <div
+                  className={`mobile-shell-stage mobile-terminal-surface ${
+                    mobileTerminalSurface === "cli" ? "mobile-terminal-surface-hidden" : ""
+                  }`}
+                >
+                  <div className="mobile-shell-panel-header">
+                    <span className="mobile-shell-panel-title">
+                      <span aria-hidden="true">&gt;_</span>
+                      <span>终端</span>
+                    </span>
+                    <code className="mobile-shell-panel-path" title={activeSession.workspacePath}>
+                      {activeSession.workspacePath}
+                    </code>
+                  </div>
+                  <div className="terminal-viewport terminal-viewport-mobile terminal-viewport-mobile-fullscreen" ref={mobileTerminalContainerRef} />
+                </div>
+              ) : null}
+            </div>
             {mobileTerminalInputVisible ? (
               <MobileTerminalInputBar
                 draft={mobileTerminalDraft}

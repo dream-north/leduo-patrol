@@ -1,6 +1,6 @@
 {
   "name": "leduo-patrol",
-  "version": "2.1.0",
+  "version": "2.2.1",
   "description": "乐多汪汪队（leduo-patrol）web console with embedded Claude Code CLI terminals.",
   "type": "module",
   "main": "dist/server/index.js",
