@@ -97,6 +97,7 @@
 - Node.js 22+
 - 已能正常运行 Claude Code
 - 服务器环境里已配置 `ANTHROPIC_API_KEY`
+- 若 `claude` 不在默认 `PATH` 中，请设置 `LEDUO_PATROL_CLAUDE_BIN=/absolute/path/to/claude`
 
 ## 启动
 
@@ -148,15 +149,17 @@ LEDUO_PATROL_BIND_MODE=server
 LEDUO_PATROL_APP_NAME=乐多汪汪队
 LEDUO_PATROL_WORKSPACE_PATH=/absolute/workspace/path
 LEDUO_PATROL_ALLOWED_ROOTS=/absolute/workspace/path,/another/allowed/root
+LEDUO_PATROL_CLAUDE_BIN=/absolute/path/to/claude
+LEDUO_PATROL_SHELL=/absolute/path/to/zsh
 ANTHROPIC_API_KEY=sk-...
 LEDUO_PATROL_ACCESS_KEY=your-fixed-key
-LEDUO_PATROL_AGENT_BIN=/absolute/path/to/claude-code-acp
 LEDUO_ENABLE_SHELL=true
 ```
 
 如果设置了 `LEDUO_PATROL_ALLOWED_ROOTS`，网页中只能连接这些根目录之下的路径；未设置时默认只允许启动命令所在目录。
 如果未设置 `LEDUO_PATROL_WORKSPACE_PATH`，默认工作目录为启动命令所在目录（`process.cwd()`），并在启动日志中提示如何通过环境变量修改。
 如果未设置 `LEDUO_PATROL_ALLOWED_ROOTS`，默认允许根目录同样为启动命令所在目录，并会在启动日志中提示可配置项。
+如果发布安装后的内嵌终端无法启动，可通过 `LEDUO_PATROL_SHELL` 显式指定 shell 路径；例如 macOS 上常见的 `/bin/zsh`。
 
 ## 状态持久化
 
@@ -187,7 +190,7 @@ LEDUO_ENABLE_SHELL=true
 
 ```bash
 LEDUO_PATROL_ACCESS_KEY=your-fixed-key
-LEDUO_PATROL_AGENT_BIN=/absolute/path/to/claude-code-acp
+LEDUO_PATROL_CLAUDE_BIN=/absolute/path/to/claude
 ```
 
 ## 已知限制

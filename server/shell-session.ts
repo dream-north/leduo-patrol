@@ -2,28 +2,70 @@ import { spawn } from "node-pty";
 import type { IPty } from "node-pty";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
+import path from "node:path";
+import { buildSpawnFailureMessage, ensureDirectoryExistsSync } from "./server-helpers.js";
 
-// Resolve bash path; prefer the user's login shell if it is bash, then common locations
-function resolveBashPath(): string {
-  const loginShell = process.env.SHELL ?? "";
-  if (loginShell && /bash$/i.test(loginShell) && existsSync(loginShell)) {
-    return loginShell;
+type ShellLaunchConfig = {
+  command: string;
+  args: string[];
+};
+
+function buildShellLoginArgs(command: string): string[] {
+  const shellName = path.basename(command).toLowerCase();
+  if (["bash", "zsh", "ksh", "fish"].includes(shellName)) {
+    return ["-l"];
   }
-  for (const candidate of ["/bin/bash", "/usr/bin/bash", "/usr/local/bin/bash"]) {
-    if (existsSync(candidate)) {
-      return candidate;
+
+  return [];
+}
+
+function resolveShellLaunch(
+  env: NodeJS.ProcessEnv = process.env,
+  shellExists: (path: string) => boolean = existsSync,
+): ShellLaunchConfig {
+  const configuredShell = env.LEDUO_PATROL_SHELL?.trim() ?? "";
+  const loginShell = env.SHELL?.trim() ?? "";
+  const absoluteCandidates = [
+    configuredShell,
+    loginShell,
+    "/bin/bash",
+    "/bin/zsh",
+    "/bin/sh",
+    "/usr/bin/bash",
+    "/usr/bin/zsh",
+    "/usr/local/bin/bash",
+    "/usr/local/bin/zsh",
+    "/opt/homebrew/bin/bash",
+    "/opt/homebrew/bin/zsh",
+  ].filter((candidate, index, all) => candidate && all.indexOf(candidate) === index);
+
+  for (const candidate of absoluteCandidates) {
+    if (shellExists(candidate)) {
+      return {
+        command: candidate,
+        args: buildShellLoginArgs(candidate),
+      };
     }
   }
-  // Fall back to plain "bash" and let the OS resolve it via PATH
-  return "bash";
+
+  if (configuredShell) {
+    return {
+      command: configuredShell,
+      args: buildShellLoginArgs(configuredShell),
+    };
+  }
+
+  throw new Error(
+    `No supported shell was found. Set LEDUO_PATROL_SHELL to an absolute shell path if your system does not provide /bin/bash, /bin/zsh, or /bin/sh.`,
+  );
 }
 
 /**
  * An interactive shell session backed by a PTY.
  *
- * Spawns a login shell (`bash --login`) that inherits the full user
- * environment and loads ~/.bash_profile / ~/.bashrc so that tools like
- * pyenv, nvm, brew, cargo, aliases, etc. are all available.
+ * Spawns the best-available interactive shell for the host environment.
+ * We prefer a login shell when possible so that user toolchains such as
+ * pyenv, nvm, brew, cargo, aliases, etc. are available in published installs too.
  */
 export class ShellSession extends EventEmitter {
   private pty: IPty;
@@ -31,6 +73,8 @@ export class ShellSession extends EventEmitter {
 
   constructor(workspacePath: string, cols = 80, rows = 24) {
     super();
+    ensureDirectoryExistsSync(workspacePath, "Shell workspace");
+    const shellLaunch = resolveShellLaunch();
 
     const env: Record<string, string> = {
       ...Object.fromEntries(
@@ -41,15 +85,28 @@ export class ShellSession extends EventEmitter {
       TERM: "xterm-256color",
       COLORTERM: "truecolor",
       PWD: workspacePath,
+      SHELL: shellLaunch.command,
     };
 
-    this.pty = spawn(resolveBashPath(), ["--login"], {
-      name: "xterm-256color",
-      cols,
-      rows,
-      cwd: workspacePath,
-      env,
-    });
+    try {
+      this.pty = spawn(shellLaunch.command, shellLaunch.args, {
+        name: "xterm-256color",
+        cols,
+        rows,
+        cwd: workspacePath,
+        env,
+      });
+    } catch (error) {
+      throw new Error(
+        buildSpawnFailureMessage(
+          "shell",
+          shellLaunch.command,
+          workspacePath,
+          error,
+          "Set LEDUO_PATROL_SHELL to a valid shell path if this environment uses a non-standard shell location.",
+        ),
+      );
+    }
 
     this.pty.onData((data) => {
       this.emit("output", data);
@@ -84,3 +141,8 @@ export class ShellSession extends EventEmitter {
     }
   }
 }
+
+export const shellSessionTestables = {
+  buildShellLoginArgs,
+  resolveShellLaunch,
+};

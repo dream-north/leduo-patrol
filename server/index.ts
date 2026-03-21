@@ -43,7 +43,8 @@ const vscodeRemoteUri =
   (sshHost ? `vscode://vscode-remote/ssh-remote+${encodeURIComponent(sshHost)}${sshPath}` : "");
 const requestedPort = Number(process.env.PORT ?? 3001);
 const devWebPort = Number(process.env.LEDUO_PATROL_WEB_PORT ?? 5173);
-const isDevServer = process.env.npm_lifecycle_event === "dev:server";
+const npmLifecycleEvent = process.env.npm_lifecycle_event ?? "";
+const isDevServer = npmLifecycleEvent === "dev:server" || npmLifecycleEvent === "dev:server:local";
 const bindMode = await resolveBindMode();
 const listenHost = bindMode === "local" ? "127.0.0.1" : "0.0.0.0";
 const launchHost = bindMode === "local" ? "127.0.0.1" : pickPreferredLanIp();

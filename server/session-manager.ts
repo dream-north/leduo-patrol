@@ -159,7 +159,13 @@ export class SessionManager {
 
   async initialize() {
     const persistedState = await this.readPersistedState();
+    let skippedPersistedSessions = false;
     for (const persisted of persistedState.sessions) {
+      if (!(await this.isRestorableWorkspace(persisted.workspacePath))) {
+        skippedPersistedSessions = true;
+        console.warn(`[SessionManager] Skipping persisted session with unavailable workspace: ${persisted.workspacePath}`);
+        continue;
+      }
       const snapshot: SessionSnapshot = {
         clientSessionId: persisted.clientSessionId,
         title: persisted.title,
@@ -177,6 +183,10 @@ export class SessionManager {
       });
       this.sessionIdIndex.set(snapshot.sessionId, snapshot.clientSessionId);
       this.activityMonitor.watch(snapshot.sessionId, snapshot.workspacePath);
+    }
+
+    if (skippedPersistedSessions) {
+      await this.writePersistedState().catch(() => undefined);
     }
 
     for (const entry of this.sessions.values()) {
@@ -408,6 +418,15 @@ export class SessionManager {
 
     await access(resolvedWorkspacePath);
     return resolvedWorkspacePath;
+  }
+
+  private async isRestorableWorkspace(workspacePath: string) {
+    try {
+      const workspaceStats = await stat(workspacePath);
+      return workspaceStats.isDirectory();
+    } catch {
+      return false;
+    }
   }
 
   // ---------------------------------------------------------------------------
