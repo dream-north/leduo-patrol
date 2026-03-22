@@ -1710,7 +1710,6 @@ export default function App() {
                     {formatSessionTitleForDisplay(session.title)}
                   </span>
                   <span className="session-chip-meta">
-                    <span className="session-chip-engine">{session.engine === "cli" ? "CLI" : "ACP"}</span>
                     {session.connectionState === "connected" ? (
                       <SessionStateTag session={session} />
                     ) : session.connectionState === "connecting" ? (
@@ -1744,7 +1743,6 @@ export default function App() {
                     {formatSessionTitleForDisplay(activeSession.title)}
                   </h3>
                   <code className="cli-toolbar-session-id" title={activeSession.sessionId}>session: {activeSession.sessionId}</code>
-                  <span className="session-engine-badge">{activeSession.engine === "cli" ? "CLI" : "ACP"}</span>
                 </div>
                 <code className="cli-toolbar-path" title={activeSession.workspacePath}>{activeSession.workspacePath}</code>
               </div>
@@ -3215,15 +3213,22 @@ function fileToPendingImage(file: File) {
 
 function getSessionStateSummary(session: SessionRecord) {
   if (session.engine === "acp" && session.acp) {
+    if (session.connectionState === "error") {
+      return { label: "异常", tone: "error" as const };
+    }
     if (session.acp.permissions.length > 0 || session.acp.questions.length > 0) {
       return { label: "待处理", tone: "pending" as const };
     }
-    if (session.acp.busy) {
+    if (isAcpBusy(session.acp)) {
       return { label: "运行中", tone: "running" as const };
     }
+    return { label: "空闲", tone: "connected" as const };
   }
-  if (session.activityState === "running" || session.activityState === "pending") {
+  if (session.activityState === "running") {
     return { label: "运行中", tone: "running" as const };
+  }
+  if (session.activityState === "pending") {
+    return { label: "待处理", tone: "pending" as const };
   }
   if (session.connectionState === "error") {
     return { label: "异常", tone: "error" as const };
@@ -3236,9 +3241,10 @@ function getSwitchBlockedReasonFromSession(session: SessionRecord) {
     return "连接中";
   }
   if (session.engine === "acp" && session.acp) {
-    if (session.acp.busy) return "运行中";
     if (session.acp.permissions.length > 0) return "待审批";
     if (session.acp.questions.length > 0) return "待提问";
+    if (isAcpBusy(session.acp)) return "运行中";
+    return null;
   }
   if (session.activityState === "running") return "运行中";
   if (session.activityState === "pending") return "待处理";
@@ -3277,7 +3283,25 @@ function labelForMode(modeId: string) {
 }
 
 function isAcpSessionRunning(session: SessionRecord) {
-  return Boolean(session.acp?.busy || session.acp?.permissions.length || session.acp?.questions.length);
+  if (!session.acp) {
+    return false;
+  }
+  return Boolean(
+    session.acp.permissions.length > 0
+    || session.acp.questions.length > 0
+    || isAcpBusy(session.acp),
+  );
+}
+
+function isAcpBusy(acp: NonNullable<SessionRecord["acp"]>) {
+  if (!acp.busy) {
+    return false;
+  }
+  const latestItem = acp.timeline.at(-1);
+  if (latestItem?.kind === "system" && latestItem.title === "本轮完成") {
+    return false;
+  }
+  return true;
 }
 
 function shouldKeepAcpSessionRunningAfterPromptFinished(stopReason: string) {
@@ -4196,6 +4220,221 @@ function shouldUseExpandedPreview(item: TimelineItem) {
   return item.kind === "agent" || item.kind === "plan";
 }
 
+function renderMarkdownBlocks(source: string) {
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  const blocks: Array<
+    | { kind: "heading" | "paragraph" | "list" | "code"; level?: number; lines: string[] }
+    | { kind: "table"; headers: string[]; rows: string[][] }
+  > = [];
+  let paragraph: string[] = [];
+  let list: string[] = [];
+  let code: string[] = [];
+  let inCode = false;
+
+  const flushParagraph = () => {
+    if (paragraph.length > 0) {
+      blocks.push({ kind: "paragraph", lines: paragraph });
+      paragraph = [];
+    }
+  };
+
+  const flushList = () => {
+    if (list.length > 0) {
+      blocks.push({ kind: "list", lines: list });
+      list = [];
+    }
+  };
+
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    if (line.startsWith("```")) {
+      flushParagraph();
+      flushList();
+      if (inCode) {
+        blocks.push({ kind: "code", lines: code });
+        code = [];
+        inCode = false;
+      } else {
+        inCode = true;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (inCode) {
+      code.push(line);
+      index += 1;
+      continue;
+    }
+
+    const nextLine = lines[index + 1] ?? "";
+    if (isMarkdownTableRow(line) && isMarkdownTableSeparator(nextLine)) {
+      flushParagraph();
+      flushList();
+
+      const headers = parseMarkdownTableRow(line);
+      const rows: string[][] = [];
+      index += 2;
+      while (index < lines.length) {
+        const rowLine = lines[index] ?? "";
+        if (!isMarkdownTableRow(rowLine) || !rowLine.trim()) {
+          break;
+        }
+        rows.push(parseMarkdownTableRow(rowLine));
+        index += 1;
+      }
+
+      blocks.push({ kind: "table", headers, rows });
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,6})\s+(.*)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      blocks.push({ kind: "heading", level: heading[1].length, lines: [heading[2]] });
+      index += 1;
+      continue;
+    }
+
+    const listMatch = line.match(/^\s*[-*+]\s+(.*)$/);
+    if (listMatch) {
+      flushParagraph();
+      list.push(listMatch[1]);
+      index += 1;
+      continue;
+    }
+
+    if (!line.trim()) {
+      flushParagraph();
+      flushList();
+      index += 1;
+      continue;
+    }
+
+    flushList();
+    paragraph.push(line);
+    index += 1;
+  }
+
+  flushParagraph();
+  flushList();
+  if (code.length > 0) {
+    blocks.push({ kind: "code", lines: code });
+  }
+
+  return blocks.map((block, blockIndex) => {
+    if (block.kind === "heading") {
+      const headingContent = renderMarkdownInline(block.lines[0] ?? "");
+      switch (Math.min(block.level ?? 3, 6)) {
+        case 1:
+          return <h1 key={`md-heading-${blockIndex}`}>{headingContent}</h1>;
+        case 2:
+          return <h2 key={`md-heading-${blockIndex}`}>{headingContent}</h2>;
+        case 3:
+          return <h3 key={`md-heading-${blockIndex}`}>{headingContent}</h3>;
+        case 4:
+          return <h4 key={`md-heading-${blockIndex}`}>{headingContent}</h4>;
+        case 5:
+          return <h5 key={`md-heading-${blockIndex}`}>{headingContent}</h5>;
+        default:
+          return <h6 key={`md-heading-${blockIndex}`}>{headingContent}</h6>;
+      }
+    }
+    if (block.kind === "list") {
+      return (
+        <ul key={`md-list-${blockIndex}`}>
+          {block.lines.map((item, itemIndex) => (
+            <li key={`md-list-${blockIndex}-${itemIndex}`}>{renderMarkdownInline(item)}</li>
+          ))}
+        </ul>
+      );
+    }
+    if (block.kind === "code") {
+      return (
+        <pre key={`md-code-${blockIndex}`}>
+          <code>{block.lines.join("\n")}</code>
+        </pre>
+      );
+    }
+    if (block.kind === "table") {
+      return (
+        <table key={`md-table-${blockIndex}`}>
+          <thead>
+            <tr>
+              {block.headers.map((header, cellIndex) => (
+                <th key={`md-table-${blockIndex}-h-${cellIndex}`}>{renderMarkdownInline(header)}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {block.rows.map((row, rowIndex) => (
+              <tr key={`md-table-${blockIndex}-r-${rowIndex}`}>
+                {block.headers.map((_, cellIndex) => (
+                  <td key={`md-table-${blockIndex}-r-${rowIndex}-c-${cellIndex}`}>
+                    {renderMarkdownInline(row[cellIndex] ?? "")}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      );
+    }
+    return <p key={`md-paragraph-${blockIndex}`}>{renderMarkdownInline(block.lines.join(" "))}</p>;
+  });
+}
+
+function isMarkdownTableRow(line: string) {
+  return line.includes("|") && parseMarkdownTableRow(line).length > 0;
+}
+
+function isMarkdownTableSeparator(line: string) {
+  const cells = parseMarkdownTableRow(line);
+  if (cells.length === 0) {
+    return false;
+  }
+  return cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function parseMarkdownTableRow(line: string) {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function renderMarkdownInline(text: string) {
+  const parts = text.split(/(\[[^\]]+\]\([^\)]+\)|`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/g).filter(Boolean);
+  return parts.map((part, partIndex) => {
+    const linkMatch = part.match(/^\[([^\]]+)\]\(([^\)]+)\)$/);
+    if (linkMatch) {
+      return (
+        <a key={`md-link-${partIndex}`} href={linkMatch[2]} target="_blank" rel="noreferrer">
+          {linkMatch[1]}
+        </a>
+      );
+    }
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return <strong key={`md-bold-${partIndex}`}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("*") && part.endsWith("*") && part.length > 2) {
+      return <em key={`md-italic-${partIndex}`}>{part.slice(1, -1)}</em>;
+    }
+    if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+      return <code key={`md-inline-${partIndex}`}>{part.slice(1, -1)}</code>;
+    }
+    return <Fragment key={`md-text-${partIndex}`}>{part}</Fragment>;
+  });
+}
+
+function shouldRenderMarkdown(item: TimelineItem) {
+  return item.kind === "agent" || item.kind === "plan";
+}
+
 function labelForKind(kind: TimelineItem["kind"], fallbackTitle: string) {
   switch (kind) {
     case "user":
@@ -4554,6 +4793,8 @@ function MessageModal(props: {
           ) : null}
           {props.item.kind === "tool" ? (
             <ToolCallDetailView body={props.item.body} />
+          ) : shouldRenderMarkdown(props.item) ? (
+            <div className="modal-body markdown-body">{renderMarkdownBlocks(props.item.body)}</div>
           ) : (
             <pre className="modal-body">{props.item.body}</pre>
           )}
@@ -4690,7 +4931,7 @@ function PermissionModal(props: {
         </div>
         <div className="modal-scroll-body">
           <p className="modal-meta">待处理确认</p>
-          {planText ? <pre className="modal-body">{planText}</pre> : <ToolCallDetailView body={body} />}
+          {planText ? <div className="modal-body markdown-body">{renderMarkdownBlocks(planText)}</div> : <ToolCallDetailView body={body} />}
           {rawCommandText ? (
             <>
               <label htmlFor="permission-raw-command">完整命令</label>
@@ -4722,12 +4963,17 @@ export const appTestables = {
   formatRelativeUpdatedAt,
   groupQuestionsByGroup,
   getAccessKeyFromSearch,
+  getSessionStateSummary,
   getSwitchBlockedReasonFromSession,
   normalizePath,
   normalizeTimelineItem,
   normalizeSessionRecord,
   normalizeAvailableCommands,
   parseExecutionPlanSteps,
+  parseMarkdownTableRow,
+  isMarkdownTableRow,
+  isMarkdownTableSeparator,
+  shouldRenderMarkdown,
   isWithinRoot,
   parentDirectory,
   formatSessionTitleForDisplay,

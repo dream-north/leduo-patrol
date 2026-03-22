@@ -1270,12 +1270,21 @@ export class SessionManager {
     if (!acpState) {
       return null;
     }
-    if (acpState.busy) return "运行中";
     if (acpState.permissions.length > 0) return "待审批";
     if (acpState.questions.length > 0) return "待提问";
-    if (entry.snapshot.activityState === "running") return "运行中";
-    if (entry.snapshot.activityState === "pending") return "待处理";
+    if (this.isAcpBusy(acpState)) return "运行中";
     return null;
+  }
+
+  private isAcpBusy(acpState: AcpSessionState) {
+    if (!acpState.busy) {
+      return false;
+    }
+    const latestItem = acpState.timeline.at(-1);
+    if (latestItem?.kind === "system" && latestItem.title === "本轮完成") {
+      return false;
+    }
+    return true;
   }
 
   private schedulePersist() {

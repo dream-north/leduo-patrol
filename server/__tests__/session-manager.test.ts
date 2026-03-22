@@ -168,3 +168,77 @@ test("SessionManager.switchEngine rejects pending ACP approvals", async () => {
     /Session is not switchable: 待审批/,
   );
 });
+
+test("SessionManager.switchEngine allows idle ACP sessions despite stale activityState", async () => {
+  const manager = makeManager({ allowedRoots: [process.cwd()], agentBinPath: "/tmp/acp" });
+  const started: Array<{ engine: string; resume: boolean }> = [];
+  const stopped: string[] = [];
+
+  manager.sessions.set("s1", makeEntry({
+    engine: "acp",
+    activityState: "running",
+    acp: {
+      modes: ["default"],
+      defaultModeId: "default",
+      currentModeId: "default",
+      busy: false,
+      timeline: [],
+      historyTotal: 0,
+      historyStart: 0,
+      permissions: [],
+      questions: [],
+      availableCommands: [],
+    },
+  }));
+  manager.startEngine = async (entry: { snapshot: SessionSnapshot }, resume: boolean) => {
+    started.push({ engine: entry.snapshot.engine, resume });
+    entry.snapshot.connectionState = "connected";
+  };
+  manager.stopEngine = async (entry: { snapshot: SessionSnapshot }) => {
+    stopped.push(entry.snapshot.engine);
+  };
+
+  await manager.switchEngine("s1", "cli");
+
+  assert.deepEqual(stopped, ["acp"]);
+  assert.deepEqual(started, [{ engine: "cli", resume: true }]);
+});
+
+test("SessionManager.switchEngine allows ACP sessions after end_turn even if busy flag is stale", async () => {
+  const manager = makeManager({ allowedRoots: [process.cwd()], agentBinPath: "/tmp/acp" });
+  const started: Array<{ engine: string; resume: boolean }> = [];
+  const stopped: string[] = [];
+
+  manager.sessions.set("s1", makeEntry({
+    engine: "acp",
+    acp: {
+      modes: ["default"],
+      defaultModeId: "default",
+      currentModeId: "default",
+      busy: true,
+      timeline: [{
+        id: "done-1",
+        kind: "system",
+        title: "本轮完成",
+        body: "end_turn",
+      }],
+      historyTotal: 1,
+      historyStart: 0,
+      permissions: [],
+      questions: [],
+      availableCommands: [],
+    },
+  }));
+  manager.startEngine = async (entry: { snapshot: SessionSnapshot }, resume: boolean) => {
+    started.push({ engine: entry.snapshot.engine, resume });
+    entry.snapshot.connectionState = "connected";
+  };
+  manager.stopEngine = async (entry: { snapshot: SessionSnapshot }) => {
+    stopped.push(entry.snapshot.engine);
+  };
+
+  await manager.switchEngine("s1", "cli");
+
+  assert.deepEqual(stopped, ["acp"]);
+  assert.deepEqual(started, [{ engine: "cli", resume: true }]);
+});

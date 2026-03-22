@@ -21,6 +21,15 @@ test("app mode/connection helpers return expected labels", () => {
   assert.equal(appTestables.toneForConnectionState("error"), "negative");
 });
 
+test("app markdown helpers detect ACP markdown render targets and tables", () => {
+  assert.equal(appTestables.shouldRenderMarkdown({ id: "1", kind: "plan", title: "p", body: "b" }), true);
+  assert.equal(appTestables.shouldRenderMarkdown({ id: "2", kind: "agent", title: "a", body: "b" }), true);
+  assert.equal(appTestables.shouldRenderMarkdown({ id: "3", kind: "user", title: "u", body: "b" }), false);
+  assert.equal(appTestables.isMarkdownTableRow("| col1 | col2 |"), true);
+  assert.equal(appTestables.isMarkdownTableSeparator("| --- | :---: |"), true);
+  assert.deepEqual(appTestables.parseMarkdownTableRow("| a | b |"), ["a", "b"]);
+});
+
 test("app access key helpers read and preserve search params", () => {
   assert.equal(appTestables.getAccessKeyFromSearch("?demo=subagent-tree&key=abc123"), "abc123");
   assert.equal(
@@ -172,6 +181,87 @@ test("app getSwitchBlockedReasonFromSession reflects ACP pending state", () => {
   });
 
   assert.equal(reason, "待审批");
+});
+
+test("app getSessionStateSummary keeps CLI pending separate from running", () => {
+  const summary = appTestables.getSessionStateSummary({
+    clientSessionId: "s1",
+    title: "demo",
+    workspacePath: "/repo",
+    connectionState: "connected",
+    activityState: "pending",
+    sessionId: "shared",
+    engine: "cli",
+    updatedAt: new Date().toISOString(),
+  });
+
+  assert.deepEqual(summary, { label: "待处理", tone: "pending" });
+});
+
+test("app getSwitchBlockedReasonFromSession ignores stale activityState for idle ACP sessions", () => {
+  const reason = appTestables.getSwitchBlockedReasonFromSession({
+    clientSessionId: "s1",
+    title: "demo",
+    workspacePath: "/repo",
+    connectionState: "connected",
+    activityState: "running",
+    sessionId: "shared",
+    engine: "acp",
+    updatedAt: new Date().toISOString(),
+    acp: appTestables.createEmptyAcpState(),
+  });
+
+  assert.equal(reason, null);
+});
+
+test("app getSessionStateSummary treats ACP end_turn as idle even if busy flag is stale", () => {
+  const summary = appTestables.getSessionStateSummary({
+    clientSessionId: "s1",
+    title: "demo",
+    workspacePath: "/repo",
+    connectionState: "connected",
+    activityState: "idle",
+    sessionId: "shared",
+    engine: "acp",
+    updatedAt: new Date().toISOString(),
+    acp: {
+      ...appTestables.createEmptyAcpState(),
+      busy: true,
+      timeline: [{
+        id: "done-1",
+        kind: "system",
+        title: "本轮完成",
+        body: "end_turn",
+      }],
+    },
+  });
+
+  assert.deepEqual(summary, { label: "空闲", tone: "connected" });
+});
+
+test("app getSwitchBlockedReasonFromSession ignores stale ACP busy flag after end_turn", () => {
+  const reason = appTestables.getSwitchBlockedReasonFromSession({
+    clientSessionId: "s1",
+    title: "demo",
+    workspacePath: "/repo",
+    connectionState: "connected",
+    activityState: "idle",
+    sessionId: "shared",
+    engine: "acp",
+    updatedAt: new Date().toISOString(),
+    acp: {
+      ...appTestables.createEmptyAcpState(),
+      busy: true,
+      timeline: [{
+        id: "done-1",
+        kind: "system",
+        title: "本轮完成",
+        body: "end_turn",
+      }],
+    },
+  });
+
+  assert.equal(reason, null);
 });
 
 test("app applyAcpSessionUpdate appends timeline chunk and mode updates", () => {
