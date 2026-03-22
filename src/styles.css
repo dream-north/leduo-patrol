@@ -393,6 +393,7 @@ h1 {
 }
 
 .session-chip {
+  position: relative;
   display: flex;
   flex-shrink: 0;
   flex-direction: column;
@@ -441,6 +442,45 @@ h1 {
   box-shadow: inset 3px 0 0 var(--brand);
 }
 
+.session-chip-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(120, 80, 60, 0.08);
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 150ms ease, background 150ms ease, color 150ms ease;
+  pointer-events: all;
+}
+
+.session-chip:hover .session-chip-close,
+.session-chip-close:focus {
+  opacity: 1;
+}
+
+.session-chip-close:hover {
+  background: rgba(180, 60, 50, 0.15);
+  color: #b43c32;
+}
+
+.session-chip-close:active {
+  background: rgba(180, 60, 50, 0.25);
+}
+
+@media (pointer: coarse) {
+  .session-chip-close {
+    opacity: 1;
+  }
+}
+
 .session-chip-meta {
   display: flex;
   align-items: center;
@@ -471,6 +511,12 @@ h1 {
 }
 
 .session-chip-tag-completed {
+  background: rgba(20, 98, 138, 0.12);
+  border-color: rgba(20, 98, 138, 0.22);
+  color: #0a5c88;
+}
+
+.session-chip-tag-connected {
   background: rgba(66, 43, 26, 0.1);
   border-color: rgba(66, 43, 26, 0.16);
   color: var(--text);
@@ -483,9 +529,9 @@ h1 {
 }
 
 .session-chip-tag-connecting {
-  background: rgba(20, 98, 138, 0.12);
-  border-color: rgba(20, 98, 138, 0.22);
-  color: #0a5c88;
+  background: rgba(184, 134, 11, 0.12);
+  border-color: rgba(184, 134, 11, 0.22);
+  color: #a67c00;
 }
 
 .session-chip-tag-running {
@@ -1058,6 +1104,10 @@ h1 {
   overflow: hidden;
 }
 
+.modal-card-small {
+  width: min(360px, calc(100vw - 32px));
+}
+
 .modal-header {
   flex-shrink: 0;
   display: flex;
@@ -1078,6 +1128,10 @@ h1 {
 
 .modal-scroll-body > * + * {
   margin-top: 10px;
+}
+
+.modal-body {
+  padding: 16px 20px;
 }
 
 .modal-footer {

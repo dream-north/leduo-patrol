@@ -207,6 +207,9 @@ export default function App() {
   const [sessionDiffLoading, setSessionDiffLoading] = useState(false);
   const [sessionDiffError, setSessionDiffError] = useState("");
   const [sessionDiff, setSessionDiff] = useState<SessionDiffResponse | null>(null);
+
+  // Close session confirmation
+  const [sessionToClose, setSessionToClose] = useState<string | null>(null);
   const [sessionFileDiffCache, setSessionFileDiffCache] = useState<Record<string, SessionFileDiffResponse>>({});
 
   // Bottom shell drawer
@@ -490,7 +493,12 @@ export default function App() {
                 : s,
             );
           }
-          return [...prev, message.payload as SessionRecord];
+          return [...prev, {
+            ...message.payload,
+            connectionState: "connecting",
+            activityState: "idle",
+            updatedAt: new Date().toISOString(),
+          } as SessionRecord];
         });
         setActiveSessionId(message.payload.clientSessionId);
         break;
@@ -1194,6 +1202,22 @@ export default function App() {
     sendCommand({ type: "close_session", payload: { clientSessionId } });
   }
 
+  function handleSessionCloseClick(e: React.MouseEvent, clientSessionId: string) {
+    e.stopPropagation();
+    setSessionToClose(clientSessionId);
+  }
+
+  function confirmCloseSession() {
+    if (sessionToClose) {
+      closeSession(sessionToClose);
+      setSessionToClose(null);
+    }
+  }
+
+  function cancelCloseSession() {
+    setSessionToClose(null);
+  }
+
   // --- VSCode ---
   function createVscodeOpenUri(launchConfig: VscodeLaunchConfig, targetWorkspacePath: string) {
     const normalizedWorkspacePath = targetWorkspacePath.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -1344,6 +1368,14 @@ export default function App() {
                   className={`session-chip ${session.clientSessionId === activeSessionId ? "active" : ""}`}
                   onClick={() => setActiveSessionId(session.clientSessionId)}
                 >
+                  <button
+                    className="session-chip-close"
+                    onClick={(e) => handleSessionCloseClick(e, session.clientSessionId)}
+                    title="关闭会话"
+                    type="button"
+                  >
+                    ×
+                  </button>
                   <span className="session-chip-title" title={session.title}>
                     {formatSessionTitleForDisplay(session.title)}
                   </span>
@@ -1593,6 +1625,24 @@ export default function App() {
         />
       ) : null}
 
+      {/* Close session confirmation */}
+      {sessionToClose ? (
+        <div className="modal-backdrop" onClick={cancelCloseSession}>
+          <div className="modal-card modal-card-small" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>确认关闭会话</h3>
+            </div>
+            <div className="modal-body">
+              <p>确定要关闭此会话吗？关闭后无法恢复。</p>
+            </div>
+            <div className="modal-footer">
+              <button className="primary" onClick={confirmCloseSession}>确认关闭</button>
+              <button className="secondary" onClick={cancelCloseSession}>取消</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {/* Bottom shell drawer */}
       {config?.enableShell && terminalOpen && !mobileTerminalFullscreenVisible ? (
         <div className="terminal-drawer terminal-drawer-open">
@@ -1821,7 +1871,7 @@ function SessionActivityTag(props: { activityState?: ActivityState }) {
     case "pending":
       return <span className="session-chip-tag session-chip-tag-pending">待处理</span>;
     default:
-      return <span className="session-chip-tag session-chip-tag-completed">已连接</span>;
+      return <span className="session-chip-tag session-chip-tag-connected">已连接</span>;
   }
 }
 
