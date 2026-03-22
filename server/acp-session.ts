@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import * as childProcess from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type * as schema from "@agentclientprotocol/sdk/dist/schema/types.gen.js";
+import { buildSpawnFailureMessage } from "./server-helpers.js";
 
 export type AskQuestionOption = {
   id: string;
@@ -79,7 +80,7 @@ export class ClaudeAcpSession {
   private readonly pendingPermissions = new Map<string, PendingPermission>();
   private readonly pendingQuestions = new Map<string, PendingQuestion>();
 
-  private agentProcess: ChildProcessWithoutNullStreams | null = null;
+  private agentProcess: childProcess.ChildProcessWithoutNullStreams | null = null;
   private connection: acp.ClientSideConnection | null = null;
   private sessionId: string | null = null;
   private activePrompt = false;
@@ -116,11 +117,57 @@ export class ClaudeAcpSession {
         ...(this.claudeBin ? { CLAUDE_CODE_EXECUTABLE: this.claudeBin } : undefined),
       };
 
-      this.agentProcess = spawn(this.agentBinPath, [], {
-        cwd: this.workspacePath,
-        env: agentEnv,
-        stdio: ["pipe", "pipe", "pipe"],
+      try {
+        this.agentProcess = childProcess.spawn(this.agentBinPath, [], {
+          cwd: this.workspacePath,
+          env: agentEnv,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+      } catch (error) {
+        throw new Error(this.buildAgentSpawnFailureMessage(error));
+      }
+
+      let startupComplete = false;
+      let processHandled = false;
+      let rejectStartup: ((error: Error) => void) | null = null;
+      const startupFailure = new Promise<never>((_, reject) => {
+        rejectStartup = reject;
       });
+
+      const handleAgentFailure = (error: Error) => {
+        if (processHandled) {
+          return;
+        }
+        processHandled = true;
+        this.connection = null;
+        this.sessionId = null;
+        this.sessionPromise = null;
+        this.connectPromise = null;
+        this.currentModeId = null;
+        this.activePrompt = false;
+        this.clearDrain();
+        this.rejectPendingPermissions(new Error("Permission request cancelled because ACP agent stopped."));
+        this.rejectPendingQuestions(new Error("Question cancelled because ACP agent stopped."));
+        this.agentProcess = null;
+
+        if (this.disposing) {
+          this.disposing = false;
+          if (!startupComplete) {
+            rejectStartup?.(error);
+            rejectStartup = null;
+          }
+          return;
+        }
+        if (!startupComplete) {
+          rejectStartup?.(error);
+          rejectStartup = null;
+          return;
+        }
+        this.onEvent({
+          type: "error",
+          payload: { message: error.message, fatal: true },
+        });
+      };
 
       this.agentProcess.stderr.on("data", (chunk) => {
         const message = chunk.toString().trim();
@@ -130,23 +177,12 @@ export class ClaudeAcpSession {
         this.onEvent({ type: "error", payload: { message, fatal: false } });
       });
 
+      this.agentProcess.on("error", (error) => {
+        handleAgentFailure(new Error(this.buildAgentSpawnFailureMessage(error)));
+      });
+
       this.agentProcess.on("exit", (code, signal) => {
-        this.connection = null;
-        this.sessionId = null;
-        this.sessionPromise = null;
-        this.connectPromise = null;
-        this.activePrompt = false;
-        this.clearDrain();
-        this.rejectPendingPermissions(new Error("Permission request cancelled because ACP agent exited."));
-        this.rejectPendingQuestions(new Error("Question cancelled because ACP agent exited."));
-        if (this.disposing) {
-          this.disposing = false;
-          return;
-        }
-        this.onEvent({
-          type: "error",
-          payload: { message: `Claude ACP agent exited (${code ?? "null"} / ${signal ?? "null"}).`, fatal: true },
-        });
+        handleAgentFailure(new Error(`Claude ACP agent exited (${code ?? "null"} / ${signal ?? "null"}).`));
       });
 
       const input = Writable.toWeb(this.agentProcess.stdin) as WritableStream<Uint8Array>;
@@ -169,24 +205,29 @@ export class ClaudeAcpSession {
 
       this.connection = new acp.ClientSideConnection(() => client, stream);
 
-      await this.connection.initialize({
-        protocolVersion: acp.PROTOCOL_VERSION,
-        clientCapabilities: {
-          fs: { readTextFile: true, writeTextFile: true },
-          _meta: {
-            extensions: [
-              {
-                method: "leduo/ask_question",
-                description:
-                  "Ask the user a question with optional multiple-choice options. " +
-                  "Params: { question: string, options?: Array<{ id: string, label: string }>, allowCustomAnswer?: boolean }. " +
-                  "Returns: { answer: string }.",
-              },
-            ],
+      await Promise.race([
+        this.connection.initialize({
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientCapabilities: {
+            fs: { readTextFile: true, writeTextFile: true },
+            _meta: {
+              extensions: [
+                {
+                  method: "leduo/ask_question",
+                  description:
+                    "Ask the user a question with optional multiple-choice options. " +
+                    "Params: { question: string, options?: Array<{ id: string, label: string }>, allowCustomAnswer?: boolean }. " +
+                    "Returns: { answer: string }.",
+                },
+              ],
+            },
           },
-        },
-      });
+        }),
+        startupFailure,
+      ]);
 
+      startupComplete = true;
+      rejectStartup = null;
       this.emitReady();
     })();
 
@@ -395,6 +436,17 @@ export class ClaudeAcpSession {
       type: "ready",
       payload: { workspacePath: this.workspacePath, agentConnected: true },
     });
+  }
+
+  private buildAgentSpawnFailureMessage(error: unknown) {
+    const hint = (
+      error instanceof Error
+      && "code" in error
+      && (error as Error & { code?: string }).code === "EAGAIN"
+    )
+      ? "The OS temporarily refused to start a new process (EAGAIN). Try again and check system process/thread limits or other running agent processes."
+      : "Check that LEDUO_PATROL_AGENT_BIN points to a valid ACP agent, or that the bundled claude-code-acp agent is executable.";
+    return buildSpawnFailureMessage("Claude ACP agent", this.agentBinPath, this.workspacePath, error, hint);
   }
 
   private waitForDrain(): Promise<void> {

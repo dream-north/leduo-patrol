@@ -1,5 +1,8 @@
-import test from "node:test";
+import test, { mock } from "node:test";
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import * as childProcess from "node:child_process";
 import { ClaudeAcpSession } from "../acp-session.js";
 
 function makeSession() {
@@ -60,4 +63,28 @@ test("ClaudeAcpSession.handleExtMethod routes leduo/ask_question", async () => {
   await session.answerQuestion(event.payload.questionId, "红色");
   const result = await resultPromise;
   assert.deepEqual(result, { answer: "红色" });
+});
+
+test("ClaudeAcpSession.connect rejects gracefully when the ACP agent spawn emits EAGAIN", async (t) => {
+  const fakeChild = new EventEmitter() as childProcess.ChildProcessWithoutNullStreams;
+  fakeChild.stdin = new PassThrough() as childProcess.ChildProcessWithoutNullStreams["stdin"];
+  fakeChild.stdout = new PassThrough() as childProcess.ChildProcessWithoutNullStreams["stdout"];
+  fakeChild.stderr = new PassThrough() as childProcess.ChildProcessWithoutNullStreams["stderr"];
+  fakeChild.kill = (() => true) as childProcess.ChildProcessWithoutNullStreams["kill"];
+
+  const spawnMock = mock.method(childProcess, "spawn", () => {
+    queueMicrotask(() => {
+      const error = Object.assign(new Error("resource temporarily unavailable"), { code: "EAGAIN" });
+      fakeChild.emit("error", error);
+    });
+    return fakeChild;
+  });
+  t.after(() => spawnMock.mock.restore());
+
+  const session = makeSession();
+
+  await assert.rejects(
+    () => session.connect(),
+    /Failed to start Claude ACP agent.*EAGAIN/,
+  );
 });
