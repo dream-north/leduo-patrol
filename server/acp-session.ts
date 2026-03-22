@@ -7,6 +7,15 @@ import * as acp from "@agentclientprotocol/sdk";
 import type * as schema from "@agentclientprotocol/sdk/dist/schema/types.gen.js";
 import { buildSpawnFailureMessage } from "./server-helpers.js";
 
+export const acpSessionTestables = {
+  spawnAgent(
+    agentBinPath: string,
+    options: childProcess.SpawnOptionsWithoutStdio,
+  ) {
+    return childProcess.spawn(agentBinPath, [], options);
+  },
+};
+
 export type AskQuestionOption = {
   id: string;
   label: string;
@@ -118,7 +127,7 @@ export class ClaudeAcpSession {
       };
 
       try {
-        this.agentProcess = childProcess.spawn(this.agentBinPath, [], {
+        this.agentProcess = acpSessionTestables.spawnAgent(this.agentBinPath, {
           cwd: this.workspacePath,
           env: agentEnv,
           stdio: ["pipe", "pipe", "pipe"],

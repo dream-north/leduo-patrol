@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import * as childProcess from "node:child_process";
-import { ClaudeAcpSession } from "../acp-session.js";
+import { ClaudeAcpSession, acpSessionTestables } from "../acp-session.js";
 
 function makeSession() {
   return new ClaudeAcpSession({
@@ -72,7 +72,7 @@ test("ClaudeAcpSession.connect rejects gracefully when the ACP agent spawn emits
   fakeChild.stderr = new PassThrough() as childProcess.ChildProcessWithoutNullStreams["stderr"];
   fakeChild.kill = (() => true) as childProcess.ChildProcessWithoutNullStreams["kill"];
 
-  const spawnMock = mock.method(childProcess, "spawn", () => {
+  const spawnMock = mock.method(acpSessionTestables, "spawnAgent", () => {
     queueMicrotask(() => {
       const error = Object.assign(new Error("resource temporarily unavailable"), { code: "EAGAIN" });
       fakeChild.emit("error", error);
