@@ -621,13 +621,13 @@ export class SessionManager {
   }
 
   private async stopEngine(entry: ManagedSession, reason: "switch" | "close") {
+    if (reason === "switch") {
+      entry.outputBuffer = "";
+    }
     if (entry.cliSession) {
       entry.cliExitExpected = true;
       entry.cliSession.kill();
       entry.cliSession = null;
-      if (reason === "switch") {
-        entry.outputBuffer = "";
-      }
     }
     if (entry.acpSession) {
       await entry.acpSession.dispose();

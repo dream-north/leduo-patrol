@@ -75,6 +75,26 @@ test("SessionManager.switchEngine keeps the same Claude sessionId", async () => 
   assert.equal(events.at(-1), "session_updated");
 });
 
+test("SessionManager.switchEngine clears buffered CLI output before starting the target engine", async () => {
+  const manager = makeManager({ allowedRoots: [process.cwd()], agentBinPath: "/tmp/acp" });
+  manager.sessions.set("s1", {
+    ...makeEntry({ engine: "acp" }),
+    outputBuffer: "old cli output",
+  });
+
+  manager.startEngine = async (entry: { snapshot: SessionSnapshot; outputBuffer: string }, resume: boolean) => {
+    assert.equal(entry.outputBuffer, "");
+    assert.equal(resume, true);
+    entry.snapshot.connectionState = "connected";
+  };
+  manager.stopEngine = SessionManager.prototype["stopEngine"].bind(manager);
+
+  await manager.switchEngine("s1", "cli");
+
+  const entry = manager.sessions.get("s1");
+  assert.equal(entry.outputBuffer, "");
+});
+
 test("SessionManager.createSession starts fresh CLI sessions and emits a connected snapshot", async () => {
   const manager = makeManager({ allowedRoots: [process.cwd()], agentBinPath: "/tmp/acp" });
   const started: Array<{ engine: string; resume: boolean; sessionId: string }> = [];

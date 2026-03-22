@@ -830,6 +830,14 @@ h1 {
   padding: 10px;
 }
 
+.composer-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 4px 0 8px;
+}
+
 .composer textarea {
   width: 100%;
   min-height: 72px;
@@ -892,9 +900,13 @@ h1 {
 }
 
 .composer-capability-summary {
-  margin: 6px 0;
+  margin: 0;
   color: var(--muted);
   font-size: 10px;
+}
+
+.composer-mode-select {
+  min-width: 132px;
 }
 
 .composer-input-shell {

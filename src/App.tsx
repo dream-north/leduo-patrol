@@ -582,6 +582,19 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessKey]);
 
+  function resetCachedCliTerminal(clientSessionId: string) {
+    const cached = cliTerminalsRef.current.get(clientSessionId);
+    if (!cached) {
+      return;
+    }
+    const terminal = cached.terminal as { reset?: () => void; clear?: () => void };
+    if (typeof terminal.reset === "function") {
+      terminal.reset();
+      return;
+    }
+    terminal.clear?.();
+  }
+
   function handleEvent(message: EventMessage) {
     switch (message.type) {
       case "ready":
@@ -603,7 +616,15 @@ export default function App() {
       case "session_updated": {
         const nextSession = normalizeSessionRecord(message.payload);
         setSessions((prev) => {
-          const exists = prev.some((s) => s.clientSessionId === nextSession.clientSessionId);
+          const previousSession = prev.find((s) => s.clientSessionId === nextSession.clientSessionId);
+          if (
+            previousSession
+            && previousSession.engine === "acp"
+            && nextSession.engine === "cli"
+          ) {
+            resetCachedCliTerminal(nextSession.clientSessionId);
+          }
+          const exists = Boolean(previousSession);
           if (exists) {
             return prev.map((s) =>
               s.clientSessionId === nextSession.clientSessionId
@@ -1767,19 +1788,6 @@ export default function App() {
                     ACP
                   </button>
                 </div>
-                {activeSession.engine === "acp" && activeSession.acp && activeSession.acp.modes.length > 0 ? (
-                  <select
-                    className="acp-mode-select"
-                    value={activeSession.acp.currentModeId}
-                    onChange={(event) => changeAcpMode(event.target.value)}
-                  >
-                    {activeSession.acp.modes.map((modeId) => (
-                      <option key={modeId} value={modeId}>
-                        {modeId}
-                      </option>
-                    ))}
-                  </select>
-                ) : null}
                 <button className="secondary session-open-vscode" onClick={() => openWorkspaceInVscode(activeSession.workspacePath)}>
                   VSCode
                 </button>
@@ -1822,6 +1830,7 @@ export default function App() {
                 onLoadMoreHistory={loadMoreAcpHistory}
                 onOpenTimelineItem={setSelectedTimelineItem}
                 onOpenPermissionDetail={setPermissionDetail}
+                onChangeMode={changeAcpMode}
               />
             )}
           </>
@@ -2289,6 +2298,7 @@ function AcpSessionView(props: {
   onLoadMoreHistory: (clientSessionId: string) => Promise<void>;
   onOpenTimelineItem: (value: { sessionTitle: string; item: TimelineItem }) => void;
   onOpenPermissionDetail: (permission: PermissionPayload) => void;
+  onChangeMode: (modeId: string) => void;
 }) {
   const acp = props.session.acp ?? createEmptyAcpState();
   const sessionTitle = formatSessionTitleForDisplay(props.session.title);
@@ -2456,7 +2466,22 @@ function AcpSessionView(props: {
           </div>
         ) : (
           <div className="composer">
-            <p className="composer-capability-summary">ACP 能力：{acp.availableCommands.length}</p>
+            <div className="composer-meta-row">
+              {acp.modes.length > 0 ? (
+                <select
+                  className="acp-mode-select composer-mode-select"
+                  value={acp.currentModeId}
+                  onChange={(event) => props.onChangeMode(event.target.value)}
+                >
+                  {acp.modes.map((modeId) => (
+                    <option key={modeId} value={modeId}>
+                      {modeId}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+              <p className="composer-capability-summary">ACP 能力：{acp.availableCommands.length}</p>
+            </div>
             {isCompletionOpen && commandCompletions.length > 0 ? (
               <div className="composer-completions" role="listbox" aria-label="命令补全">
                 {completionSections.map((section) => (
