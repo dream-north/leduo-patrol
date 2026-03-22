@@ -14,13 +14,33 @@ test("assistant with stop_reason null → running", () => {
   );
 });
 
-test("assistant with stop_reason undefined → running", () => {
+test("assistant with text content and stop_reason undefined → completed", () => {
   assert.equal(
     determineActivityState({
       type: "assistant",
       message: { content: [{ type: "text" }] },
     }),
+    "completed",
+  );
+});
+
+test("assistant with thinking content and stop_reason undefined → running", () => {
+  assert.equal(
+    determineActivityState({
+      type: "assistant",
+      message: { content: [{ type: "thinking" }] },
+    }),
     "running",
+  );
+});
+
+test("assistant with tool_use content and stop_reason undefined → pending", () => {
+  assert.equal(
+    determineActivityState({
+      type: "assistant",
+      message: { content: [{ type: "tool_use" }] },
+    }),
+    "pending",
   );
 });
 

@@ -25,10 +25,21 @@ type JsonlEntry = {
   subtype?: string;
   message?: {
     stop_reason?: string | null;
+    content?: unknown;
     [key: string]: unknown;
   };
   [key: string]: unknown;
 };
+
+function extractAssistantContentTypes(entry: JsonlEntry): string[] {
+  const content = entry.message?.content;
+  if (!Array.isArray(content)) {
+    return [];
+  }
+  return content
+    .map((block) => (block && typeof block === "object" ? (block as { type?: unknown }).type : undefined))
+    .filter((type): type is string => typeof type === "string");
+}
 
 /**
  * Detect if a user entry represents a local CLI command (not a real user message to Claude).
@@ -88,9 +99,10 @@ export function detectClearCommand(entry: JsonlEntry): boolean {
  * Given a parsed JSONL entry, return the activity state.
  *
  * Rules:
- *   assistant + no stop_reason (null / undefined)     → running
- *   assistant + stop_reason "tool_use"                → pending
- *   assistant + stop_reason "end_turn"|"stop_sequence" → completed
+ *   assistant + tool_use content / stop_reason        → pending
+ *   assistant + thinking content only                 → running
+ *   assistant + text content only                     → completed
+ *   assistant + explicit terminal stop_reason         → completed
  *   user (local command / meta)                       → completed
  *   user (real message)                               → running
  *   system + subtype "local_command"                  → completed
@@ -101,11 +113,14 @@ export function determineActivityState(entry: JsonlEntry): ActivityState {
   const { type } = entry;
 
   if (type === "assistant") {
+    const contentTypes = extractAssistantContentTypes(entry);
     const stopReason = entry.message?.stop_reason;
-    if (stopReason == null) return "running";
-    if (stopReason === "tool_use") return "pending";
+    if (stopReason === "tool_use" || contentTypes.includes("tool_use")) return "pending";
+    if (stopReason != null) return "completed";
+    if (contentTypes.includes("thinking")) return "running";
+    if (contentTypes.includes("text")) return "completed";
     // end_turn, stop_sequence, max_tokens, etc. – treat as completed
-    return "completed";
+    return "running";
   }
 
   if (type === "user") {

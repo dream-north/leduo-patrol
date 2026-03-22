@@ -1,6 +1,10 @@
 # 乐多汪汪队 / leduo-patrol
 
-一个部署在服务器上的 Web 控制台，用来通过 ACP 驱动 Claude Code，并在浏览器里接收执行流、工具调用和权限确认。
+一个部署在服务器上的 Web 控制台，可在浏览器里用两种方式连接 Claude Code：
+- `CLI`：直接内嵌 Claude Code 终端
+- `ACP`：结构化时间线 / 权限 / 提问 / 图片输入视图
+
+两种引擎可在同一会话内切换，并共用同一个 Claude `sessionId`。
 
 ## Showcase
 
@@ -83,7 +87,10 @@
 - **目录浏览**：创建会话时可在允许根目录范围内浏览子目录，安全限制越权访问
 
 ### 工具与集成
-- **内置终端**：下方可展开终端抽屉，通过 xterm.js 提供完整 PTY 终端体验；服务端默认开启，可通过 `LEDUO_ENABLE_SHELL=false` 显式关闭
+- **双引擎会话**：同一 workspace 会话可在 `CLI` 和 `ACP` 之间切换；切换时复用 Claude `sessionId`
+- **CLI 终端**：主视图可直接运行 Claude Code 原生终端
+- **ACP 结构化视图**：支持时间线、权限确认、AskUserQuestion、多模态图片输入
+- **内置 Shell**：下方可展开终端抽屉，通过 xterm.js 提供完整 PTY shell；服务端默认开启，可通过 `LEDUO_ENABLE_SHELL=false` 显式关闭
 
 ### 界面与可访问性
 - **访问 Key 认证**：所有请求（HTTP / WebSocket）均需携带 key；浏览器检测到无效 key 时展示输入页
@@ -151,6 +158,7 @@ LEDUO_PATROL_APP_NAME=乐多汪汪队
 LEDUO_PATROL_WORKSPACE_PATH=/absolute/workspace/path
 LEDUO_PATROL_ALLOWED_ROOTS=/absolute/workspace/path,/another/allowed/root
 LEDUO_PATROL_CLAUDE_BIN=/absolute/path/to/claude
+LEDUO_PATROL_AGENT_BIN=/absolute/path/to/claude-code-acp
 LEDUO_PATROL_SHELL=/absolute/path/to/zsh
 ANTHROPIC_API_KEY=sk-...
 LEDUO_PATROL_ACCESS_KEY=your-fixed-key
@@ -161,6 +169,7 @@ LEDUO_ENABLE_SHELL=false
 如果未设置 `LEDUO_PATROL_WORKSPACE_PATH`，默认工作目录为启动命令所在目录（`process.cwd()`），并在启动日志中提示如何通过环境变量修改。
 如果未设置 `LEDUO_PATROL_ALLOWED_ROOTS`，默认允许根目录同样为启动命令所在目录，并会在启动日志中提示可配置项。
 如果发布安装后的内嵌终端无法启动，可通过 `LEDUO_PATROL_SHELL` 显式指定 shell 路径；例如 macOS 上常见的 `/bin/zsh`。
+如果 ACP agent 不在默认安装位置，可通过 `LEDUO_PATROL_AGENT_BIN` 显式指定 `claude-code-acp` 可执行文件。
 
 ## 状态持久化
 

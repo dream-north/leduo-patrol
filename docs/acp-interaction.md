@@ -1,7 +1,7 @@
 # ACP 交互架构：Read / Write / AskUserQuestion
 
-本文档描述 leduo-patrol 如何通过 **Agent Client Protocol (ACP)** 与 Claude Code 交互，
-实现文件读写（Read / Write）和用户提问（AskUserQuestion）三大核心能力。
+本文档描述 leduo-patrol 在 **双引擎架构** 下，如何通过 **Agent Client Protocol (ACP)** 与 Claude Code 交互，
+并与直接内嵌的 CLI 会话共用同一个 Claude `sessionId`。
 
 ---
 
