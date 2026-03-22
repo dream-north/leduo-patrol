@@ -813,7 +813,7 @@ h1 {
 
 .transcript {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
 }
 
@@ -832,7 +832,7 @@ h1 {
 }
 
 .timeline {
-  padding: 0 14px 10px;
+  padding: 14px 14px 10px;
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -921,6 +921,11 @@ h1 {
 
 .composer-input-shell {
   position: relative;
+  padding: 12px 14px;
+  border: 1px solid rgba(58, 45, 33, 0.16);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
 }
 
 .composer-image-previews {

@@ -2352,10 +2352,6 @@ function AcpSessionView(props: {
   return (
     <div className={`acp-legacy-shell ${latestExecutionPlan ? "" : "acp-legacy-shell-no-sidebar"}`.trim()}>
       <main className="transcript acp-legacy-transcript">
-        <div className="transcript-header">
-          <h2>{sessionTitle}</h2>
-          <p>{props.session.workspacePath}</p>
-        </div>
         <div className="timeline">
           {acp.historyStart > 0 ? (
             <button className="history-loader secondary" type="button" onClick={() => void handleLoadMoreHistory()} disabled={historyLoading}>
