@@ -65,6 +65,32 @@ test("ClaudeAcpSession.handleExtMethod routes leduo/ask_question", async () => {
   assert.deepEqual(result, { answer: "红色" });
 });
 
+test("ClaudeAcpSession.findRestorableSession requires exact match when preferred id is provided", async () => {
+  const session = makeSession();
+  (session as any).connection = {
+    unstable_listSessions: async () => ({
+      sessions: [{ sessionId: "other-session-id" }],
+    }),
+  };
+
+  const result = await session.findRestorableSession("missing-session-id");
+
+  assert.equal(result, null);
+});
+
+test("ClaudeAcpSession.findRestorableSession falls back to the first session when no preferred id is provided", async () => {
+  const session = makeSession();
+  (session as any).connection = {
+    unstable_listSessions: async () => ({
+      sessions: [{ sessionId: "restorable-session-id" }],
+    }),
+  };
+
+  const result = await session.findRestorableSession();
+
+  assert.equal(result, "restorable-session-id");
+});
+
 test("ClaudeAcpSession.connect rejects gracefully when the ACP agent spawn emits EAGAIN", async (t) => {
   const fakeChild = new EventEmitter() as childProcess.ChildProcessWithoutNullStreams;
   fakeChild.stdin = new PassThrough() as childProcess.ChildProcessWithoutNullStreams["stdin"];

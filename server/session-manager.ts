@@ -709,13 +709,14 @@ export class SessionManager {
       entry.acpFullTimeline = [];
       this.syncVisibleTimeline(entry);
       const restorableSessionId = await acpSession.findRestorableSession(entry.snapshot.sessionId);
-      if (!restorableSessionId) {
-        throw new Error(`No Claude session found for ${entry.snapshot.workspacePath}`);
+      if (restorableSessionId) {
+        if (restorableSessionId !== entry.snapshot.sessionId) {
+          this.bindSessionId(entry.snapshot.clientSessionId, entry.snapshot.sessionId, restorableSessionId, entry.snapshot.workspacePath, true);
+        }
+        await acpSession.loadSession(restorableSessionId);
+      } else {
+        await acpSession.ensureSession();
       }
-      if (restorableSessionId !== entry.snapshot.sessionId) {
-        this.bindSessionId(entry.snapshot.clientSessionId, entry.snapshot.sessionId, restorableSessionId, entry.snapshot.workspacePath, true);
-      }
-      await acpSession.loadSession(restorableSessionId);
     } else {
       await acpSession.ensureSession();
     }

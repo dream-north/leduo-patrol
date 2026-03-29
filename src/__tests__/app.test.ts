@@ -183,6 +183,50 @@ test("app getSwitchBlockedReasonFromSession reflects ACP pending state", () => {
   assert.equal(reason, "待审批");
 });
 
+test("app engineSwitchTitle reflects current blocked and available targets", () => {
+  const idleCliSession = {
+    clientSessionId: "s1",
+    title: "demo",
+    workspacePath: "/repo",
+    connectionState: "connected" as const,
+    activityState: "idle" as const,
+    sessionId: "shared",
+    engine: "cli" as const,
+    updatedAt: new Date().toISOString(),
+  };
+
+  assert.equal(appTestables.engineSwitchTitle(idleCliSession, "cli"), "当前已在 CLI 引擎");
+  assert.equal(appTestables.engineSwitchTitle(idleCliSession, "acp"), "切换到 ACP");
+
+  const runningCliSession = {
+    ...idleCliSession,
+    activityState: "running" as const,
+  };
+  assert.equal(appTestables.engineSwitchTitle(runningCliSession, "acp"), "当前不可切换：运行中");
+});
+
+test("app canSwitchSessionEngine only allows switching away from an idle session", () => {
+  const idleCliSession = {
+    clientSessionId: "s1",
+    title: "demo",
+    workspacePath: "/repo",
+    connectionState: "connected" as const,
+    activityState: "idle" as const,
+    sessionId: "shared",
+    engine: "cli" as const,
+    updatedAt: new Date().toISOString(),
+  };
+
+  assert.equal(appTestables.canSwitchSessionEngine(idleCliSession, "cli"), false);
+  assert.equal(appTestables.canSwitchSessionEngine(idleCliSession, "acp"), true);
+
+  const pendingCliSession = {
+    ...idleCliSession,
+    activityState: "pending" as const,
+  };
+  assert.equal(appTestables.canSwitchSessionEngine(pendingCliSession, "acp"), false);
+});
+
 test("app getSessionStateSummary keeps CLI pending separate from running", () => {
   const summary = appTestables.getSessionStateSummary({
     clientSessionId: "s1",

@@ -340,6 +340,8 @@ export default function App() {
     () => sessions.find((s) => s.clientSessionId === activeSessionId) ?? null,
     [sessions, activeSessionId],
   );
+  const availableSessionEngines = config?.availableSessionEngines ?? ["cli"];
+  const acpEngineAvailable = availableSessionEngines.includes("acp");
   const mobileTerminalFullscreenVisible =
     mobileTerminalInputDetected && Boolean(activeSession) && activeSession?.engine === "cli";
   const mobileTerminalInputDisabled = shouldDisableMobileTerminalInput(
@@ -1983,7 +1985,7 @@ export default function App() {
                   value={newSessionEngine}
                   onChange={(event) => setNewSessionEngine(event.target.value === "acp" ? "acp" : "cli")}
                 >
-                  {(config?.availableSessionEngines ?? ["cli"]).map((engine) => (
+                  {availableSessionEngines.map((engine) => (
                     <option key={engine} value={engine}>
                       {engine === "cli" ? "CLI 终端" : "ACP 结构化视图"}
                     </option>
@@ -2100,7 +2102,19 @@ export default function App() {
             <span title={activeSession.workspacePath}>{activeSession.workspacePath}</span>
           </div>
           <div className="mobile-terminal-fullscreen-actions">
-            <button className="secondary session-diff-trigger mobile-terminal-diff-trigger" type="button" onClick={openSessionDiff}>
+            {acpEngineAvailable ? (
+              <button
+                className="secondary mobile-terminal-header-button mobile-terminal-engine-button"
+                type="button"
+                onClick={() => switchSessionEngine("acp")}
+                disabled={!canSwitchSessionEngine(activeSession, "acp")}
+                title={engineSwitchTitle(activeSession, "acp")}
+                aria-label={engineSwitchTitle(activeSession, "acp")}
+              >
+                ACP
+              </button>
+            ) : null}
+            <button className="secondary mobile-terminal-header-button session-diff-trigger mobile-terminal-diff-trigger" type="button" onClick={openSessionDiff}>
               Diff
             </button>
             {config?.enableShell ? (
@@ -4981,6 +4995,7 @@ export const appTestables = {
   buildMobileTerminalDraftPayload,
   buildLocationWithAccessKey,
   buildTimelineTreeRows,
+  canSwitchSessionEngine,
   canMergeToolTimelineItem,
   createEmptyAcpState,
   engineSwitchTitle,

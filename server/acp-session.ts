@@ -332,9 +332,7 @@ export class ClaudeAcpSession {
 
     if (preferredSessionId) {
       const exactMatch = response.sessions.find((session: schema.SessionInfo) => session.sessionId === preferredSessionId);
-      if (exactMatch) {
-        return exactMatch.sessionId;
-      }
+      return exactMatch?.sessionId ?? null;
     }
 
     return response.sessions[0]?.sessionId ?? null;

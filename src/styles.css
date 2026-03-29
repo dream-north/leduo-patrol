@@ -1579,8 +1579,22 @@ h1 {
 .mobile-terminal-fullscreen-actions {
   display: flex;
   flex-shrink: 0;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
+  min-width: 0;
+}
+
+.mobile-terminal-header-button {
+  min-width: 44px;
+  min-height: 36px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1;
 }
 
 .mobile-terminal-mode-button,
@@ -1636,6 +1650,7 @@ h1 {
   background: rgba(255, 255, 255, 0.1);
 }
 
+.mobile-terminal-fullscreen .mobile-terminal-engine-button,
 .mobile-terminal-fullscreen .mobile-terminal-diff-trigger {
   color: #f5ede4;
   background: rgba(255, 255, 255, 0.1);
