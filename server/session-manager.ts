@@ -359,16 +359,6 @@ export class SessionManager {
     }
 
     const resolvedWorkspacePath = await this.resolveRequestedWorkspace(requestedWorkspacePath);
-    const existingEntry = [...this.sessions.values()].find(
-      (entry) => entry.snapshot.workspacePath === resolvedWorkspacePath,
-    );
-    if (existingEntry) {
-      this.emit({
-        type: "session_registered",
-        payload: this.snapshotForEvent(existingEntry),
-      });
-      return existingEntry.snapshot;
-    }
 
     const effectiveAllowSkipPermissions = allowSkipPermissions ?? this.allowSkipPermissions;
     const snapshot: SessionSnapshot = {
