@@ -121,6 +121,29 @@ test("SessionManager.createSession starts fresh CLI sessions and emits a connect
   assert.equal(events[1]?.payload.connectionState, "connected");
 });
 
+test("SessionManager.createSession allows multiple sessions for the same workspace", async () => {
+  const manager = makeManager({ allowedRoots: [process.cwd()] });
+  const started: Array<{ clientSessionId: string; sessionId: string }> = [];
+
+  manager.resolveRequestedWorkspace = async (requestedWorkspacePath: string) => requestedWorkspacePath;
+  manager.startEngine = async (entry: { snapshot: SessionSnapshot }) => {
+    started.push({
+      clientSessionId: entry.snapshot.clientSessionId,
+      sessionId: entry.snapshot.sessionId,
+    });
+    entry.snapshot.connectionState = "connected";
+  };
+
+  const first = await manager.createSession("/tmp/shared-workspace", "shared-1", false, "cli");
+  const second = await manager.createSession("/tmp/shared-workspace", "shared-2", false, "cli");
+
+  assert.notEqual(first.clientSessionId, second.clientSessionId);
+  assert.notEqual(first.sessionId, second.sessionId);
+  assert.equal(first.workspacePath, second.workspacePath);
+  assert.equal(started.length, 2);
+  assert.equal(manager.getStateSnapshot().sessions.length, 2);
+});
+
 test("SessionManager.createSession emits an error snapshot when startup fails", async () => {
   const manager = makeManager({ allowedRoots: [process.cwd()] });
   const events: Array<{ type: string; payload: SessionSnapshot }> = [];
